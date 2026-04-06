@@ -1,0 +1,30 @@
+# Build outputs
+build/
+dist/
+out/
+
+# Fortran artifacts
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.mod
+*.smod
+*.lst
+*.gcno
+*.gcda
+
+# Test and benchmark outputs
+*.prof
+*.log
+*.csv
+*.jsonl
+coverage/
+
+# Editors and OS noise
+.DS_Store
+*.swp
+*.swo
+*~
+

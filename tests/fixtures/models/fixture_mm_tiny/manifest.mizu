@@ -1,0 +1,21 @@
+# Tiny multimodal manifest fixture for loader and cache-key smoke tests.
+family = gemma
+source_model_id = fixture_mm_tiny
+source_revision = test-r2
+source_hash_text = fixture_mm_tiny@test-r2
+model_root = tests/fixtures/models/fixture_mm_tiny
+tokenizer = gemma4
+logical_model_hash = 220022
+projector_present = true
+projector_revision = 330033
+projector_slot = image
+projector_placeholder_count = 1
+projector_input_dtype = f16
+projector_embedding_dtype = f16
+tensor_count = 5
+modality_count = 1
+modality_slot = image
+modality_kind = image
+modality_storage = encoded_bytes
+modality_dtype = u8
+model_features = multimodal,projector

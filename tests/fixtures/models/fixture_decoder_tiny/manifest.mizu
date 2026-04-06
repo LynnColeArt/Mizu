@@ -1,0 +1,10 @@
+# Tiny decoder-only manifest fixture for loader smoke tests.
+family = qwen
+source_model_id = fixture_decoder_tiny
+source_revision = test-r1
+source_hash_text = fixture_decoder_tiny@test-r1
+model_root = tests/fixtures/models/fixture_decoder_tiny
+tokenizer = qwen3_5
+logical_model_hash = 110011
+tensor_count = 5
+model_features =

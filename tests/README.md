@@ -1,0 +1,31 @@
+# Mizu Test Skeleton
+
+This tree mirrors the public API contract in [docs/API_TEST_MATRIX.md](../docs/API_TEST_MATRIX.md).
+
+The current goal is not to pretend the tests already exist.
+The goal is to give each test class an obvious home before implementation
+starts.
+
+## Layout
+
+- `unit/`
+  - deterministic tests with fake clocks, fake backends, fake manifests, and
+    temp cache roots
+- `contract/`
+  - C ABI and binding-shape checks
+- `integration/`
+  - target-machine tests for Apple and CUDA routes
+- `performance/`
+  - cold-versus-warm and optimizer convergence checks
+- `fixtures/`
+  - shared fake backend and tiny model fixtures
+
+## Immediate Intent
+
+The first implementation wave should start with:
+
+- `unit/` for lifecycle, staging, execution, routing, and optimizer semantics
+- `contract/` for header compilation and opaque-handle rules
+
+Hardware integration and performance tests come after the runtime skeleton is
+real.

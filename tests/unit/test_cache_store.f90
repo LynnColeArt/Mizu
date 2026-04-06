@@ -1,0 +1,164 @@
+program test_cache_store
+  use mod_types,       only: MIZU_BACKEND_FAMILY_APPLE, MIZU_EXEC_ROUTE_ANE, &
+                             MIZU_EXEC_ROUTE_METAL, MIZU_STAGE_MODEL_LOAD, &
+                             MIZU_STAGE_PROJECTOR, MIZU_STAGE_PREFILL
+  use mod_cache_store, only: artifact_metadata_record, runtime_cache_bundle, &
+                             initialize_runtime_cache_bundle, load_runtime_cache_bundle, &
+                             save_runtime_cache_bundle, touch_weight_cache_key, &
+                             touch_plan_cache_key, touch_multimodal_cache_key, &
+                             record_weight_artifact_metadata, record_plan_artifact_metadata, &
+                             record_multimodal_artifact_metadata, &
+                             lookup_weight_artifact_metadata, lookup_plan_artifact_metadata, &
+                             lookup_multimodal_artifact_metadata
+
+  implicit none
+
+  type(runtime_cache_bundle)    :: bundle
+  type(runtime_cache_bundle)    :: reloaded_bundle
+  type(artifact_metadata_record) :: weight_metadata
+  type(artifact_metadata_record) :: plan_metadata
+  type(artifact_metadata_record) :: multimodal_metadata
+  type(artifact_metadata_record) :: reloaded_metadata
+  logical                       :: was_hit
+  logical                       :: saved_ok
+  logical                       :: loaded_ok
+  logical                       :: found
+  character(len=*), parameter :: store_path = "/tmp/mizu_test_artifact_cache.txt"
+
+  call initialize_runtime_cache_bundle(bundle)
+  call touch_weight_cache_key(bundle, "weight:key:ane", was_hit)
+  call expect_false("first weight touch should miss", was_hit)
+  call touch_plan_cache_key(bundle, "plan:key:metal", was_hit)
+  call expect_false("first plan touch should miss", was_hit)
+  call touch_multimodal_cache_key(bundle, "mm:key:ane", was_hit)
+  call expect_false("first multimodal touch should miss", was_hit)
+
+  weight_metadata = artifact_metadata_record()
+  weight_metadata%backend_family = MIZU_BACKEND_FAMILY_APPLE
+  weight_metadata%execution_route = MIZU_EXEC_ROUTE_ANE
+  weight_metadata%stage_kind = MIZU_STAGE_MODEL_LOAD
+  weight_metadata%artifact_format = "apple_ane_weight_pack_v1"
+  weight_metadata%payload_fingerprint = "1111AAAA"
+  weight_metadata%payload_path = "artifacts/apple/ane/weights/1111AAAA.pack"
+  call record_weight_artifact_metadata(bundle, "weight:key:ane", weight_metadata)
+
+  plan_metadata = artifact_metadata_record()
+  plan_metadata%backend_family = MIZU_BACKEND_FAMILY_APPLE
+  plan_metadata%execution_route = MIZU_EXEC_ROUTE_METAL
+  plan_metadata%stage_kind = MIZU_STAGE_PREFILL
+  plan_metadata%is_materialized = .true.
+  plan_metadata%payload_bytes = 4096
+  plan_metadata%artifact_format = "apple_metal_prefill_plan_v1"
+  plan_metadata%payload_fingerprint = "2222BBBB"
+  plan_metadata%payload_path = "artifacts/apple/metal/plans/prefill/2222BBBB.plan"
+  call record_plan_artifact_metadata(bundle, "plan:key:metal", plan_metadata)
+
+  multimodal_metadata = artifact_metadata_record()
+  multimodal_metadata%backend_family = MIZU_BACKEND_FAMILY_APPLE
+  multimodal_metadata%execution_route = MIZU_EXEC_ROUTE_ANE
+  multimodal_metadata%stage_kind = MIZU_STAGE_PROJECTOR
+  multimodal_metadata%artifact_format = "apple_ane_projector_cache_v1"
+  multimodal_metadata%payload_fingerprint = "3333CCCC"
+  multimodal_metadata%payload_path = "artifacts/apple/ane/projector/3333CCCC.mm"
+  call record_multimodal_artifact_metadata(bundle, "mm:key:ane", multimodal_metadata)
+
+  call execute_command_line("rm -f " // store_path)
+  call save_runtime_cache_bundle(bundle, store_path, saved_ok)
+  call expect_true("artifact cache save should succeed", saved_ok)
+
+  call initialize_runtime_cache_bundle(reloaded_bundle)
+  call load_runtime_cache_bundle(reloaded_bundle, store_path, loaded_ok)
+  call expect_true("artifact cache load should succeed", loaded_ok)
+
+  call touch_weight_cache_key(reloaded_bundle, "weight:key:ane", was_hit)
+  call expect_true("reloaded weight key should hit", was_hit)
+  call touch_plan_cache_key(reloaded_bundle, "plan:key:metal", was_hit)
+  call expect_true("reloaded plan key should hit", was_hit)
+  call touch_multimodal_cache_key(reloaded_bundle, "mm:key:ane", was_hit)
+  call expect_true("reloaded multimodal key should hit", was_hit)
+
+  call lookup_weight_artifact_metadata(reloaded_bundle, "weight:key:ane", reloaded_metadata, found)
+  call expect_true("reloaded weight metadata should exist", found)
+  call expect_equal_i32("weight metadata backend", reloaded_metadata%backend_family, MIZU_BACKEND_FAMILY_APPLE)
+  call expect_equal_i32("weight metadata route", reloaded_metadata%execution_route, MIZU_EXEC_ROUTE_ANE)
+  call expect_equal_i32("weight metadata stage", reloaded_metadata%stage_kind, MIZU_STAGE_MODEL_LOAD)
+  call expect_false("weight metadata should remain virtual", reloaded_metadata%is_materialized)
+  call expect_equal_string("weight metadata format", trim(reloaded_metadata%artifact_format), &
+    "apple_ane_weight_pack_v1")
+  call expect_equal_string("weight metadata path", trim(reloaded_metadata%payload_path), &
+    "artifacts/apple/ane/weights/1111AAAA.pack")
+
+  call lookup_plan_artifact_metadata(reloaded_bundle, "plan:key:metal", reloaded_metadata, found)
+  call expect_true("reloaded plan metadata should exist", found)
+  call expect_equal_i32("plan metadata route", reloaded_metadata%execution_route, MIZU_EXEC_ROUTE_METAL)
+  call expect_equal_i32("plan metadata stage", reloaded_metadata%stage_kind, MIZU_STAGE_PREFILL)
+  call expect_true("plan metadata should remain materialized", reloaded_metadata%is_materialized)
+  call expect_equal_i64("plan metadata bytes", reloaded_metadata%payload_bytes, 4096_8)
+  call expect_equal_string("plan metadata format", trim(reloaded_metadata%artifact_format), &
+    "apple_metal_prefill_plan_v1")
+
+  call lookup_multimodal_artifact_metadata(reloaded_bundle, "mm:key:ane", reloaded_metadata, found)
+  call expect_true("reloaded multimodal metadata should exist", found)
+  call expect_equal_i32("multimodal metadata stage", reloaded_metadata%stage_kind, MIZU_STAGE_PROJECTOR)
+  call expect_equal_string("multimodal metadata fingerprint", trim(reloaded_metadata%payload_fingerprint), &
+    "3333CCCC")
+
+  call execute_command_line("rm -f " // store_path)
+  write(*, "(A)") "test_cache_store: PASS"
+
+contains
+
+  subroutine expect_true(label, condition)
+    character(len=*), intent(in) :: label
+    logical, intent(in)          :: condition
+
+    if (.not. condition) then
+      write(*, "(A)") trim(label)
+      error stop 1
+    end if
+  end subroutine expect_true
+
+  subroutine expect_false(label, condition)
+    character(len=*), intent(in) :: label
+    logical, intent(in)          :: condition
+
+    if (condition) then
+      write(*, "(A)") trim(label)
+      error stop 1
+    end if
+  end subroutine expect_false
+
+  subroutine expect_equal_i32(label, actual, expected)
+    character(len=*), intent(in) :: label
+    integer, intent(in)          :: actual
+    integer, intent(in)          :: expected
+
+    if (actual /= expected) then
+      write(*, "(A)") trim(label)
+      error stop 1
+    end if
+  end subroutine expect_equal_i32
+
+  subroutine expect_equal_i64(label, actual, expected)
+    character(len=*), intent(in) :: label
+    integer(kind=8), intent(in)  :: actual
+    integer(kind=8), intent(in)  :: expected
+
+    if (actual /= expected) then
+      write(*, "(A)") trim(label)
+      error stop 1
+    end if
+  end subroutine expect_equal_i64
+
+  subroutine expect_equal_string(label, actual, expected)
+    character(len=*), intent(in) :: label
+    character(len=*), intent(in) :: actual
+    character(len=*), intent(in) :: expected
+
+    if (trim(actual) /= trim(expected)) then
+      write(*, "(A)") trim(label)
+      error stop 1
+    end if
+  end subroutine expect_equal_string
+
+end program test_cache_store

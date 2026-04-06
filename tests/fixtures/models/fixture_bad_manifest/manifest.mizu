@@ -1,0 +1,8 @@
+# Intentionally malformed manifest fixture.
+family = qwen
+source_model_id = fixture_bad_manifest
+source_revision = test-bad
+model_root = tests/fixtures/models/fixture_bad_manifest
+logical_model_hash = not-a-number
+tensor_count = 5
+model_features = multimodal,projector

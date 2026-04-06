@@ -1,0 +1,387 @@
+# Mizu Task List
+
+This document deconstructs the project plan into concrete tasks.
+
+It is meant to answer:
+
+- what can be done now
+- what depends on what
+- what "done" looks like for each slice
+
+## Current State
+
+- [x] Initialize local Git repository
+- [x] Create `docs/` directory
+- [x] Write [Style Guide](../STYLE_GUIDE.md)
+- [x] Write [Architecture](./ARCHITECTURE.md)
+- [x] Write [API Spec](./API_SPEC.md)
+- [x] Write [API Test Matrix](./API_TEST_MATRIX.md)
+- [x] Write [Project Plan](./PROJECT_PLAN.md)
+- [x] Turn planning docs into source tree and contracts
+
+## Immediate Next Up
+
+These are the highest-leverage next tasks.
+
+- [x] Create the source directory skeleton from the architecture doc
+- [x] Define core module map in `src/common` and `src/runtime`
+- [x] Write the status and error taxonomy
+- [x] Write the backend contract in source form
+- [x] Translate `docs/API_SPEC.md` into the first C header `include/mizu.h`
+- [x] Create the test directory skeleton from `docs/API_TEST_MATRIX.md`
+- [x] Define the internal model manifest dialect
+- [x] Define cache key types and cache key generation rules
+
+## Phase 0: Repository Bootstrap
+
+- [x] Initialize repo on `main`
+- [x] Add `.gitignore`
+- [x] Create `docs/README.md`
+- [x] Create planning docs
+- [x] Add top-level `README.md`
+- [ ] Add initial `Makefile` or build entrypoint
+- [x] Add test directory skeleton
+
+## Phase 1: Core Contracts
+
+### 1.1 Common Types
+
+- [x] Create `src/common/mod_kinds.f90`
+- [x] Create `src/common/mod_types.f90`
+- [x] Define runtime handle types
+- [x] Define model handle types
+- [x] Define session handle types
+- [x] Define workspace handle types
+- [x] Define backend descriptor types
+- [x] Define tensor descriptor types
+- [x] Define projector descriptor types
+
+### 1.2 Status and Errors
+
+- [x] Create `src/common/mod_status.f90`
+- [x] Create `src/common/mod_errors.f90`
+- [x] Define status enum bands
+- [x] Define recoverable versus unrecoverable errors
+- [x] Define backend planner failure reasons
+- [x] Define cache failure reasons
+
+### 1.3 Backend Contract
+
+- [x] Create backend capability contract
+- [x] Create backend planner contract
+- [x] Create backend executor contract
+- [x] Define backend-visible workspace contract
+- [x] Define backend cache hook contract
+- [x] Define backend telemetry contract
+
+### 1.4 C ABI Shape
+
+- [x] Create `include/mizu.h`
+- [x] Define opaque handle policy
+- [x] Define string boundary policy
+- [x] Define buffer ownership policy
+- [x] Define lifecycle entrypoints
+- [x] Define session step entrypoints
+- [x] Define multimodal attachment entrypoints
+
+### 1.5 Telemetry and Optimization Contracts
+
+- [x] Define stage timing record shape
+- [x] Define plan identifier shape
+- [x] Define optimization record shape
+- [x] Define exploration versus exploitation metadata
+- [x] Define cold versus warm execution markers
+
+### 1.6 Cache Key Contracts
+
+- [x] Define plan cache key schema
+- [x] Define weight cache key schema
+- [x] Define session cache key schema
+- [x] Define multimodal cache key schema
+- [x] Define invalidation version fields
+
+## Phase 2: Internal Model Asset Dialect
+
+### 2.1 Manifest Structure
+
+- [x] Define model manifest schema
+- [x] Define projector manifest schema
+- [x] Define tensor inventory schema
+- [x] Define modality contract schema
+- [x] Define source provenance fields
+- [x] Define runtime version fields
+
+### 2.2 Target Model Mapping
+
+- [ ] Map Qwen-3.5-9B multimodal tensors into the manifest dialect
+- [ ] Map Qwen projector assets into the manifest dialect
+- [ ] Map Gemma4-21B multimodal tensors into the manifest dialect
+- [ ] Map Gemma projector assets into the manifest dialect
+
+### 2.3 Asset Identity
+
+- [x] Define logical model hash strategy
+- [x] Define projector revision identity strategy
+- [ ] Define backend pack identity strategy
+- [ ] Define planner version identity strategy
+
+### 2.4 Import Path
+
+- [ ] Decide where conversion/import tooling lives
+- [ ] Define importer output layout
+- [ ] Define validation rules for imported assets
+- [ ] Define failure reporting for bad manifests
+
+## Phase 3: Runtime Skeleton
+
+### 3.1 Runtime Core
+
+- [x] Create `src/runtime/mod_runtime.f90`
+- [x] Create `src/runtime/mod_request.f90`
+- [x] Create `src/runtime/mod_session.f90`
+- [x] Create `src/runtime/mod_workspace.f90`
+- [x] Create `src/runtime/mod_scheduler.f90`
+
+### 3.2 Lifecycle
+
+- [ ] Implement runtime create and destroy
+- [ ] Implement model open and close
+- [ ] Implement session open and close
+- [ ] Implement session park and resume
+- [ ] Implement request-local cleanup rules
+
+### 3.3 Workspace and Memory
+
+- [ ] Create `src/common/mod_memory.f90`
+- [ ] Implement aligned host allocation
+- [ ] Implement reusable workspace arenas
+- [ ] Implement scratch reservation and release
+- [ ] Add hot-path no-allocation assertions where practical
+
+### 3.4 Blocking Request Flow
+
+- [x] Implement attach tokens
+- [x] Implement attach multimodal input
+- [x] Implement prefill entrypoint
+- [x] Implement decode step entrypoint
+- [x] Implement output read entrypoint
+
+### 3.5 Optimization Store
+
+- [x] Create `optimization_store` type
+- [x] Implement in-memory timing history
+- [x] Implement winner record updates
+- [x] Implement persistent record format for rebuildable optimization artifacts
+
+## Phase 4: Apple Backend Bring-Up
+
+### 4.1 Apple Capability Layer
+
+- [ ] Create Apple backend directory structure
+- [ ] Define Apple device descriptor
+- [ ] Implement Apple capability probe
+- [ ] Detect ANE availability
+- [ ] Detect Metal availability
+- [ ] Report planner-visible Apple constraints
+
+### 4.2 Apple Planner
+
+- [ ] Implement ANE-versus-Metal planning interface
+- [ ] Define unsupported-shape reporting
+- [ ] Define unsupported-op reporting
+- [ ] Define fallback reason reporting
+- [ ] Record planner decisions in telemetry
+
+### 4.3 Apple Bridge Boundary
+
+- [ ] Create Apple bridge header surface
+- [ ] Create Objective-C bridge source
+- [ ] Define bridge ownership rules
+- [ ] Define bridge error translation rules
+
+### 4.4 Apple Execution
+
+- [ ] Implement projector execution path on Apple
+- [ ] Implement prefill execution path on Apple
+- [ ] Implement decode execution path on Apple
+- [ ] Implement Apple workspace handoff
+- [ ] Implement Apple plan cache integration
+
+### 4.5 Apple Validation
+
+- [ ] Validate one target multimodal flow on Apple
+- [ ] Verify planner reports ANE versus Metal honestly
+- [ ] Verify no silent fallback occurs
+
+## Phase 5: CUDA Backend Bring-Up
+
+### 5.1 CUDA Capability Layer
+
+- [ ] Create CUDA backend directory structure
+- [ ] Define CUDA device descriptor
+- [ ] Implement CUDA capability probe
+- [ ] Define CUDA planner-visible constraints
+
+### 5.2 CUDA Planner and Execution
+
+- [ ] Implement CUDA planner
+- [ ] Implement CUDA packed weight path
+- [ ] Implement CUDA projector path
+- [ ] Implement CUDA prefill path
+- [ ] Implement CUDA decode path
+- [ ] Implement CUDA workspace handoff
+
+### 5.3 CUDA Validation
+
+- [ ] Validate one target multimodal flow on CUDA
+- [ ] Compare API-level parity against Apple
+- [ ] Add reference-output checks where feasible
+
+## Phase 6: Cache Hierarchy and Self-Optimization
+
+### 6.1 Plan Cache
+
+- [ ] Create `src/cache/mod_plan_cache.f90`
+- [ ] Implement strict plan cache keys
+- [ ] Implement in-memory plan cache
+- [ ] Implement disk-backed plan cache
+- [ ] Implement plan cache warming
+
+### 6.2 Weight Cache
+
+- [ ] Create `src/cache/mod_weight_cache.f90`
+- [ ] Implement backend-packed weight identity
+- [ ] Implement in-memory packed weight registry
+- [ ] Implement disk-backed packed weight reuse
+
+### 6.3 Session Cache
+
+- [ ] Create `src/cache/mod_session_cache.f90`
+- [ ] Implement parked session identity
+- [ ] Implement KV retention policy
+- [ ] Implement safe eviction policy for inactive sessions
+
+### 6.4 Multimodal Cache
+
+- [ ] Create `src/cache/mod_mm_cache.f90`
+- [ ] Implement projector output cache keys
+- [ ] Implement reusable preprocessing cache keys
+- [ ] Define invalidation rules for modality reuse
+
+### 6.5 Exploration and Exploitation
+
+- [x] Define candidate plan registry
+- [x] Implement bounded exploration policy
+- [x] Implement winner selection policy
+- [x] Implement winner persistence
+- [ ] Implement stale-evidence invalidation
+- [x] Implement cold-versus-warm tracking
+
+### 6.6 Cache Safety
+
+- [ ] Implement double-check cache miss pattern under synchronization
+- [ ] Prevent eviction of live session state
+- [ ] Add cache metrics and counters
+- [ ] Add cache debug reporting
+
+## Phase 7: Multimodal Path Hardening
+
+### 7.1 Input Contracts
+
+- [ ] Define modality input types
+- [ ] Define normalized projector input tensors
+- [ ] Define caller-visible multimodal API expectations
+
+### 7.2 Projector Runtime
+
+- [ ] Implement projector workspace planning
+- [ ] Implement embedding splice policy
+- [ ] Implement projector cache integration
+- [ ] Implement projector telemetry
+
+### 7.3 Model-Specific Validation
+
+- [ ] Add Qwen multimodal prompt-path tests
+- [ ] Add Gemma multimodal prompt-path tests
+- [ ] Validate projector output reuse where legal
+
+## Phase 8: C ABI and Go Binding
+
+### 8.1 C ABI
+
+- [ ] Finalize `include/mizu.h`
+- [x] Implement C ABI bindings in source
+- [ ] Add C smoke test for lifecycle calls
+- [ ] Add C smoke test for session flow
+
+### 8.2 Go Binding
+
+- [ ] Create Go module for bindings
+- [ ] Wrap runtime lifecycle
+- [ ] Wrap model lifecycle
+- [ ] Wrap session flow
+- [ ] Wrap multimodal attachment path
+- [ ] Add Go smoke example
+
+## Phase 9: Measurement and Hardening
+
+### 9.1 Stage Metrics
+
+- [x] Measure model load latency
+- [x] Measure projector latency
+- [x] Measure prefill latency
+- [x] Measure decode latency
+- [x] Measure park and resume latency
+
+### 9.2 Cache and Optimization Metrics
+
+- [ ] Record cache hit and miss rates by layer
+- [ ] Record exploration versus exploitation counts
+- [ ] Record winning plan convergence
+- [ ] Record cold-to-warm improvement
+
+### 9.3 Backend Validation
+
+- [ ] Record Apple planner routing traces
+- [ ] Record Apple ANE versus Metal outcomes
+- [ ] Record CUDA parity checks
+- [ ] Record CUDA throughput baselines
+
+### 9.4 Hardening
+
+- [ ] Add unsupported-backend failure tests
+- [ ] Add cache invalidation tests
+- [ ] Add session reuse tests
+- [ ] Add multimodal regression tests
+
+## Cross-Cutting Tasks
+
+These tasks cut across all phases.
+
+- [ ] Keep docs in sync with source reality
+- [ ] Mark measured versus experimental behavior explicitly
+- [ ] Keep ownership rules visible in code and headers
+- [ ] Keep hot-path allocations visible and controlled
+- [ ] Keep planner decisions inspectable
+- [ ] Keep Go bindings thin
+
+## Critical Path
+
+If we want the shortest path to a working runtime, the likely critical path is:
+
+- [ ] Phase 1 core contracts
+- [ ] Phase 2 internal model dialect
+- [ ] Phase 3 runtime skeleton
+- [ ] Phase 4 Apple backend bring-up
+- [ ] Phase 6 cache hierarchy and self-optimization
+- [ ] Phase 7 multimodal hardening
+- [ ] Phase 8 C ABI and Go binding
+
+CUDA can progress in parallel after the core contracts are stable, but Apple is
+the real gating path right now because ANE is a requirement.
+
+## Nice to Have Later
+
+- [ ] Add top-level roadmap view once implementation starts
+- [ ] Add issue labels or task tags if the repo workflow expands
+- [ ] Add machine-specific benchmark notes per target hardware
