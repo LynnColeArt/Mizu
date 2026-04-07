@@ -218,17 +218,17 @@ These are the highest-leverage next tasks.
 ### 5.1 CUDA Capability Layer
 
 - [x] Create CUDA backend directory structure
-- [ ] Define CUDA device descriptor
-- [ ] Implement CUDA capability probe
-- [ ] Define CUDA planner-visible constraints
+- [x] Define CUDA device descriptor
+- [x] Implement CUDA capability probe
+- [x] Define CUDA planner-visible constraints
 
 ### 5.2 CUDA Planner and Execution
 
 - [x] Implement CUDA planner
 - [x] Implement CUDA packed weight path
 - [ ] Implement CUDA projector path
-- [ ] Implement CUDA prefill path
-- [ ] Implement CUDA decode path
+- [x] Implement CUDA prefill path
+- [x] Implement CUDA decode path
 - [ ] Implement CUDA workspace handoff
 
 ### 5.3 CUDA Validation

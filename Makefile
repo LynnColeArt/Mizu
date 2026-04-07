@@ -1,13 +1,18 @@
 FC := gfortran
 CC ?= gcc
 CXX ?= g++
+NVCC ?= nvcc
 
 FFLAGS ?= -std=f2018 -Wall -Wextra
 CFLAGS ?= -std=c11 -Wall -Wextra
 CXXFLAGS ?= -std=c++17 -Wall -Wextra
+NVCCFLAGS ?= -std=c++17 -Iinclude -Isrc/backends/cuda
+
+HAVE_NVCC := $(shell command -v $(NVCC) >/dev/null 2>&1 && echo 1 || echo 0)
 
 BUILD_DIR := build
 TEST_DIR := $(BUILD_DIR)/tests
+CUDA_BRIDGE_OBJ := $(BUILD_DIR)/cuda_bridge.o
 
 COMMON_F90 := \
 	src/common/mod_kinds.f90 \
@@ -35,6 +40,7 @@ BACKEND_F90 := \
 	src/backends/mod_backend_contract.f90 \
 	src/backends/mod_backend_probe_support.f90 \
 	src/backends/apple/mod_apple_capability.f90 \
+	src/backends/cuda/mod_cuda_bridge.f90 \
 	src/backends/cuda/mod_cuda_capability.f90 \
 	src/backends/cuda/mod_cuda_planner.f90 \
 	src/backends/cuda/mod_cuda_executor.f90 \
@@ -74,8 +80,25 @@ contract-tests: contract-smokes $(CONTRACT_BINS)
 
 contract-smokes: $(CONTRACT_SMOKES)
 
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
 $(TEST_DIR):
 	mkdir -p $(TEST_DIR)
+
+ifeq ($(HAVE_NVCC),1)
+CUDA_BRIDGE_SRC := src/backends/cuda/cuda_bridge.cu
+CUDA_BRIDGE_LINK_LIBS := -lcudart -lstdc++
+
+$(CUDA_BRIDGE_OBJ): $(CUDA_BRIDGE_SRC) src/backends/cuda/cuda_bridge.h include/mizu.h | $(BUILD_DIR)
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+else
+CUDA_BRIDGE_SRC := src/backends/cuda/cuda_bridge_stub.c
+CUDA_BRIDGE_LINK_LIBS :=
+
+$(CUDA_BRIDGE_OBJ): $(CUDA_BRIDGE_SRC) src/backends/cuda/cuda_bridge.h include/mizu.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Iinclude -Isrc/backends/cuda -c $< -o $@
+endif
 
 $(TEST_DIR)/test_model_manifest_loader: $(TEST_DIR)
 	mkdir -p $(TEST_DIR)/loader_mods
@@ -117,7 +140,7 @@ $(TEST_DIR)/test_optimization_store: $(TEST_DIR)
 		src/runtime/mod_optimization_store.f90 \
 		tests/unit/test_optimization_store.f90
 
-$(TEST_DIR)/test_backend_registry: $(TEST_DIR)
+$(TEST_DIR)/test_backend_registry: $(TEST_DIR) $(CUDA_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/backend_registry_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/backend_registry_mods -o $@ \
 		src/common/mod_kinds.f90 \
@@ -127,9 +150,12 @@ $(TEST_DIR)/test_backend_registry: $(TEST_DIR)
 		src/backends/mod_backend_contract.f90 \
 		src/backends/mod_backend_probe_support.f90 \
 		src/backends/apple/mod_apple_capability.f90 \
+		src/backends/cuda/mod_cuda_bridge.f90 \
 		src/backends/cuda/mod_cuda_capability.f90 \
 		src/backends/mod_backend_registry.f90 \
-		tests/unit/test_backend_registry.f90
+		tests/unit/test_backend_registry.f90 \
+		$(CUDA_BRIDGE_OBJ) \
+		$(CUDA_BRIDGE_LINK_LIBS)
 
 $(TEST_DIR)/test_cuda_planner: $(TEST_DIR)
 	mkdir -p $(TEST_DIR)/cuda_planner_mods
@@ -141,15 +167,18 @@ $(TEST_DIR)/test_cuda_planner: $(TEST_DIR)
 		src/backends/cuda/mod_cuda_planner.f90 \
 		tests/unit/test_cuda_planner.f90
 
-$(TEST_DIR)/test_cuda_executor: $(TEST_DIR)
+$(TEST_DIR)/test_cuda_executor: $(TEST_DIR) $(CUDA_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/cuda_executor_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/cuda_executor_mods -o $@ \
 		src/common/mod_kinds.f90 \
 		src/common/mod_status.f90 \
 		src/common/mod_types.f90 \
 		src/model/mod_model_manifest.f90 \
+		src/backends/cuda/mod_cuda_bridge.f90 \
 		src/backends/cuda/mod_cuda_executor.f90 \
-		tests/unit/test_cuda_executor.f90
+		tests/unit/test_cuda_executor.f90 \
+		$(CUDA_BRIDGE_OBJ) \
+		$(CUDA_BRIDGE_LINK_LIBS)
 
 $(TEST_DIR)/test_header_c_smoke.o: tests/contract/test_header_c_smoke.c | $(TEST_DIR)
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
@@ -163,7 +192,7 @@ $(TEST_DIR)/test_opaque_handles: $(TEST_DIR)
 $(TEST_DIR)/test_cuda_artifacts.o: tests/contract/test_cuda_artifacts.c | $(TEST_DIR)
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
 
-$(TEST_DIR)/test_cuda_artifacts: $(TEST_DIR)/test_cuda_artifacts.o
+$(TEST_DIR)/test_cuda_artifacts: $(TEST_DIR)/test_cuda_artifacts.o $(CUDA_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/cuda_contract_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/cuda_contract_mods -I $(TEST_DIR)/cuda_contract_mods -o $@ \
 		$(COMMON_F90) \
@@ -172,12 +201,14 @@ $(TEST_DIR)/test_cuda_artifacts: $(TEST_DIR)/test_cuda_artifacts.o
 		$(RUNTIME_F90) \
 		$(BACKEND_F90) \
 		$(CAPI_F90) \
-		$(TEST_DIR)/test_cuda_artifacts.o
+		$(TEST_DIR)/test_cuda_artifacts.o \
+		$(CUDA_BRIDGE_OBJ) \
+		$(CUDA_BRIDGE_LINK_LIBS)
 
 $(TEST_DIR)/test_stage_reports.o: tests/contract/test_stage_reports.c | $(TEST_DIR)
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
 
-$(TEST_DIR)/test_stage_reports: $(TEST_DIR)/test_stage_reports.o
+$(TEST_DIR)/test_stage_reports: $(TEST_DIR)/test_stage_reports.o $(CUDA_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/contract_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/contract_mods -I $(TEST_DIR)/contract_mods -o $@ \
 		$(COMMON_F90) \
@@ -186,7 +217,9 @@ $(TEST_DIR)/test_stage_reports: $(TEST_DIR)/test_stage_reports.o
 		$(RUNTIME_F90) \
 		$(BACKEND_F90) \
 		$(CAPI_F90) \
-		$(TEST_DIR)/test_stage_reports.o
+		$(TEST_DIR)/test_stage_reports.o \
+		$(CUDA_BRIDGE_OBJ) \
+		$(CUDA_BRIDGE_LINK_LIBS)
 
 clean:
 	rm -rf $(BUILD_DIR)

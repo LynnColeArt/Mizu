@@ -38,7 +38,7 @@ Last updated: 2026-04-06
 - initial capability probes exist for:
   - Apple Metal
   - Apple ANE via explicit override
-  - CUDA via `nvidia-smi` or explicit override
+  - CUDA via a real CUDA device bridge, with `nvidia-smi` and override fallback
 - CUDA planner scaffolding exists for:
   - model load weight-pack records
   - projector plan records
@@ -46,8 +46,10 @@ Last updated: 2026-04-06
   - decode plan records
 - CUDA-selected artifacts can now materialize stub payload files under the
   configured `cache_root`
-- CUDA-selected prefill and decode stages now execute through backend-owned stub
-  executors that consume those materialized payload records
+- CUDA-selected prefill and decode stages now execute through a backend-owned
+  CUDA bridge that launches minimal real kernels on NVIDIA hardware
+- the build now falls back to a CPU CUDA bridge stub when `nvcc` is not present,
+  so non-CUDA environments can still build and run the current tests
 
 ### Cache and Artifact Identity
 
@@ -85,13 +87,13 @@ Last updated: 2026-04-06
 - no real Apple backend exists yet
 - no real ANE planner or executor exists yet
 - no real Metal executor exists yet
-- no real CUDA kernel executor exists yet
 - CUDA planner records are still scaffold-level and do not launch kernels
 - model load does not build actual packed weights
 - plan selection does not materialize backend-native plan payloads
-- projector, prefill, and decode do not run real kernels yet
+- projector does not run a real kernel yet
+- CUDA prefill and decode use real but placeholder kernels; they do not execute
+  transformer math yet
 - Go bindings do not exist yet
-- there is no top-level build entrypoint yet
 
 ## Important Honesty Notes
 
@@ -106,7 +108,8 @@ Last updated: 2026-04-06
   payload files to the persisted artifact location and mark those records as
   materialized
 - CUDA prefill and decode now consume those materialized payloads through a
-  backend-owned stub executor, but they still do not launch GPU kernels
+  backend-owned CUDA bridge and launch tiny placeholder kernels to prove the
+  runtime-to-device seam
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing
@@ -116,6 +119,6 @@ Last updated: 2026-04-06
 1. Build the Apple capability and planner layer.
 2. Materialize route-specific Apple pack and plan payloads behind the existing
    metadata records.
-3. Replace CUDA stub planner payloads and stub executors with real backend-owned
-   pack, plan, and kernel execution.
+3. Replace CUDA placeholder planner payloads and placeholder kernels with real
+   backend-owned pack, plan, and transformer execution.
 4. Start the thin Go binding once the C ABI settles a bit more.

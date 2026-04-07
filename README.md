@@ -20,8 +20,10 @@ Current implementation status:
   CUDA
 - CUDA planner scaffolding now emits route-specific plan and weight-pack records
   and materializes stub payload files under `cache_root`
-- CUDA prefill and decode now run through backend-owned stub executors using the
-  materialized payload records
+- CUDA capability probing now prefers a real device bridge when available and
+  falls back cleanly when it is not
+- CUDA prefill and decode now run through a backend-owned CUDA bridge, with a
+  CPU stub fallback when `nvcc` is unavailable
 - Apple and CUDA execution backends are not implemented yet
 
 Build and test:

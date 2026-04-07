@@ -3,6 +3,7 @@ module mod_cuda_executor
   use mod_status,         only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_ARGUMENT, &
                                 MIZU_STATUS_INVALID_STATE
   use mod_types,          only: MIZU_STOP_REASON_NONE
+  use mod_cuda_bridge,    only: launch_cuda_prefill, launch_cuda_decode
   use mod_model_manifest, only: hash_text64
 
   implicit none
@@ -21,6 +22,7 @@ contains
     integer(i64), intent(out)    :: consumed_token_count
     integer(i32), intent(out)    :: status_code
     character(len=1024)          :: payload_text
+    integer(i64)                 :: payload_hash
     logical                      :: loaded_ok
 
     consumed_token_count = 0_i64
@@ -40,9 +42,9 @@ contains
       return
     end if
 
-    consumed_token_count = max(0_i64, staged_tokens)
-    if (consumed_token_count == 0_i64 .and. staged_modal_count > 0_i32) consumed_token_count = 1_i64
-    status_code = MIZU_STATUS_OK
+    payload_hash = positive_hash64(trim(payload_text))
+    call launch_cuda_prefill(payload_hash, max(0_i64, staged_tokens), staged_modal_count, &
+      consumed_token_count, status_code)
   end subroutine execute_cuda_prefill
 
   subroutine execute_cuda_decode(cache_root, artifact_path, kv_before, token_budget, emitted_token_count, &
@@ -56,8 +58,7 @@ contains
     integer(i32), intent(out)    :: stop_reason
     integer(i32), intent(out)    :: status_code
     character(len=1024)          :: payload_text
-    character(len=128)           :: seed_text
-    integer(i64)                 :: token_hash
+    integer(i64)                 :: payload_hash
     logical                      :: loaded_ok
 
     emitted_token_count = 0_i64
@@ -80,11 +81,9 @@ contains
       return
     end if
 
-    write(seed_text, '(I0,":",I0)') kv_before, token_budget
-    token_hash = positive_hash64(trim(payload_text) // ":" // trim(seed_text))
-    emitted_token_count = min(token_budget, 1_i64)
-    token_value = int(1_i64 + mod(token_hash, 4095_i64), kind=i32)
-    status_code = MIZU_STATUS_OK
+    payload_hash = positive_hash64(trim(payload_text))
+    call launch_cuda_decode(payload_hash, kv_before, token_budget, emitted_token_count, token_value, &
+      stop_reason, status_code)
   end subroutine execute_cuda_decode
 
   subroutine load_cuda_artifact_payload(cache_root, artifact_path, payload_text, loaded_ok)
