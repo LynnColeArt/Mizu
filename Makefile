@@ -218,7 +218,8 @@ $(TEST_DIR)/test_opaque_handles: $(TEST_DIR)
 $(TEST_DIR)/test_cuda_artifacts.o: tests/contract/test_cuda_artifacts.c | $(TEST_DIR)
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
 
-$(TEST_DIR)/test_cuda_artifacts: $(TEST_DIR)/test_cuda_artifacts.o $(CUDA_BRIDGE_OBJ)
+$(TEST_DIR)/test_cuda_artifacts: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $(RUNTIME_F90) $(BACKEND_F90) \
+	$(CAPI_F90) $(TEST_DIR)/test_cuda_artifacts.o $(CUDA_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/cuda_contract_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/cuda_contract_mods -I $(TEST_DIR)/cuda_contract_mods -o $@ \
 		$(COMMON_F90) \
@@ -234,7 +235,8 @@ $(TEST_DIR)/test_cuda_artifacts: $(TEST_DIR)/test_cuda_artifacts.o $(CUDA_BRIDGE
 $(TEST_DIR)/test_stage_reports.o: tests/contract/test_stage_reports.c | $(TEST_DIR)
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
 
-$(TEST_DIR)/test_stage_reports: $(TEST_DIR)/test_stage_reports.o $(CUDA_BRIDGE_OBJ)
+$(TEST_DIR)/test_stage_reports: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $(RUNTIME_F90) $(BACKEND_F90) \
+	$(CAPI_F90) $(TEST_DIR)/test_stage_reports.o $(CUDA_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/contract_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/contract_mods -I $(TEST_DIR)/contract_mods -o $@ \
 		$(COMMON_F90) \

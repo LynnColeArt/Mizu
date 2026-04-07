@@ -15,6 +15,7 @@ module mod_cuda_executor
   public :: cuda_context_bytes_are_valid, extract_cuda_context_lineage
   public :: extract_cuda_context_state_snapshot
   public :: extract_cuda_context_window_snapshot
+  public :: extract_cuda_context_kv_lane_snapshot
   public :: extract_cuda_context_slot_snapshot
 
 contains
@@ -502,6 +503,53 @@ contains
     end do
     snapshot_valid = .true.
   end subroutine extract_cuda_context_slot_snapshot
+
+  pure subroutine extract_cuda_context_kv_lane_snapshot(context_bytes, context_byte_count, page_key_lanes, &
+                                                        page_value_lanes, page_lane_digests, snapshot_valid)
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i32), intent(out) :: page_key_lanes(:, :)
+    integer(i32), intent(out) :: page_value_lanes(:, :)
+    integer(i64), intent(out) :: page_lane_digests(:)
+    logical, intent(out)      :: snapshot_valid
+    integer(i32)              :: page_index
+    integer(i32)              :: slot_index
+    integer(i32)              :: page_limit
+    integer(i32)              :: slot_limit
+    integer(i32)              :: lane_offset
+    integer(i32)              :: digest_offset
+
+    page_key_lanes = 0_i32
+    page_value_lanes = 0_i32
+    page_lane_digests = 0_i64
+    snapshot_valid = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (context_byte_count < 416_i32) return
+
+    slot_limit = min(8_i32, min(int(size(page_key_lanes, dim=1), kind=i32), int(size(page_value_lanes, dim=1), kind=i32)))
+    page_limit = min(4_i32, min(int(size(page_key_lanes, dim=2), kind=i32), min(int(size(page_value_lanes, dim=2), &
+      kind=i32), int(size(page_lane_digests), kind=i32))))
+    do page_index = 1_i32, page_limit
+      do slot_index = 1_i32, slot_limit
+        lane_offset = 129_i32 + (((page_index - 1_i32) * 8_i32 + (slot_index - 1_i32)) * 4_i32)
+        page_key_lanes(slot_index, page_index) = int(decode_context_u32le(context_bytes(lane_offset), &
+          context_bytes(lane_offset + 1_i32), context_bytes(lane_offset + 2_i32), &
+          context_bytes(lane_offset + 3_i32)), kind=i32)
+        lane_offset = 257_i32 + (((page_index - 1_i32) * 8_i32 + (slot_index - 1_i32)) * 4_i32)
+        page_value_lanes(slot_index, page_index) = int(decode_context_u32le(context_bytes(lane_offset), &
+          context_bytes(lane_offset + 1_i32), context_bytes(lane_offset + 2_i32), &
+          context_bytes(lane_offset + 3_i32)), kind=i32)
+      end do
+
+      digest_offset = 385_i32 + ((page_index - 1_i32) * 8_i32)
+      page_lane_digests(page_index) = decode_context_u64le(context_bytes(digest_offset), &
+        context_bytes(digest_offset + 1_i32), context_bytes(digest_offset + 2_i32), &
+        context_bytes(digest_offset + 3_i32), context_bytes(digest_offset + 4_i32), &
+        context_bytes(digest_offset + 5_i32), context_bytes(digest_offset + 6_i32), &
+        context_bytes(digest_offset + 7_i32))
+    end do
+    snapshot_valid = .true.
+  end subroutine extract_cuda_context_kv_lane_snapshot
 
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1

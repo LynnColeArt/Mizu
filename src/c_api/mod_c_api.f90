@@ -1904,7 +1904,7 @@ contains
     logical, intent(out)                      :: checkpoint_ready
     type(artifact_metadata_record)            :: metadata
     character(len=MAX_CACHE_KEY_LEN)          :: checkpoint_key_text
-    character(len=1024)                       :: payload_text
+    character(len=4 * MAX_LIVE_CONTEXT_BYTES + 256) :: payload_text
     integer(i64)                             :: payload_bytes
 
     checkpoint_ready = .false.
@@ -2033,7 +2033,7 @@ contains
     integer(i8), intent(out)              :: context_bytes(:)
     integer(i32), intent(out)             :: context_byte_count
     logical, intent(out)                  :: loaded_ok
-    character(len=1024)                   :: line
+    character(len=4 * MAX_LIVE_CONTEXT_BYTES + 256) :: line
     character(len=2 * MAX_LIVE_CONTEXT_BYTES) :: hex_text
     integer(i32)                          :: unit_id
     integer(i32)                          :: ios
