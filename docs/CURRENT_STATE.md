@@ -4,15 +4,14 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `5f970e5` (`Document roadmap
-  status and CUDA KV lane milestone`)
-- current milestone: CUDA live-context payloads now keep the 512-byte key/value
-  lane image but add explicit per-page tensor-layout records, so decode can
-  preserve untouched page layout while advancing generation on the page it
-  actually mutates
+- latest published baseline before this slice: `e4b8185` (`Document CUDA page
+  layout checkpoint`)
+- current milestone: CUDA live-context payloads now widen to 640 bytes and add
+  an explicit per-page control table for owner kind, usable capacity,
+  committed rows, free rows, epochs, logical page ids, and flags
 - immediate next target: replace the compact CUDA key/value lane image plus
-  synthetic page-layout records with a more realistic tensor-backed page record
-  or backend-native KV-state payload
+  synthetic page-layout and page-control records with a more realistic
+  tensor-backed page record or backend-native KV-state payload
 
 ## Roadmap Status
 
@@ -112,6 +111,20 @@ In short:
 - the runtime can now read those page-layout records back through a second
   Fortran-side extractor, which makes the compact page image look more like a
   small tensor record than a bag of lanes
+- the CUDA live-context payload now reserves 640 bytes instead of 512 so it
+  can carry a compact per-page control table after the layout block
+- those page-control records now capture:
+  - owner kind
+  - usable capacity
+  - committed rows
+  - free rows
+  - page epoch
+  - recycle epoch
+  - logical page id
+  - page flags
+- the runtime can now read those page-control records back through a third
+  Fortran-side extractor, which makes compact decode state inspectable as a
+  small page table rather than just a lane image plus shape metadata
 
 ### Self-Optimization
 

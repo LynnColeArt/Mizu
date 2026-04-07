@@ -247,6 +247,8 @@ These are the highest-leverage next tasks.
   planes with per-page digests
 - [x] Add per-page tensor-layout records to CUDA KV images and preserve decode
   generation on the page that changes
+- [x] Add explicit per-page control records to CUDA KV images for owner,
+  capacity, epochs, logical ids, and page flags
 
 ### 5.3 CUDA Validation
 

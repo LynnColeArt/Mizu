@@ -78,6 +78,9 @@ bodies.
     header
   - validates CUDA prefill and decode now fully populate the fixed-size CUDA
     context payload instead of leaving a partial scratch record
+  - validates CUDA page-control snapshots expose owner kind, capacity,
+    committed rows, free rows, epochs, logical page ids, and flags across
+    prefill and decode transitions
   - validates the fixed-size CUDA context payload now carries semantic token
     and modal digests plus explicit KV/decode-step counters
   - validates repeated CUDA decode steps advance those counters and rolling

@@ -66,6 +66,10 @@ Current implementation status:
   for key rows, value rows, lane counts, head blocks, and page generations, so
   decode can preserve untouched page identity while advancing only the page it
   mutates
+- that CUDA live-context image now widens again to 640 bytes and carries an
+  explicit per-page control table for owner kind, usable capacity, committed
+  rows, free rows, epochs, logical page ids, and flags, so decode state now
+  looks more like a compact page table than layout metadata alone
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
