@@ -90,6 +90,10 @@ bodies.
     payloads in addition to page metadata
   - validates repeated CUDA decode steps append emitted tokens into the
     expected page-local slot payloads
+  - validates the widened CUDA context payload now carries compact key/value
+    lane planes plus stable per-page digests
+  - validates repeated CUDA decode steps preserve the digest of untouched pages
+    while still advancing the decode-owned page digest
   - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload and varies with direct context-buffer identity
   - validates CUDA decode rejects a context produced by a different decode

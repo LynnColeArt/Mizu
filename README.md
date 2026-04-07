@@ -59,8 +59,14 @@ Current implementation status:
 - that CUDA live-context image now widens again to 256 bytes and carries
   explicit per-page slot payloads, so decode continuity is represented as a
   small page-backed state image instead of metadata alone
+- that CUDA live-context image now widens again to 512 bytes and carries
+  compact key and value lane planes plus per-page digests, so page-local decode
+  state looks more like a tiny KV-style image than token slots alone
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
+- the `Makefile` now rebuilds the contract binaries when the C API Fortran
+  sources change, which keeps the public-path tests from silently running stale
+  executables
 - `make test` now succeeds from a clean tree without relying on stray Fortran
   module files
 - Apple and CUDA execution backends are not implemented yet

@@ -4,13 +4,39 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `5ab2a41` (`Widen CUDA live
-  contexts into windowed state images`)
-- current milestone: CUDA live-context payloads now carry semantic token/modal
-  digests plus explicit KV and decode-step counters, widen into a compact
-  windowed state image, and now carry explicit per-page slot payloads
-- immediate next target: replace the compact page-backed CUDA state image with
-  a more backend-native decode-state or KV-state representation
+- latest published baseline before this slice: `39e4374` (`Add page-backed
+  CUDA decode state slots`)
+- current milestone: CUDA live-context payloads now widen into a compact
+  512-byte key/value lane image with per-page digests, so decode state carries
+  more backend-shaped page content instead of token slots alone
+- immediate next target: replace the compact CUDA key/value lane image with a
+  more realistic tensor-backed page record or backend-native KV-state payload
+
+## Roadmap Status
+
+- repository bootstrap and core contracts are effectively complete
+- the Fortran control plane is well past scaffolding:
+  - runtime, model, and session lifecycle exist
+  - park and resume are wired
+  - workspace reuse exists
+  - optimization evidence and cache identity are persisted
+- CUDA is the most advanced backend:
+  - capability probing exists
+  - planner and bridge seams exist
+  - projector, prefill, and decode all execute through placeholder CUDA paths
+  - backend-owned session state survives prefill, decode, park, and resume
+- the cache and self-optimization layers have real shape, but backend-native
+  weight and plan caches are still ahead of us
+- Apple is still mostly at the scaffolding stage and remains the biggest
+  hardware-validation gap
+- model import and target-asset mapping are still only partially done
+
+In short:
+
+- the control plane and runtime contract are in good shape
+- the CUDA backend is credible as a bring-up path
+- real inference math, real packed weights, and Apple execution are still major
+  milestones ahead
 
 ## What Exists
 
@@ -67,6 +93,12 @@ Last updated: 2026-04-07
 - those slot payloads now give each tracked decode page a small explicit token
   image, which makes the placeholder runtime state look more like compact
   backend decode state than a metadata-only summary
+- the CUDA live-context payload now reserves 512 bytes instead of 256 so it
+  can widen those page images into compact key and value lane planes, along
+  with per-page lane digests
+- the runtime can now read those compact KV-style lane planes back through a
+  Fortran-side extractor, which makes the widened decode image inspectable in
+  tests instead of opaque
 
 ### Self-Optimization
 
@@ -115,6 +147,9 @@ Last updated: 2026-04-07
 - CUDA decode now also appends emitted tokens into explicit per-page slot
   payloads inside that state image, so page continuity is represented through
   actual compact payload contents instead of only page fill counters
+- CUDA decode now also writes compact value-lane payloads and stable per-page
+  lane digests, so unchanged pages retain their own identity while the overall
+  state image digest still advances across decode
 - runtime workspace reservations now allocate a reusable host scratch buffer
   instead of tracking bytes alone
 - CUDA projector, prefill, and decode now receive that runtime workspace buffer
@@ -123,6 +158,9 @@ Last updated: 2026-04-07
   so non-CUDA environments can still build and run the current tests
 - `make test` now passes from a clean tree without requiring stray root-level
   `.mod` files from earlier compiler runs
+- the contract test binaries now depend on the C API source list in the
+  `Makefile`, so `mod_c_api.f90` edits do not leave stale public-path test
+  executables behind
 
 ### Cache and Artifact Identity
 
@@ -219,8 +257,10 @@ Last updated: 2026-04-07
 - the new windowed state image is still intentionally tiny and summary-heavy;
   it behaves more like a compact rehearsal for backend decode state than a
   real device-resident KV layout
-- the new page-backed slot payloads are still token-centric stand-ins, not real
-  key/value tensors or backend-native cache pages
+- the widened key/value lane planes are still compact synthetic state, not real
+  transformer KV tensors or backend-native cache pages
+- the per-page lane digests are page-identity aids for the runtime and tests,
+  not real backend checksums over device-resident tensor tiles
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing
@@ -230,6 +270,6 @@ Last updated: 2026-04-07
 1. Build the Apple capability and planner layer.
 2. Materialize route-specific Apple pack and plan payloads behind the existing
    metadata records.
-3. Replace the compact CUDA page-backed state image with a more realistic
-   backend-owned decode-state or KV-state payload.
+3. Replace the compact CUDA key/value lane image with a more realistic
+   tensor-backed page record or backend-owned KV-state payload.
 4. Start the thin Go binding once the C ABI settles a bit more.

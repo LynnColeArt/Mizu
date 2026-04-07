@@ -243,6 +243,8 @@ These are the highest-leverage next tasks.
 - [x] Give CUDA live-context payloads explicit KV/decode-step semantics
 - [x] Expand CUDA live-context payloads into a compact windowed state image
 - [x] Add page-backed slot payloads to CUDA live-context state images
+- [x] Widen CUDA live-context state images into compact KV-style key/value lane
+  planes with per-page digests
 
 ### 5.3 CUDA Validation
 
