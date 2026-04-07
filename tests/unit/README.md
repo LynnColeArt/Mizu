@@ -36,10 +36,10 @@ bodies.
     and multimodal key types
 - `test_cache_store.f90`
   - validates save/load roundtrips for persisted artifact-cache presence
-  - validates route-specific artifact metadata roundtrips for weight, plan, and
-    multimodal records
+  - validates route-specific artifact metadata roundtrips for weight, plan,
+    session, and multimodal records
   - validates planned workspace bytes survive metadata persistence
-  - validates reloaded weight, plan, and multimodal keys report hits
+  - validates reloaded weight, plan, session, and multimodal keys report hits
 - `test_optimization_store.f90`
   - validates runtime-scoped winner selection based on recorded execution
     samples rather than key reuse alone
@@ -48,6 +48,18 @@ bodies.
   - validates deterministic backend-inventory aggregation independent of local
     hardware
   - validates runtime state retains the aggregated backend mask and descriptors
+- `test_runtime_workspace.f90`
+  - validates runtime-scoped workspace reservation keeps a reusable high-water
+    mark while clearing in-use bytes after release
+  - validates the workspace now owns a real reusable host scratch buffer that
+    is allocated on reserve and freed on reset
+- `test_session_staging.f90`
+  - validates attached token content is copied into session staging state
+  - validates copied modal bytes and content hashes are retained until clear
+  - validates prefill produces a persistent live-context hash and decode
+    advances it while retaining emitted tokens
+  - validates a backend-owned live-context byte buffer can be stored and
+    updated in session state
 - `test_cuda_planner.f90`
   - validates stage-specific CUDA plan candidates for weight-pack, projector,
     prefill, and decode records
@@ -55,6 +67,12 @@ bodies.
 - `test_cuda_executor.f90`
   - validates CUDA projector execution consumes a materialized projector payload
   - validates CUDA prefill execution consumes staged tokens through a
-    materialized plan payload
+    materialized plan payload with content-aware hashing
+  - validates CUDA prefill now changes its workspace scratch when staged token
+    and modal tensor contents change, even when the plan shape stays the same
+  - validates CUDA prefill emits a persisted context byte buffer and CUDA
+    decode consumes that buffer directly
   - validates CUDA decode execution produces a deterministic token from a
-    materialized decode payload
+    materialized decode payload and varies with direct context-buffer identity
+  - validates the CUDA bridge receives and stamps the runtime workspace scratch
+    buffer during projector, prefill, and decode

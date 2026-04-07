@@ -2,7 +2,7 @@ module mod_c_api
   use iso_c_binding, only: c_ptr, c_null_ptr, c_associated, c_f_pointer, c_loc, &
                            c_size_t, c_int32_t, c_int64_t, c_char, c_float, &
                            c_null_char, c_sizeof
-  use mod_kinds,     only: i32, i64, r32, MAX_NAME_LEN, MAX_PATH_LEN
+  use mod_kinds,     only: i8, i32, i64, c_i8, r32, MAX_NAME_LEN, MAX_PATH_LEN
   use mod_status,    only: MIZU_STATUS_OK, MIZU_STATUS_END_OF_SEQUENCE, &
                            MIZU_STATUS_INVALID_ARGUMENT, MIZU_STATUS_INVALID_STATE, &
                            MIZU_STATUS_BUFFER_TOO_SMALL, MIZU_STATUS_ABI_MISMATCH, &
@@ -37,17 +37,19 @@ module mod_c_api
                            MIZU_DTYPE_U8, MIZU_DTYPE_BF16, runtime_handle, model_handle, &
                            session_handle, runtime_config, model_open_config, session_config, &
                            model_info, session_info, execution_report, runtime_state, &
-                           model_state, session_state, MAX_RECENT_OUTPUT_TOKENS
+                           model_state, session_state, MAX_RECENT_OUTPUT_TOKENS, MAX_LIVE_CONTEXT_BYTES
   use mod_runtime,   only: initialize_runtime_state, reset_runtime_state, &
                            initialize_model_state, reset_model_state, register_model, &
                            unregister_model, register_session, unregister_session, &
                            validate_runtime_destroy, validate_model_close, &
                            set_runtime_error
+  use mod_workspace, only: reserve_workspace_bytes, release_workspace_bytes
   use mod_session,   only: initialize_session_state, reset_session_state, &
                            stage_tokens, stage_modal_input, clear_pending_inputs, &
                            complete_prefill, complete_decode, park_session_state, &
                            resume_session_state, evict_parked_session, &
-                           build_session_info, validate_read_output
+                           build_session_info, validate_read_output, store_live_context_record, &
+                           update_live_context_record
   use mod_optimization_store, only: runtime_optimization_store, &
                                      initialize_runtime_optimization_store, &
                                      reset_runtime_optimization_store, &
@@ -76,7 +78,8 @@ module mod_c_api
                                 touch_weight_cache_key, touch_plan_cache_key, &
                                 touch_session_cache_key, touch_multimodal_cache_key, &
                                 record_weight_artifact_metadata, record_plan_artifact_metadata, &
-                                record_multimodal_artifact_metadata, load_runtime_cache_bundle, &
+                                record_session_artifact_metadata, record_multimodal_artifact_metadata, &
+                                lookup_session_artifact_metadata, load_runtime_cache_bundle, &
                                 save_runtime_cache_bundle
 
   implicit none
@@ -696,6 +699,7 @@ contains
       mizu_session_park = int(status_code, kind=c_int32_t)
       return
     end if
+    call persist_session_checkpoint(runtime, runtime_cache, model, session)
 
     stage_elapsed_us = elapsed_since_us(stage_started_us)
     call resolve_session_stage_cache(runtime, runtime_cache, optimization_store, model, session, &
@@ -766,6 +770,7 @@ contains
       mizu_session_resume = int(status_code, kind=c_int32_t)
       return
     end if
+    call restore_session_checkpoint(runtime%config%cache_root, runtime_cache, model, session)
 
     stage_elapsed_us = elapsed_since_us(stage_started_us)
     call resolve_session_stage_cache(runtime, runtime_cache, optimization_store, model, session, &
@@ -824,6 +829,7 @@ contains
     integer(c_int32_t), value :: attach_flags
     type(session_box), pointer   :: box
     type(session_state), pointer :: session
+    integer(c_int32_t), pointer  :: token_values(:)
     integer(i32) :: status_code
 
     if (attach_flags /= int(MIZU_ATTACH_FLAG_NONE, kind=c_int32_t)) then
@@ -841,7 +847,13 @@ contains
       return
     end if
 
-    call stage_tokens(session, int(token_count, kind=i64), status_code)
+    call c_f_pointer(tokens_ptr, token_values, [int(token_count)])
+    if (.not. associated(token_values)) then
+      mizu_session_attach_tokens = int(MIZU_STATUS_INVALID_ARGUMENT, kind=c_int32_t)
+      return
+    end if
+
+    call stage_tokens(session, int(token_count, kind=i64), status_code, int(token_values, kind=i32))
     mizu_session_attach_tokens = int(status_code, kind=c_int32_t)
   end function mizu_session_attach_tokens
 
@@ -852,6 +864,7 @@ contains
     type(session_box), pointer        :: box
     type(session_state), pointer      :: session
     type(c_modal_input_desc), pointer :: input
+    integer(c_i8), pointer            :: modal_bytes(:)
     integer(i32) :: status_code
 
     call resolve_session_handle(session_ptr, box, session, status_code)
@@ -876,9 +889,21 @@ contains
       return
     end if
 
-    call stage_modal_input(session, status_code, int(input%byte_count, kind=i64), &
-      int(input%modality_kind, kind=i32), int(input%dtype, kind=i32), &
-      copy_c_string_ptr(input%slot_name_z, "image"))
+    if (input%byte_count > 0_c_size_t) then
+      call c_f_pointer(input%data, modal_bytes, [int(input%byte_count)])
+      if (.not. associated(modal_bytes)) then
+        mizu_session_attach_modal_input = int(MIZU_STATUS_INVALID_ARGUMENT, kind=c_int32_t)
+        return
+      end if
+
+      call stage_modal_input(session, status_code, int(input%byte_count, kind=i64), &
+        int(input%modality_kind, kind=i32), int(input%dtype, kind=i32), &
+        copy_c_string_ptr(input%slot_name_z, "image"), int(modal_bytes, kind=i8))
+    else
+      call stage_modal_input(session, status_code, int(input%byte_count, kind=i64), &
+        int(input%modality_kind, kind=i32), int(input%dtype, kind=i32), &
+        copy_c_string_ptr(input%slot_name_z, "image"))
+    end if
     mizu_session_attach_modal_input = int(status_code, kind=c_int32_t)
   end function mizu_session_attach_modal_input
 
@@ -913,7 +938,9 @@ contains
     integer(i64) :: required_reports
     integer(i64) :: kv_before
     integer(i64) :: staged_tokens_before
+    integer(i64) :: staged_token_hash_before
     integer(i64) :: staged_modal_byte_count_before
+    integer(i64) :: staged_modal_hash_before
     integer(i32) :: staged_modal_before
     integer(i32) :: staged_modal_kind_before
     integer(i32) :: staged_modal_dtype_before
@@ -932,6 +959,8 @@ contains
     integer(i32) :: projector_backend_family
     integer(i32) :: projector_route
     integer(i32) :: projector_placeholder_count
+    integer(i32) :: prefill_context_byte_count
+    integer(i8)  :: prefill_context_bytes(MAX_LIVE_CONTEXT_BYTES)
     integer(i32) :: prefill_backend_family
     integer(i32) :: prefill_route
     character(len=MAX_PATH_LEN) :: staged_modal_slot_name_before
@@ -940,6 +969,8 @@ contains
     character(len=MAX_CACHE_KEY_LEN) :: prefill_optimization_key_text
     character(len=MAX_CACHE_KEY_LEN) :: prefill_candidate_key_text
     logical      :: has_modal_inputs
+    logical      :: projector_workspace_reserved
+    logical      :: prefill_workspace_reserved
     type(execution_report) :: projector_report
     type(artifact_metadata_record) :: projector_artifact_metadata
     type(artifact_metadata_record) :: prefill_artifact_metadata
@@ -975,8 +1006,10 @@ contains
     required_reports = merge(2_i64, 1_i64, has_modal_inputs)
     kv_before = session%kv_token_count
     staged_tokens_before = session%staged_token_count
+    staged_token_hash_before = session%staged_token_hash
     staged_modal_before = session%staged_modal_count
     staged_modal_byte_count_before = session%staged_modal_byte_count
+    staged_modal_hash_before = session%staged_modal_hash
     staged_modal_kind_before = session%staged_modal_kind
     staged_modal_dtype_before = session%staged_modal_dtype
     staged_modal_slot_name_before = session%staged_modal_slot_name
@@ -995,16 +1028,26 @@ contains
         projector_selection_mode, projector_backend_family, projector_route, projector_artifact_metadata, &
         projector_placeholder_count)
 
+      call reserve_stage_workspace(runtime, projector_artifact_metadata, projector_workspace_reserved, status_code)
+      if (status_code /= MIZU_STATUS_OK) then
+        mizu_session_prefill = int(status_code, kind=c_int32_t)
+        return
+      end if
+
       stage_started_us = monotonic_timestamp_us()
       projector_embedding_count = 0_i64
       if (projector_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. projector_route == MIZU_EXEC_ROUTE_CUDA) then
         call execute_cuda_projector(runtime%config%cache_root, trim(projector_artifact_metadata%payload_path), &
-          staged_modal_byte_count_before, projector_placeholder_count, projector_embedding_count, status_code)
+          staged_modal_byte_count_before, projector_placeholder_count, staged_modal_hash_before, &
+          projector_embedding_count, status_code, runtime%workspace%host_buffer, &
+          runtime%workspace%bytes_in_use)
         if (status_code /= MIZU_STATUS_OK) then
+          call release_stage_workspace(runtime, projector_workspace_reserved)
           mizu_session_prefill = int(status_code, kind=c_int32_t)
           return
         end if
       end if
+      call release_stage_workspace(runtime, projector_workspace_reserved)
       projector_elapsed_us = elapsed_since_us(stage_started_us)
       call finalize_projector_stage_cache(runtime_cache, optimization_store, trim(projector_optimization_key_text), &
         trim(projector_candidate_key_text), projector_plan_id, projector_selection_mode, projector_elapsed_us, &
@@ -1022,21 +1065,59 @@ contains
       prefill_optimization_key_text, prefill_candidate_key_text, prefill_plan_id, &
       prefill_selection_mode, prefill_backend_family, prefill_route, prefill_artifact_metadata)
 
-    stage_started_us = monotonic_timestamp_us()
-    consumed_token_count = staged_tokens_before
-    if (prefill_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. prefill_route == MIZU_EXEC_ROUTE_CUDA) then
-      call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
-        staged_tokens_before, staged_modal_before, consumed_token_count, status_code)
-      if (status_code /= MIZU_STATUS_OK) then
-        mizu_session_prefill = int(status_code, kind=c_int32_t)
-        return
-      end if
-    end if
-    call complete_prefill(session, consumed_token_count=consumed_token_count, status_code=status_code)
+    call reserve_stage_workspace(runtime, prefill_artifact_metadata, prefill_workspace_reserved, status_code)
     if (status_code /= MIZU_STATUS_OK) then
       mizu_session_prefill = int(status_code, kind=c_int32_t)
       return
     end if
+
+    stage_started_us = monotonic_timestamp_us()
+    consumed_token_count = staged_tokens_before
+    prefill_context_byte_count = 0_i32
+    prefill_context_bytes = 0_i8
+    if (prefill_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. prefill_route == MIZU_EXEC_ROUTE_CUDA) then
+      if (allocated(session%staged_tokens)) then
+        if (allocated(session%staged_modal_bytes)) then
+          call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+            staged_tokens_before, staged_modal_before, staged_token_hash_before, staged_modal_hash_before, &
+            consumed_token_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
+            token_values=session%staged_tokens, modal_bytes=session%staged_modal_bytes, &
+            context_bytes=prefill_context_bytes, context_byte_count=prefill_context_byte_count)
+        else
+          call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+            staged_tokens_before, staged_modal_before, staged_token_hash_before, staged_modal_hash_before, &
+            consumed_token_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
+            token_values=session%staged_tokens, context_bytes=prefill_context_bytes, &
+            context_byte_count=prefill_context_byte_count)
+        end if
+      else if (allocated(session%staged_modal_bytes)) then
+        call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+          staged_tokens_before, staged_modal_before, staged_token_hash_before, staged_modal_hash_before, &
+          consumed_token_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
+          modal_bytes=session%staged_modal_bytes, context_bytes=prefill_context_bytes, &
+          context_byte_count=prefill_context_byte_count)
+      else
+        call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+          staged_tokens_before, staged_modal_before, staged_token_hash_before, staged_modal_hash_before, &
+          consumed_token_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
+          context_bytes=prefill_context_bytes, context_byte_count=prefill_context_byte_count)
+      end if
+      if (status_code /= MIZU_STATUS_OK) then
+        call release_stage_workspace(runtime, prefill_workspace_reserved)
+        mizu_session_prefill = int(status_code, kind=c_int32_t)
+        return
+      end if
+    end if
+    call release_stage_workspace(runtime, prefill_workspace_reserved)
+    call complete_prefill(session, consumed_token_count=consumed_token_count, status_code=status_code, &
+      token_content_hash=staged_token_hash_before, modal_content_hash=staged_modal_hash_before, &
+      projector_embedding_count=projector_embedding_count)
+    if (status_code /= MIZU_STATUS_OK) then
+      mizu_session_prefill = int(status_code, kind=c_int32_t)
+      return
+    end if
+    call store_live_context_record(session, prefill_backend_family, prefill_route, prefill_context_bytes, &
+      prefill_context_byte_count)
     prefill_elapsed_us = elapsed_since_us(stage_started_us)
 
     call finalize_plan_stage_cache(runtime_cache, optimization_store, trim(prefill_optimization_key_text), &
@@ -1075,11 +1156,15 @@ contains
     integer(i64) :: decode_elapsed_us
     integer(i64) :: stage_started_us
     integer(i32) :: decode_stop_reason
+    integer(i32) :: updated_context_byte_count
+    integer(i8)  :: updated_context_bytes(MAX_LIVE_CONTEXT_BYTES)
     integer(i32) :: selection_mode
     integer(i32) :: report_backend_family
     integer(i32) :: report_route
+    integer(i32) :: emitted_tokens_local(MAX_RECENT_OUTPUT_TOKENS)
     character(len=MAX_CACHE_KEY_LEN) :: decode_optimization_key_text
     character(len=MAX_CACHE_KEY_LEN) :: decode_candidate_key_text
+    logical      :: decode_workspace_reserved
     type(artifact_metadata_record) :: decode_artifact_metadata
 
     call resolve_session_handle(session_ptr, box, session, status_code)
@@ -1133,11 +1218,20 @@ contains
     end if
 
     kv_before = session%kv_token_count
+    emitted_tokens_local = 0_i32
+    updated_context_byte_count = 0_i32
+    updated_context_bytes = 0_i8
     call prepare_plan_stage_candidate(runtime, optimization_store, model, MIZU_STAGE_DECODE, &
       OP_FAMILY_DECODE, [max(0_i64, kv_before), max(0_i64, int(options%token_budget, kind=i64)), 1_i64], &
       max(0_i64, int(options%token_budget, kind=i64)), decode_optimization_key_text, &
       decode_candidate_key_text, decode_plan_id, selection_mode, report_backend_family, report_route, &
       decode_artifact_metadata)
+
+    call reserve_stage_workspace(runtime, decode_artifact_metadata, decode_workspace_reserved, status_code)
+    if (status_code /= MIZU_STATUS_OK) then
+      mizu_session_decode_step = int(status_code, kind=c_int32_t)
+      return
+    end if
 
     stage_started_us = monotonic_timestamp_us()
     emitted_token_count = min(int(options%token_budget, kind=i64), 1_i64)
@@ -1146,13 +1240,17 @@ contains
     if (token_value == 0_c_int32_t) token_value = 1_c_int32_t
     if (report_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. report_route == MIZU_EXEC_ROUTE_CUDA) then
       call execute_cuda_decode(runtime%config%cache_root, trim(decode_artifact_metadata%payload_path), &
-        kv_before, int(options%token_budget, kind=i64), emitted_token_count, &
-        token_value, decode_stop_reason, status_code)
+        kv_before, int(options%token_budget, kind=i64), emitted_token_count, token_value, &
+        decode_stop_reason, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
+        session%live_context_bytes, session%live_context_byte_count, updated_context_bytes, &
+        updated_context_byte_count)
       if (status_code /= MIZU_STATUS_OK) then
+        call release_stage_workspace(runtime, decode_workspace_reserved)
         mizu_session_decode_step = int(status_code, kind=c_int32_t)
         return
       end if
     end if
+    call release_stage_workspace(runtime, decode_workspace_reserved)
 
     result%token_count  = int(emitted_token_count, kind=c_size_t)
     result%stop_reason  = int(decode_stop_reason, kind=c_int32_t)
@@ -1168,15 +1266,16 @@ contains
       return
     end if
 
-    call complete_decode(session, emitted_token_count, decode_stop_reason, status_code)
+    if (emitted_token_count > 0_i64) emitted_tokens_local(1) = int(token_value, kind=i32)
+    call complete_decode(session, emitted_token_count, decode_stop_reason, status_code, emitted_tokens_local)
     if (status_code /= MIZU_STATUS_OK) then
       mizu_session_decode_step = int(status_code, kind=c_int32_t)
       return
     end if
+    if (report_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. report_route == MIZU_EXEC_ROUTE_CUDA) then
+      call update_live_context_record(session, updated_context_bytes, updated_context_byte_count)
+    end if
     decode_elapsed_us = elapsed_since_us(stage_started_us)
-
-    session%last_output_tokens = 0_i32
-    session%last_output_tokens(1) = int(token_value, kind=i32)
 
     if (emitted_token_count > 0_i64) then
       call c_f_pointer(result%token_buffer, token_buffer, [int(emitted_token_count)])
@@ -1769,6 +1868,222 @@ contains
     cache_flags = compose_cache_flags(MIZU_CACHE_FLAG_SESSION_HIT, was_hit, reused_winner)
   end subroutine resolve_session_stage_cache
 
+  subroutine persist_session_checkpoint(runtime, runtime_cache, model, session)
+    type(runtime_state), intent(in)           :: runtime
+    type(runtime_cache_bundle), intent(inout) :: runtime_cache
+    type(model_state), intent(in)             :: model
+    type(session_state), intent(in)           :: session
+    type(artifact_metadata_record)            :: metadata
+    character(len=MAX_CACHE_KEY_LEN)          :: checkpoint_key_text
+    character(len=1024)                       :: payload_text
+    integer(i64)                             :: payload_bytes
+
+    if (len_trim(runtime%config%cache_root) == 0) return
+    if (session%live_context_byte_count <= 0_i32) return
+    if (session%live_context_backend_family == MIZU_BACKEND_FAMILY_NONE) return
+    if (session%live_context_execution_route == MIZU_EXEC_ROUTE_NONE) return
+
+    call build_session_checkpoint_key(model, session, checkpoint_key_text)
+    if (len_trim(checkpoint_key_text) == 0) return
+
+    metadata = build_stage_artifact_metadata(MIZU_STAGE_PARK, session%live_context_backend_family, &
+      session%live_context_execution_route, trim(checkpoint_key_text))
+    call build_session_checkpoint_payload_text(session, payload_text, payload_bytes)
+    call materialize_artifact_payload(runtime%config%cache_root, metadata, trim(payload_text), payload_bytes)
+    call record_session_artifact_metadata(runtime_cache, trim(checkpoint_key_text), metadata)
+  end subroutine persist_session_checkpoint
+
+  subroutine restore_session_checkpoint(cache_root, runtime_cache, model, session)
+    character(len=*), intent(in)              :: cache_root
+    type(runtime_cache_bundle), intent(in)    :: runtime_cache
+    type(model_state), intent(in)             :: model
+    type(session_state), intent(inout)        :: session
+    type(artifact_metadata_record)            :: metadata
+    character(len=MAX_CACHE_KEY_LEN)          :: checkpoint_key_text
+    character(len=MAX_PATH_LEN)               :: full_path
+    integer(i64)                              :: kv_token_count
+    integer(i64)                              :: live_context_hash
+    integer(i8)                               :: context_bytes(MAX_LIVE_CONTEXT_BYTES)
+    integer(i32)                              :: backend_family
+    integer(i32)                              :: execution_route
+    integer(i32)                              :: context_byte_count
+    logical                                   :: found
+    logical                                   :: loaded_ok
+
+    if (len_trim(cache_root) == 0) return
+    if (session%live_context_backend_family == MIZU_BACKEND_FAMILY_NONE) return
+    if (session%live_context_execution_route == MIZU_EXEC_ROUTE_NONE) return
+
+    call build_session_checkpoint_key(model, session, checkpoint_key_text)
+    if (len_trim(checkpoint_key_text) == 0) return
+
+    call lookup_session_artifact_metadata(runtime_cache, trim(checkpoint_key_text), metadata, found)
+    if (.not. found) return
+    if (.not. metadata%is_materialized) return
+    if (len_trim(metadata%payload_path) == 0) return
+
+    full_path = join_cache_root_with_payload_path(cache_root, metadata%payload_path)
+    if (len_trim(full_path) == 0) return
+
+    call load_session_checkpoint_payload(trim(full_path), kv_token_count, live_context_hash, backend_family, &
+      execution_route, context_bytes, context_byte_count, loaded_ok)
+    if (.not. loaded_ok) return
+
+    session%kv_token_count = kv_token_count
+    session%live_context_hash = live_context_hash
+    session%has_live_context = .true.
+    call store_live_context_record(session, backend_family, execution_route, context_bytes, context_byte_count)
+  end subroutine restore_session_checkpoint
+
+  subroutine build_session_checkpoint_key(model, session, checkpoint_key_text)
+    type(model_state), intent(in)         :: model
+    type(session_state), intent(in)       :: session
+    character(len=*), intent(out)         :: checkpoint_key_text
+    type(model_manifest)                  :: manifest
+    type(session_cache_key)               :: checkpoint_key
+
+    checkpoint_key_text = ""
+    if (session%live_context_backend_family == MIZU_BACKEND_FAMILY_NONE) return
+    if (session%live_context_execution_route == MIZU_EXEC_ROUTE_NONE) return
+
+    call populate_manifest_identity(model, manifest)
+    call build_session_cache_key(manifest, "checkpoint", session%live_context_backend_family, &
+      session%live_context_execution_route, session%config%max_context_tokens, &
+      session%config%max_decode_tokens, checkpoint_key)
+    write(checkpoint_key_text, '(A,":ctx_hash=",I0,":kv=",I0,":ctx_bytes=",I0)') trim(checkpoint_key%key_text), &
+      session%live_context_hash, session%kv_token_count, session%live_context_byte_count
+  end subroutine build_session_checkpoint_key
+
+  subroutine build_session_checkpoint_payload_text(session, payload_text, payload_bytes)
+    type(session_state), intent(in)       :: session
+    character(len=*), intent(out)         :: payload_text
+    integer(i64), intent(out)             :: payload_bytes
+    character(len=2 * MAX_LIVE_CONTEXT_BYTES) :: hex_text
+
+    call encode_bytes_as_hex(session%live_context_bytes, session%live_context_byte_count, hex_text)
+    payload_text = ""
+    write(payload_text, '(I0,1X,I0,1X,I0,1X,I0,1X,I0,1X,A)') session%live_context_backend_family, &
+      session%live_context_execution_route, session%kv_token_count, session%live_context_hash, &
+      session%live_context_byte_count, trim(hex_text)
+    payload_bytes = int(len_trim(payload_text), kind=i64)
+  end subroutine build_session_checkpoint_payload_text
+
+  subroutine load_session_checkpoint_payload(file_path, kv_token_count, live_context_hash, backend_family, &
+                                             execution_route, context_bytes, context_byte_count, loaded_ok)
+    character(len=*), intent(in)          :: file_path
+    integer(i64), intent(out)             :: kv_token_count
+    integer(i64), intent(out)             :: live_context_hash
+    integer(i32), intent(out)             :: backend_family
+    integer(i32), intent(out)             :: execution_route
+    integer(i8), intent(out)              :: context_bytes(:)
+    integer(i32), intent(out)             :: context_byte_count
+    logical, intent(out)                  :: loaded_ok
+    character(len=1024)                   :: line
+    character(len=2 * MAX_LIVE_CONTEXT_BYTES) :: hex_text
+    integer(i32)                          :: unit_id
+    integer(i32)                          :: ios
+    logical                               :: exists
+
+    kv_token_count = 0_i64
+    live_context_hash = 0_i64
+    backend_family = MIZU_BACKEND_FAMILY_NONE
+    execution_route = MIZU_EXEC_ROUTE_NONE
+    context_bytes = 0_i8
+    context_byte_count = 0_i32
+    loaded_ok = .false.
+
+    inquire(file=trim(file_path), exist=exists)
+    if (.not. exists) return
+
+    open(newunit=unit_id, file=trim(file_path), status="old", action="read", iostat=ios)
+    if (ios /= 0_i32) return
+    read(unit_id, "(A)", iostat=ios) line
+    close(unit_id)
+    if (ios /= 0_i32) return
+
+    hex_text = ""
+    read(line, *, iostat=ios) backend_family, execution_route, kv_token_count, live_context_hash, &
+      context_byte_count, hex_text
+    if (ios /= 0_i32) return
+
+    call decode_hex_to_bytes(trim(hex_text), context_byte_count, context_bytes, loaded_ok)
+  end subroutine load_session_checkpoint_payload
+
+  subroutine encode_bytes_as_hex(byte_values, byte_count, hex_text)
+    integer(i8), intent(in)               :: byte_values(:)
+    integer(i32), intent(in)              :: byte_count
+    character(len=*), intent(out)         :: hex_text
+    character(len=16), parameter          :: HEX_DIGITS = "0123456789ABCDEF"
+    integer(i32)                          :: byte_index
+    integer(i32)                          :: encoded_count
+    integer(i32)                          :: byte_value
+
+    hex_text = ""
+    encoded_count = max(0_i32, min(byte_count, min(int(size(byte_values), kind=i32), len(hex_text) / 2)))
+    do byte_index = 1_i32, encoded_count
+      byte_value = int(byte_values(byte_index), kind=i32)
+      if (byte_value < 0_i32) byte_value = byte_value + 256_i32
+      hex_text((2 * byte_index) - 1:(2 * byte_index) - 1) = HEX_DIGITS((byte_value / 16_i32) + 1:(byte_value / 16_i32) + 1)
+      hex_text(2 * byte_index:2 * byte_index) = HEX_DIGITS(mod(byte_value, 16_i32) + 1:mod(byte_value, 16_i32) + 1)
+    end do
+  end subroutine encode_bytes_as_hex
+
+  subroutine decode_hex_to_bytes(hex_text, byte_count, byte_values, decoded_ok)
+    character(len=*), intent(in)          :: hex_text
+    integer(i32), intent(in)              :: byte_count
+    integer(i8), intent(out)              :: byte_values(:)
+    logical, intent(out)                  :: decoded_ok
+    integer(i32)                          :: byte_index
+    integer(i32)                          :: decoded_count
+    integer(i32)                          :: upper_nibble
+    integer(i32)                          :: lower_nibble
+    integer(i32)                          :: byte_value
+
+    byte_values = 0_i8
+    decoded_ok = .false.
+    decoded_count = max(0_i32, min(byte_count, min(int(size(byte_values), kind=i32), len_trim(hex_text) / 2)))
+    if (decoded_count <= 0_i32) then
+      decoded_ok = (byte_count <= 0_i32)
+      return
+    end if
+    if ((2 * decoded_count) > len_trim(hex_text)) return
+
+    do byte_index = 1_i32, decoded_count
+      upper_nibble = hex_digit_value(hex_text((2 * byte_index) - 1:(2 * byte_index) - 1))
+      lower_nibble = hex_digit_value(hex_text(2 * byte_index:2 * byte_index))
+      if (upper_nibble < 0_i32 .or. lower_nibble < 0_i32) return
+
+      byte_value = (16_i32 * upper_nibble) + lower_nibble
+      if (byte_value > 127_i32) then
+        byte_values(byte_index) = int(byte_value - 256_i32, kind=i8)
+      else
+        byte_values(byte_index) = int(byte_value, kind=i8)
+      end if
+    end do
+
+    decoded_ok = .true.
+  end subroutine decode_hex_to_bytes
+
+  pure integer(i32) function hex_digit_value(hex_char) result(digit_value)
+    character(len=*), intent(in) :: hex_char
+    integer(i32)                 :: ascii_code
+
+    digit_value = -1_i32
+    if (len_trim(hex_char) <= 0) return
+
+    ascii_code = iachar(hex_char(1:1))
+    select case (ascii_code)
+    case (iachar("0"):iachar("9"))
+      digit_value = ascii_code - iachar("0")
+    case (iachar("A"):iachar("F"))
+      digit_value = 10_i32 + ascii_code - iachar("A")
+    case (iachar("a"):iachar("f"))
+      digit_value = 10_i32 + ascii_code - iachar("a")
+    case default
+      digit_value = -1_i32
+    end select
+  end function hex_digit_value
+
   subroutine prepare_plan_stage_candidate(runtime, optimization_store, model, stage_kind, op_family, &
                                           shape, token_count, optimization_key_text, &
                                           candidate_key_text, plan_id, selection_mode, &
@@ -1858,6 +2173,33 @@ contains
       trim(candidate_key_text))
     cache_flags = compose_cache_flags(MIZU_CACHE_FLAG_PLAN_HIT, was_hit, reused_winner)
   end subroutine finalize_plan_stage_cache
+
+  subroutine reserve_stage_workspace(runtime, artifact_metadata, was_reserved, status_code)
+    type(runtime_state), intent(inout)             :: runtime
+    type(artifact_metadata_record), intent(in)     :: artifact_metadata
+    logical, intent(out)                           :: was_reserved
+    integer(i32), intent(out)                      :: status_code
+
+    was_reserved = .false.
+    status_code = MIZU_STATUS_OK
+    if (artifact_metadata%workspace_bytes <= 0_i64) return
+
+    call reserve_workspace_bytes(runtime%workspace, artifact_metadata%workspace_bytes, status_code)
+    if (status_code /= MIZU_STATUS_OK) then
+      call set_runtime_error(runtime, status_code, "workspace reservation failed")
+      return
+    end if
+
+    was_reserved = .true.
+  end subroutine reserve_stage_workspace
+
+  subroutine release_stage_workspace(runtime, was_reserved)
+    type(runtime_state), intent(inout) :: runtime
+    logical, intent(in)                :: was_reserved
+
+    if (.not. was_reserved) return
+    call release_workspace_bytes(runtime%workspace)
+  end subroutine release_stage_workspace
 
   subroutine prepare_projector_stage_candidate(runtime, optimization_store, model, staged_modal_byte_count, &
                                                staged_modal_kind, staged_modal_dtype, staged_modal_slot_name, &

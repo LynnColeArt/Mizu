@@ -23,5 +23,7 @@ These suites cover the `API-C*` portion of
   - verifies route-specific CUDA formats are persisted
   - verifies CUDA stub artifact payload files are materialized under `cache_root`
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
+  - verifies CUDA `park` and `resume` materialize a persisted session
+    checkpoint artifact under `cache_root`
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

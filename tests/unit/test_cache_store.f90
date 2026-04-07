@@ -5,11 +5,12 @@ program test_cache_store
   use mod_cache_store, only: artifact_metadata_record, runtime_cache_bundle, &
                              initialize_runtime_cache_bundle, load_runtime_cache_bundle, &
                              save_runtime_cache_bundle, touch_weight_cache_key, &
-                             touch_plan_cache_key, touch_multimodal_cache_key, &
+                             touch_plan_cache_key, touch_session_cache_key, &
+                             touch_multimodal_cache_key, &
                              record_weight_artifact_metadata, record_plan_artifact_metadata, &
-                             record_multimodal_artifact_metadata, &
+                             record_session_artifact_metadata, record_multimodal_artifact_metadata, &
                              lookup_weight_artifact_metadata, lookup_plan_artifact_metadata, &
-                             lookup_multimodal_artifact_metadata
+                             lookup_session_artifact_metadata, lookup_multimodal_artifact_metadata
 
   implicit none
 
@@ -17,6 +18,7 @@ program test_cache_store
   type(runtime_cache_bundle)    :: reloaded_bundle
   type(artifact_metadata_record) :: weight_metadata
   type(artifact_metadata_record) :: plan_metadata
+  type(artifact_metadata_record) :: session_metadata
   type(artifact_metadata_record) :: multimodal_metadata
   type(artifact_metadata_record) :: reloaded_metadata
   logical                       :: was_hit
@@ -30,6 +32,8 @@ program test_cache_store
   call expect_false("first weight touch should miss", was_hit)
   call touch_plan_cache_key(bundle, "plan:key:metal", was_hit)
   call expect_false("first plan touch should miss", was_hit)
+  call touch_session_cache_key(bundle, "session:key:cuda", was_hit)
+  call expect_false("first session touch should miss", was_hit)
   call touch_multimodal_cache_key(bundle, "mm:key:ane", was_hit)
   call expect_false("first multimodal touch should miss", was_hit)
 
@@ -55,6 +59,18 @@ program test_cache_store
   plan_metadata%payload_path = "artifacts/apple/metal/plans/prefill/2222BBBB.plan"
   call record_plan_artifact_metadata(bundle, "plan:key:metal", plan_metadata)
 
+  session_metadata = artifact_metadata_record()
+  session_metadata%backend_family = MIZU_BACKEND_FAMILY_APPLE
+  session_metadata%execution_route = MIZU_EXEC_ROUTE_METAL
+  session_metadata%stage_kind = MIZU_STAGE_PREFILL
+  session_metadata%is_materialized = .true.
+  session_metadata%payload_bytes = 512
+  session_metadata%workspace_bytes = 4096_8
+  session_metadata%artifact_format = "apple_metal_session_checkpoint_v1"
+  session_metadata%payload_fingerprint = "2A2A2A2A"
+  session_metadata%payload_path = "artifacts/apple/metal/misc/2A2A2A2A.artifact"
+  call record_session_artifact_metadata(bundle, "session:key:cuda", session_metadata)
+
   multimodal_metadata = artifact_metadata_record()
   multimodal_metadata%backend_family = MIZU_BACKEND_FAMILY_APPLE
   multimodal_metadata%execution_route = MIZU_EXEC_ROUTE_ANE
@@ -77,6 +93,8 @@ program test_cache_store
   call expect_true("reloaded weight key should hit", was_hit)
   call touch_plan_cache_key(reloaded_bundle, "plan:key:metal", was_hit)
   call expect_true("reloaded plan key should hit", was_hit)
+  call touch_session_cache_key(reloaded_bundle, "session:key:cuda", was_hit)
+  call expect_true("reloaded session key should hit", was_hit)
   call touch_multimodal_cache_key(reloaded_bundle, "mm:key:ane", was_hit)
   call expect_true("reloaded multimodal key should hit", was_hit)
 
@@ -101,6 +119,13 @@ program test_cache_store
   call expect_equal_i64("plan metadata workspace", reloaded_metadata%workspace_bytes, 8388608_8)
   call expect_equal_string("plan metadata format", trim(reloaded_metadata%artifact_format), &
     "apple_metal_prefill_plan_v1")
+
+  call lookup_session_artifact_metadata(reloaded_bundle, "session:key:cuda", reloaded_metadata, found)
+  call expect_true("reloaded session metadata should exist", found)
+  call expect_true("session metadata should remain materialized", reloaded_metadata%is_materialized)
+  call expect_equal_i64("session metadata bytes", reloaded_metadata%payload_bytes, 512_8)
+  call expect_equal_string("session metadata path", trim(reloaded_metadata%payload_path), &
+    "artifacts/apple/metal/misc/2A2A2A2A.artifact")
 
   call lookup_multimodal_artifact_metadata(reloaded_bundle, "mm:key:ane", reloaded_metadata, found)
   call expect_true("reloaded multimodal metadata should exist", found)

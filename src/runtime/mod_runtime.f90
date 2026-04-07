@@ -4,6 +4,7 @@ module mod_runtime
   use mod_types,  only: runtime_config, runtime_state, model_open_config, model_info, &
                         model_state, execution_report, SOURCE_FORMAT_UNKNOWN, &
                         backend_descriptor
+  use mod_workspace, only: initialize_workspace, reset_workspace
 
   implicit none
 
@@ -23,6 +24,7 @@ contains
     type(runtime_config), intent(in) :: config
 
     runtime%config            = config
+    call initialize_workspace(runtime%workspace, 0_i64)
     runtime%last_status_code  = MIZU_STATUS_OK
     runtime%live_model_count  = 0_i32
     runtime%detected_backend_mask = 0_i64
@@ -36,6 +38,7 @@ contains
     type(runtime_state), intent(inout) :: runtime
 
     runtime%config             = runtime_config()
+    call reset_workspace(runtime%workspace)
     runtime%last_status_code   = MIZU_STATUS_OK
     runtime%live_model_count   = 0_i32
     runtime%detected_backend_mask = 0_i64

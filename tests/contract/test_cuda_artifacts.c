@@ -54,9 +54,13 @@ int main(void) {
     const char *artifact_cache_path = "/tmp/mizu_cuda_artifacts/artifact_cache_v1.txt";
     mizu_execution_report_t prefill_reports[2];
     mizu_execution_report_t decode_reports[1];
+    mizu_execution_report_t park_reports[1];
+    mizu_execution_report_t resume_reports[1];
     mizu_execution_report_t model_report;
     mizu_report_buffer_t prefill_buffer;
     mizu_report_buffer_t decode_buffer;
+    mizu_report_buffer_t park_buffer;
+    mizu_report_buffer_t resume_buffer;
     mizu_runtime_config_t runtime_config;
     mizu_model_open_config_t model_config;
     mizu_session_config_t session_config;
@@ -66,6 +70,8 @@ int main(void) {
 
     memset(prefill_reports, 0, sizeof(prefill_reports));
     memset(decode_reports, 0, sizeof(decode_reports));
+    memset(park_reports, 0, sizeof(park_reports));
+    memset(resume_reports, 0, sizeof(resume_reports));
     memset(&model_report, 0, sizeof(model_report));
 
     command_status = system("rm -rf /tmp/mizu_cuda_artifacts && mkdir -p /tmp/mizu_cuda_artifacts");
@@ -169,6 +175,28 @@ int main(void) {
         return 1;
     }
 
+    park_buffer.struct_size = sizeof(park_buffer);
+    park_buffer.reports = park_reports;
+    park_buffer.report_capacity = 1;
+    park_buffer.report_count = 0;
+
+    status = mizu_session_park(session, &park_buffer);
+    if (!expect_status("cuda park", status, MIZU_STATUS_OK)) return 1;
+    if (!expect_true("cuda park should route to CUDA", park_reports[0].execution_route == MIZU_EXEC_ROUTE_CUDA)) {
+        return 1;
+    }
+
+    resume_buffer.struct_size = sizeof(resume_buffer);
+    resume_buffer.reports = resume_reports;
+    resume_buffer.report_capacity = 1;
+    resume_buffer.report_count = 0;
+
+    status = mizu_session_resume(session, &resume_buffer);
+    if (!expect_status("cuda resume", status, MIZU_STATUS_OK)) return 1;
+    if (!expect_true("cuda resume should route to CUDA", resume_reports[0].execution_route == MIZU_EXEC_ROUTE_CUDA)) {
+        return 1;
+    }
+
     status = mizu_session_close(session);
     if (!expect_status("cuda session close", status, MIZU_STATUS_OK)) return 1;
     status = mizu_model_close(model);
@@ -184,15 +212,21 @@ int main(void) {
                      file_contains_substring(artifact_cache_path, "cuda_bf16_prefill_plan_v1"))) return 1;
     if (!expect_true("cuda artifact cache should contain decode format",
                      file_contains_substring(artifact_cache_path, "cuda_bf16_decode_plan_v1"))) return 1;
+    if (!expect_true("cuda artifact cache should contain session metadata",
+                     file_contains_substring(artifact_cache_path, "meta session"))) return 1;
 
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -type f | grep -q .");
     if (!expect_true("cuda weight artifact file should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector -type f | grep -q .");
     if (!expect_true("cuda projector artifact file should exist", command_status == 0)) return 1;
+    command_status = system("grep -R \"stage=2;.*shape0=8\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
+    if (!expect_true("cuda projector artifact should retain staged modal byte count", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill -type f | grep -q .");
     if (!expect_true("cuda prefill artifact file should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
     if (!expect_true("cuda decode artifact file should exist", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/misc -type f | grep -q .");
+    if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
 
     command_status = system("rm -rf /tmp/mizu_cuda_artifacts");
     if (!expect_true("cuda persist root cleanup should succeed", command_status == 0)) return 1;

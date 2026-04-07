@@ -13,9 +13,9 @@ module mod_cache_store
   public :: touch_weight_cache_key, touch_plan_cache_key
   public :: touch_session_cache_key, touch_multimodal_cache_key
   public :: record_weight_artifact_metadata, record_plan_artifact_metadata
-  public :: record_multimodal_artifact_metadata
+  public :: record_session_artifact_metadata, record_multimodal_artifact_metadata
   public :: lookup_weight_artifact_metadata, lookup_plan_artifact_metadata
-  public :: lookup_multimodal_artifact_metadata
+  public :: lookup_session_artifact_metadata, lookup_multimodal_artifact_metadata
   public :: load_runtime_cache_bundle, save_runtime_cache_bundle
 
   integer(i32), parameter :: INITIAL_CACHE_CAPACITY = 16_i32
@@ -112,6 +112,14 @@ contains
     call record_cache_key_metadata(bundle%plan_store, key_text, metadata)
   end subroutine record_plan_artifact_metadata
 
+  subroutine record_session_artifact_metadata(bundle, key_text, metadata)
+    type(runtime_cache_bundle), intent(inout)    :: bundle
+    character(len=*), intent(in)                 :: key_text
+    type(artifact_metadata_record), intent(in)   :: metadata
+
+    call record_cache_key_metadata(bundle%session_store, key_text, metadata)
+  end subroutine record_session_artifact_metadata
+
   subroutine record_multimodal_artifact_metadata(bundle, key_text, metadata)
     type(runtime_cache_bundle), intent(inout)    :: bundle
     character(len=*), intent(in)                 :: key_text
@@ -137,6 +145,15 @@ contains
 
     call lookup_cache_key_metadata(bundle%plan_store, key_text, metadata, found)
   end subroutine lookup_plan_artifact_metadata
+
+  subroutine lookup_session_artifact_metadata(bundle, key_text, metadata, found)
+    type(runtime_cache_bundle), intent(in)       :: bundle
+    character(len=*), intent(in)                 :: key_text
+    type(artifact_metadata_record), intent(out)  :: metadata
+    logical, intent(out)                         :: found
+
+    call lookup_cache_key_metadata(bundle%session_store, key_text, metadata, found)
+  end subroutine lookup_session_artifact_metadata
 
   subroutine lookup_multimodal_artifact_metadata(bundle, key_text, metadata, found)
     type(runtime_cache_bundle), intent(in)       :: bundle
@@ -201,7 +218,7 @@ contains
       if (ios /= 0) cycle
 
       select case (trim(tag))
-      case ("weight", "plan", "mm")
+      case ("weight", "plan", "session", "mm")
         key_text = ""
         read(line, *, iostat=ios) tag, key_text
         if (ios /= 0) cycle
@@ -212,6 +229,8 @@ contains
           call remember_cache_key(bundle%weight_store, trim(key_text))
         case ("plan")
           call remember_cache_key(bundle%plan_store, trim(key_text))
+        case ("session")
+          call remember_cache_key(bundle%session_store, trim(key_text))
         case ("mm")
           call remember_cache_key(bundle%multimodal_store, trim(key_text))
         case default
@@ -244,6 +263,8 @@ contains
           call record_cache_key_metadata(bundle%weight_store, trim(key_text), metadata)
         case ("plan")
           call record_cache_key_metadata(bundle%plan_store, trim(key_text), metadata)
+        case ("session")
+          call record_cache_key_metadata(bundle%session_store, trim(key_text), metadata)
         case ("mm")
           call record_cache_key_metadata(bundle%multimodal_store, trim(key_text), metadata)
         case default
@@ -275,6 +296,8 @@ contains
     if (ios == 0_i32) call write_artifact_metadata_store(unit_id, "weight", bundle%weight_store, ios)
     if (ios == 0_i32) call write_cache_key_store(unit_id, "plan", bundle%plan_store, ios)
     if (ios == 0_i32) call write_artifact_metadata_store(unit_id, "plan", bundle%plan_store, ios)
+    if (ios == 0_i32) call write_cache_key_store(unit_id, "session", bundle%session_store, ios)
+    if (ios == 0_i32) call write_artifact_metadata_store(unit_id, "session", bundle%session_store, ios)
     if (ios == 0_i32) call write_cache_key_store(unit_id, "mm", bundle%multimodal_store, ios)
     if (ios == 0_i32) call write_artifact_metadata_store(unit_id, "mm", bundle%multimodal_store, ios)
     if (ios /= 0_i32) then

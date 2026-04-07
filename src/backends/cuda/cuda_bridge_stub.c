@@ -23,6 +23,127 @@ static void copy_name(const char *source_name, char *device_name, size_t device_
     device_name[device_name_capacity - 1] = '\0';
 }
 
+static void stamp_workspace_buffer(void *workspace_buffer,
+                                   int64_t workspace_bytes,
+                                   uint64_t seed,
+                                   uint8_t stage_tag) {
+    uint8_t *bytes;
+    int64_t index;
+
+    if (workspace_buffer == NULL || workspace_bytes <= 0) return;
+
+    bytes = (uint8_t *)workspace_buffer;
+    seed = mix_u64(seed ^ (uint64_t)stage_tag);
+    for (index = 0; index < workspace_bytes && index < 32; ++index) {
+        bytes[index] = (uint8_t)((seed >> ((index % 8) * 8)) & UINT64_C(0xff));
+        seed = mix_u64(seed + (uint64_t)index + (uint64_t)stage_tag);
+    }
+}
+
+static void fill_prefill_context_bytes(uint64_t seed,
+                                       int64_t token_count,
+                                       int64_t modal_byte_count,
+                                       int32_t staged_modal_count,
+                                       int64_t consumed_token_count,
+                                       int8_t *context_bytes,
+                                       int32_t context_capacity,
+                                       int32_t *context_byte_count) {
+    uint8_t *bytes;
+    uint64_t seed_copy;
+    int32_t stored_count;
+    int32_t index;
+
+    if (context_byte_count == NULL) return;
+
+    *context_byte_count = 0;
+    if (context_bytes == NULL || context_capacity <= 0) return;
+
+    bytes = (uint8_t *)context_bytes;
+    stored_count = context_capacity < 48 ? context_capacity : 48;
+    memset(bytes, 0, (size_t)stored_count);
+
+    if (stored_count > 0) {
+        memcpy(bytes, &seed, (size_t)(stored_count < 8 ? stored_count : 8));
+    }
+    if (stored_count > 8) {
+        memcpy(bytes + 8, &token_count, (size_t)(stored_count - 8 < 8 ? stored_count - 8 : 8));
+    }
+    if (stored_count > 16) {
+        memcpy(bytes + 16, &modal_byte_count, (size_t)(stored_count - 16 < 8 ? stored_count - 16 : 8));
+    }
+    if (stored_count > 24) {
+        memcpy(bytes + 24, &staged_modal_count, (size_t)(stored_count - 24 < 4 ? stored_count - 24 : 4));
+    }
+    if (stored_count > 28) {
+        memcpy(bytes + 28, &consumed_token_count, (size_t)(stored_count - 28 < 8 ? stored_count - 28 : 8));
+    }
+
+    seed_copy = seed;
+    for (index = 0; index < stored_count; ++index) {
+        seed_copy = mix_u64(seed_copy ^
+                            ((uint64_t)token_count << 1) ^
+                            ((uint64_t)modal_byte_count << 9) ^
+                            ((uint64_t)(uint32_t)staged_modal_count << 17) ^
+                            ((uint64_t)consumed_token_count << 25) ^
+                            (uint64_t)(uint32_t)index);
+        bytes[index] ^= (uint8_t)(seed_copy & UINT64_C(0xff));
+    }
+
+    *context_byte_count = stored_count;
+}
+
+static void fill_decode_context_bytes(uint64_t seed,
+                                      int64_t kv_after,
+                                      int64_t emitted_token_count,
+                                      int32_t token_value,
+                                      int32_t stop_reason,
+                                      int8_t *context_bytes,
+                               int32_t context_capacity,
+                                      int32_t *context_byte_count) {
+    uint8_t *bytes;
+    uint64_t seed_copy;
+    int32_t index;
+    int32_t stored_count;
+
+    if (context_byte_count == NULL) return;
+
+    *context_byte_count = 0;
+    if (context_bytes == NULL || context_capacity <= 0) return;
+
+    bytes = (uint8_t *)context_bytes;
+    stored_count = context_capacity < 48 ? context_capacity : 48;
+    memset(bytes, 0, (size_t)stored_count);
+
+    if (stored_count > 0) {
+        memcpy(bytes, &seed, (size_t)(stored_count < 8 ? stored_count : 8));
+    }
+    if (stored_count > 8) {
+        memcpy(bytes + 8, &kv_after, (size_t)(stored_count - 8 < 8 ? stored_count - 8 : 8));
+    }
+    if (stored_count > 16) {
+        memcpy(bytes + 16, &emitted_token_count, (size_t)(stored_count - 16 < 8 ? stored_count - 16 : 8));
+    }
+    if (stored_count > 24) {
+        memcpy(bytes + 24, &token_value, (size_t)(stored_count - 24 < 4 ? stored_count - 24 : 4));
+    }
+    if (stored_count > 28) {
+        memcpy(bytes + 28, &stop_reason, (size_t)(stored_count - 28 < 4 ? stored_count - 28 : 4));
+    }
+
+    seed_copy = seed;
+    for (index = 0; index < stored_count; ++index) {
+        seed_copy = mix_u64(seed_copy ^
+                            ((uint64_t)kv_after << 1) ^
+                            ((uint64_t)emitted_token_count << 9) ^
+                            ((uint64_t)(uint32_t)token_value << 17) ^
+                            ((uint64_t)(uint32_t)stop_reason << 25) ^
+                            (uint64_t)(uint32_t)index);
+        bytes[index] ^= (uint8_t)(seed_copy & UINT64_C(0xff));
+    }
+
+    *context_byte_count = stored_count;
+}
+
 void mizu_cuda_bridge_get_device_info(int32_t *device_count,
                                       int64_t *total_memory_bytes,
                                       int32_t *compute_major,
@@ -46,22 +167,48 @@ void mizu_cuda_bridge_get_device_info(int32_t *device_count,
 }
 
 void mizu_cuda_bridge_prefill(int64_t payload_hash,
-                              int64_t staged_tokens,
+                              const int32_t *token_values,
+                              int64_t token_count,
+                              const int8_t *modal_bytes,
+                              int64_t modal_byte_count,
                               int32_t staged_modal_count,
+                              void *workspace_buffer,
+                              int64_t workspace_bytes,
+                              int8_t *context_bytes,
+                              int32_t context_capacity,
+                              int32_t *context_byte_count,
                               int64_t *consumed_token_count,
                               int32_t *status_code) {
-    (void)payload_hash;
+    uint64_t seed;
+    int64_t index;
 
     if (consumed_token_count == NULL || status_code == NULL) return;
 
-    *consumed_token_count = staged_tokens > 0 ? staged_tokens : 0;
+    *consumed_token_count = token_count > 0 ? token_count : 0;
     if (*consumed_token_count == 0 && staged_modal_count > 0) *consumed_token_count = 1;
+    seed = mix_u64((uint64_t)token_count);
+    if (token_values != NULL && token_count > 0) {
+        for (index = 0; index < token_count; ++index) {
+            seed = mix_u64(seed ^ (uint64_t)(uint32_t)token_values[index]);
+        }
+    }
+    if (modal_bytes != NULL && modal_byte_count > 0) {
+        for (index = 0; index < modal_byte_count; ++index) {
+            seed = mix_u64(seed ^ (uint64_t)(uint8_t)modal_bytes[index]);
+        }
+    }
+    seed = mix_u64((uint64_t)payload_hash ^ seed ^ ((uint64_t)(uint32_t)staged_modal_count << 33));
+    fill_prefill_context_bytes(seed, token_count, modal_byte_count, staged_modal_count, *consumed_token_count,
+                               context_bytes, context_capacity, context_byte_count);
+    stamp_workspace_buffer(workspace_buffer, workspace_bytes, seed, UINT8_C(3));
     *status_code = MIZU_STATUS_OK;
 }
 
 void mizu_cuda_bridge_projector(int64_t payload_hash,
                                 int64_t modal_byte_count,
                                 int32_t placeholder_count,
+                                void *workspace_buffer,
+                                int64_t workspace_bytes,
                                 int64_t *embedding_count,
                                 int32_t *status_code) {
     uint64_t seed;
@@ -71,17 +218,26 @@ void mizu_cuda_bridge_projector(int64_t payload_hash,
     seed = mix_u64((uint64_t)payload_hash ^ ((uint64_t)modal_byte_count << 1));
     *embedding_count = (placeholder_count > 0) ? (int64_t)placeholder_count : 1;
     if (modal_byte_count > 0) *embedding_count += (int64_t)(seed % UINT64_C(2));
+    stamp_workspace_buffer(workspace_buffer, workspace_bytes, seed, UINT8_C(2));
     *status_code = MIZU_STATUS_OK;
 }
 
 void mizu_cuda_bridge_decode(int64_t payload_hash,
                              int64_t kv_before,
                              int64_t token_budget,
+                             const int8_t *context_bytes,
+                             int32_t context_byte_count,
+                             void *workspace_buffer,
+                             int64_t workspace_bytes,
+                             int8_t *updated_context_bytes,
+                             int32_t updated_context_capacity,
+                             int32_t *updated_context_byte_count,
                              int64_t *emitted_token_count,
                              int32_t *token_value,
                              int32_t *stop_reason,
                              int32_t *status_code) {
     uint64_t seed;
+    int32_t index;
 
     if (emitted_token_count == NULL || token_value == NULL || stop_reason == NULL ||
         status_code == NULL) {
@@ -91,10 +247,19 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
     seed = (uint64_t)payload_hash;
     seed ^= (uint64_t)kv_before * UINT64_C(0x9e3779b97f4a7c15);
     seed ^= (uint64_t)token_budget * UINT64_C(0xbf58476d1ce4e5b9);
+    if (context_bytes != NULL && context_byte_count > 0) {
+        for (index = 0; index < context_byte_count; ++index) {
+            seed = mix_u64(seed ^ (uint64_t)(uint8_t)context_bytes[index]);
+        }
+    }
     seed = mix_u64(seed);
 
     *emitted_token_count = token_budget > 0 ? 1 : 0;
     *token_value = 1 + (int32_t)(seed % UINT64_C(4095));
     *stop_reason = MIZU_STOP_REASON_NONE;
+    fill_decode_context_bytes(seed ^ (uint64_t)(uint32_t)(*token_value), kv_before + *emitted_token_count,
+                              *emitted_token_count, *token_value, *stop_reason, updated_context_bytes,
+                              updated_context_capacity, updated_context_byte_count);
+    stamp_workspace_buffer(workspace_buffer, workspace_bytes, seed, UINT8_C(4));
     *status_code = MIZU_STATUS_OK;
 }

@@ -25,6 +25,21 @@ Current implementation status:
 - CUDA projector, prefill, and decode now run through a backend-owned CUDA
   bridge, with placeholder kernels on NVIDIA hardware and a CPU stub fallback
   when `nvcc` is unavailable
+- session staging now preserves attached token content and copied modal bytes,
+  along with stable content hashes that feed the current CUDA placeholder path
+- live session context identity now survives prefill and advances on decode, so
+  repeated CUDA decode steps depend on prior session work instead of counts
+  alone
+- CUDA prefill now pushes real staged token and modal buffers through the
+  backend bridge instead of relying only on staged counts and hashes
+- CUDA prefill now emits a persisted backend-owned live-context byte buffer
+  into session state, and CUDA decode consumes and updates that buffer across
+  steps
+- CUDA `park` now materializes a small session-checkpoint artifact when
+  `cache_root` is set, and `resume` reloads that checkpoint through the
+  runtime cache layer
+- runtime workspace reservations now back a real reusable host scratch buffer,
+  and the CUDA bridge receives that buffer during stage execution
 - `make test` now succeeds from a clean tree without relying on stray Fortran
   module files
 - Apple and CUDA execution backends are not implemented yet

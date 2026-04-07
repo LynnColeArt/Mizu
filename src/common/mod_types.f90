@@ -1,5 +1,6 @@
 module mod_types
-  use mod_kinds, only: i32, i64, r32, MAX_TENSOR_RANK, MAX_NAME_LEN, &
+  use iso_c_binding, only: c_ptr, c_null_ptr
+  use mod_kinds, only: i8, i32, i64, r32, MAX_TENSOR_RANK, MAX_NAME_LEN, &
                        MAX_SLOT_NAME_LEN, MAX_PATH_LEN, MAX_ERROR_MESSAGE_LEN
   use mod_status, only: MIZU_STATUS_OK
 
@@ -63,7 +64,7 @@ module mod_types
   public :: execution_report, runtime_state, model_state
   public :: session_state, workspace_state
   public :: MAX_RUNTIME_BACKENDS
-  public :: MAX_RECENT_OUTPUT_TOKENS
+  public :: MAX_RECENT_OUTPUT_TOKENS, MAX_LIVE_CONTEXT_BYTES
 
   integer(i32), parameter :: MIZU_ABI_VERSION = int(z'00010000', kind=i32)
 
@@ -177,6 +178,7 @@ module mod_types
 
   integer(i32), parameter :: MAX_RUNTIME_BACKENDS = 2_i32
   integer(i32), parameter :: MAX_RECENT_OUTPUT_TOKENS = 8_i32
+  integer(i32), parameter :: MAX_LIVE_CONTEXT_BYTES = 64_i32
 
   type :: runtime_handle
     integer(i64) :: value = 0_i64
@@ -306,9 +308,18 @@ module mod_types
     integer(i64)                     :: elapsed_us          = 0_i64
   end type execution_report
 
+  type :: workspace_state
+    type(workspace_handle)            :: handle
+    type(c_ptr)                       :: host_buffer         = c_null_ptr
+    integer(i64)                      :: bytes_reserved      = 0_i64
+    integer(i64)                      :: bytes_in_use        = 0_i64
+    logical                           :: is_ready            = .false.
+  end type workspace_state
+
   type :: runtime_state
     type(runtime_handle)              :: handle
     type(runtime_config)              :: config
+    type(workspace_state)             :: workspace
     integer(i32)                      :: last_status_code    = MIZU_STATUS_OK
     integer(i32)                      :: live_model_count    = 0_i32
     integer(i64)                      :: detected_backend_mask = MIZU_BACKEND_MASK_NONE
@@ -340,11 +351,20 @@ module mod_types
     type(session_config)              :: config
     type(execution_report)            :: last_report
     integer(i64)                      :: kv_token_count      = 0_i64
+    integer(i64)                      :: live_context_hash   = 0_i64
+    integer(i32)                      :: live_context_backend_family = MIZU_BACKEND_FAMILY_NONE
+    integer(i32)                      :: live_context_execution_route = MIZU_EXEC_ROUTE_NONE
+    integer(i32)                      :: live_context_byte_count = 0_i32
+    integer(i8)                       :: live_context_bytes(MAX_LIVE_CONTEXT_BYTES) = 0_i8
     integer(i64)                      :: staged_token_count  = 0_i64
+    integer(i64)                      :: staged_token_hash   = 0_i64
+    integer(i32), allocatable         :: staged_tokens(:)
     integer(i64)                      :: last_output_token_count = 0_i64
     integer(i32)                      :: last_output_tokens(MAX_RECENT_OUTPUT_TOKENS) = 0_i32
     integer(i32)                      :: staged_modal_count  = 0_i32
     integer(i64)                      :: staged_modal_byte_count = 0_i64
+    integer(i64)                      :: staged_modal_hash   = 0_i64
+    integer(i8), allocatable          :: staged_modal_bytes(:)
     integer(i32)                      :: staged_modal_kind   = MIZU_MODALITY_KIND_UNKNOWN
     integer(i32)                      :: staged_modal_dtype  = MIZU_DTYPE_UNKNOWN
     character(len=MAX_SLOT_NAME_LEN)  :: staged_modal_slot_name = ""
@@ -356,12 +376,5 @@ module mod_types
     logical                           :: has_decode_result   = .false.
     logical                           :: is_evicted          = .false.
   end type session_state
-
-  type :: workspace_state
-    type(workspace_handle)            :: handle
-    integer(i64)                      :: bytes_reserved      = 0_i64
-    integer(i64)                      :: bytes_in_use        = 0_i64
-    logical                           :: is_ready            = .false.
-  end type workspace_state
 
 end module mod_types

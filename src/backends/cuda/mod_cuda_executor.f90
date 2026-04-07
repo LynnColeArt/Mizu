@@ -1,5 +1,6 @@
 module mod_cuda_executor
-  use mod_kinds,          only: i32, i64, MAX_PATH_LEN
+  use iso_c_binding,     only: c_ptr, c_null_ptr
+  use mod_kinds,          only: i8, i32, i64, MAX_PATH_LEN
   use mod_status,         only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_ARGUMENT, &
                                 MIZU_STATUS_INVALID_STATE
   use mod_types,          only: MIZU_STOP_REASON_NONE
@@ -14,16 +15,22 @@ module mod_cuda_executor
 contains
 
   subroutine execute_cuda_projector(cache_root, artifact_path, modal_byte_count, placeholder_count, &
-                                    embedding_count, status_code)
+                                    modal_content_hash, embedding_count, status_code, workspace_buffer, &
+                                    workspace_bytes)
     character(len=*), intent(in) :: cache_root
     character(len=*), intent(in) :: artifact_path
     integer(i64), intent(in)     :: modal_byte_count
     integer(i32), intent(in)     :: placeholder_count
+    integer(i64), intent(in)     :: modal_content_hash
     integer(i64), intent(out)    :: embedding_count
     integer(i32), intent(out)    :: status_code
+    type(c_ptr), intent(in), optional :: workspace_buffer
+    integer(i64), intent(in), optional :: workspace_bytes
     character(len=1024)          :: payload_text
     integer(i64)                 :: payload_hash
+    integer(i64)                 :: workspace_bytes_local
     logical                      :: loaded_ok
+    type(c_ptr)                  :: workspace_buffer_local
 
     embedding_count = 0_i64
     if (len_trim(cache_root) == 0 .or. len_trim(artifact_path) == 0) then
@@ -42,22 +49,38 @@ contains
       return
     end if
 
-    payload_hash = positive_hash64(trim(payload_text))
+    payload_hash = combine_positive_hash64(positive_hash64(trim(payload_text)), modal_content_hash)
+    workspace_buffer_local = c_null_ptr
+    workspace_bytes_local = 0_i64
+    if (present(workspace_buffer)) workspace_buffer_local = workspace_buffer
+    if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
     call launch_cuda_projector(payload_hash, max(0_i64, modal_byte_count), placeholder_count, embedding_count, &
-      status_code)
+      status_code, workspace_buffer_local, workspace_bytes_local)
   end subroutine execute_cuda_projector
 
   subroutine execute_cuda_prefill(cache_root, artifact_path, staged_tokens, staged_modal_count, &
-                                  consumed_token_count, status_code)
+                                  token_content_hash, modal_content_hash, consumed_token_count, status_code, &
+                                  workspace_buffer, workspace_bytes, token_values, modal_bytes, &
+                                  context_bytes, context_byte_count)
     character(len=*), intent(in) :: cache_root
     character(len=*), intent(in) :: artifact_path
     integer(i64), intent(in)     :: staged_tokens
     integer(i32), intent(in)     :: staged_modal_count
+    integer(i64), intent(in)     :: token_content_hash
+    integer(i64), intent(in)     :: modal_content_hash
     integer(i64), intent(out)    :: consumed_token_count
     integer(i32), intent(out)    :: status_code
+    type(c_ptr), intent(in), optional :: workspace_buffer
+    integer(i64), intent(in), optional :: workspace_bytes
+    integer(i32), intent(in), optional :: token_values(:)
+    integer(i8), intent(in), optional  :: modal_bytes(:)
+    integer(i8), intent(out)           :: context_bytes(:)
+    integer(i32), intent(out)          :: context_byte_count
     character(len=1024)          :: payload_text
     integer(i64)                 :: payload_hash
+    integer(i64)                 :: workspace_bytes_local
     logical                      :: loaded_ok
+    type(c_ptr)                  :: workspace_buffer_local
 
     consumed_token_count = 0_i64
     if (len_trim(cache_root) == 0 .or. len_trim(artifact_path) == 0) then
@@ -76,13 +99,35 @@ contains
       return
     end if
 
+    if (present(token_values)) then
+      if (int(size(token_values), kind=i64) /= max(0_i64, staged_tokens)) then
+        status_code = MIZU_STATUS_INVALID_ARGUMENT
+        return
+      end if
+    end if
+    if (present(modal_bytes)) then
+      if (staged_modal_count <= 0_i32 .and. size(modal_bytes) > 0) then
+        status_code = MIZU_STATUS_INVALID_ARGUMENT
+        return
+      end if
+    end if
+
     payload_hash = positive_hash64(trim(payload_text))
+    payload_hash = combine_positive_hash64(payload_hash, token_content_hash)
+    payload_hash = combine_positive_hash64(payload_hash, modal_content_hash)
+    workspace_buffer_local = c_null_ptr
+    workspace_bytes_local = 0_i64
+    if (present(workspace_buffer)) workspace_buffer_local = workspace_buffer
+    if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
     call launch_cuda_prefill(payload_hash, max(0_i64, staged_tokens), staged_modal_count, &
-      consumed_token_count, status_code)
+      consumed_token_count, status_code, workspace_buffer_local, workspace_bytes_local, token_values, &
+      modal_bytes, context_bytes, context_byte_count)
   end subroutine execute_cuda_prefill
 
   subroutine execute_cuda_decode(cache_root, artifact_path, kv_before, token_budget, emitted_token_count, &
-                                 token_value, stop_reason, status_code)
+                                 token_value, stop_reason, status_code, workspace_buffer, workspace_bytes, &
+                                 context_bytes, context_byte_count, updated_context_bytes, &
+                                 updated_context_byte_count)
     character(len=*), intent(in) :: cache_root
     character(len=*), intent(in) :: artifact_path
     integer(i64), intent(in)     :: kv_before
@@ -91,9 +136,17 @@ contains
     integer(i32), intent(out)    :: token_value
     integer(i32), intent(out)    :: stop_reason
     integer(i32), intent(out)    :: status_code
+    type(c_ptr), intent(in), optional :: workspace_buffer
+    integer(i64), intent(in), optional :: workspace_bytes
+    integer(i8), intent(in)            :: context_bytes(:)
+    integer(i32), intent(in)           :: context_byte_count
+    integer(i8), intent(out)           :: updated_context_bytes(:)
+    integer(i32), intent(out)          :: updated_context_byte_count
     character(len=1024)          :: payload_text
     integer(i64)                 :: payload_hash
+    integer(i64)                 :: workspace_bytes_local
     logical                      :: loaded_ok
+    type(c_ptr)                  :: workspace_buffer_local
 
     emitted_token_count = 0_i64
     token_value = 0_i32
@@ -116,8 +169,13 @@ contains
     end if
 
     payload_hash = positive_hash64(trim(payload_text))
+    workspace_buffer_local = c_null_ptr
+    workspace_bytes_local = 0_i64
+    if (present(workspace_buffer)) workspace_buffer_local = workspace_buffer
+    if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
     call launch_cuda_decode(payload_hash, kv_before, token_budget, emitted_token_count, token_value, &
-      stop_reason, status_code)
+      stop_reason, status_code, workspace_buffer_local, workspace_bytes_local, context_bytes, &
+      context_byte_count, updated_context_bytes, updated_context_byte_count)
   end subroutine execute_cuda_decode
 
   subroutine load_cuda_artifact_payload(cache_root, artifact_path, payload_text, loaded_ok)
@@ -171,5 +229,19 @@ contains
     hash_value = iand(hash_text64(text), int(z'7FFFFFFFFFFFFFFF', kind=i64))
     if (hash_value == 0_i64) hash_value = 1_i64
   end function positive_hash64
+
+  integer(i64) function combine_positive_hash64(base_hash, content_hash) result(hash_value)
+    integer(i64), intent(in) :: base_hash
+    integer(i64), intent(in) :: content_hash
+    integer(i64)             :: mixed_hash
+
+    mixed_hash = ieor(max(1_i64, base_hash), content_hash + int(z'9E3779B97F4A7C15', kind=i64))
+    mixed_hash = ieor(mixed_hash, shiftr(mixed_hash, 30))
+    mixed_hash = mixed_hash * int(z'BF58476D1CE4E5B9', kind=i64)
+    mixed_hash = ieor(mixed_hash, shiftr(mixed_hash, 27))
+    mixed_hash = mixed_hash * int(z'94D049BB133111EB', kind=i64)
+    hash_value = iand(ieor(mixed_hash, shiftr(mixed_hash, 31)), int(z'7FFFFFFFFFFFFFFF', kind=i64))
+    if (hash_value == 0_i64) hash_value = 1_i64
+  end function combine_positive_hash64
 
 end module mod_cuda_executor

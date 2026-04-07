@@ -54,6 +54,8 @@ UNIT_BINS := \
 	$(TEST_DIR)/test_cache_store \
 	$(TEST_DIR)/test_optimization_store \
 	$(TEST_DIR)/test_backend_registry \
+	$(TEST_DIR)/test_runtime_workspace \
+	$(TEST_DIR)/test_session_staging \
 	$(TEST_DIR)/test_cuda_planner \
 	$(TEST_DIR)/test_cuda_executor
 
@@ -149,6 +151,7 @@ $(TEST_DIR)/test_backend_registry: $(TEST_DIR) $(CUDA_BRIDGE_OBJ)
 		src/common/mod_kinds.f90 \
 		src/common/mod_status.f90 \
 		src/common/mod_types.f90 \
+		src/runtime/mod_workspace.f90 \
 		src/runtime/mod_runtime.f90 \
 		src/backends/mod_backend_contract.f90 \
 		src/backends/mod_backend_probe_support.f90 \
@@ -159,6 +162,25 @@ $(TEST_DIR)/test_backend_registry: $(TEST_DIR) $(CUDA_BRIDGE_OBJ)
 		tests/unit/test_backend_registry.f90 \
 		$(CUDA_BRIDGE_OBJ) \
 		$(CUDA_BRIDGE_LINK_LIBS)
+
+$(TEST_DIR)/test_runtime_workspace: $(TEST_DIR)
+	mkdir -p $(TEST_DIR)/runtime_workspace_mods
+	$(FC) $(FFLAGS) -J $(TEST_DIR)/runtime_workspace_mods -o $@ \
+		src/common/mod_kinds.f90 \
+		src/common/mod_status.f90 \
+		src/common/mod_types.f90 \
+		src/runtime/mod_workspace.f90 \
+		src/runtime/mod_runtime.f90 \
+		tests/unit/test_runtime_workspace.f90
+
+$(TEST_DIR)/test_session_staging: $(TEST_DIR)
+	mkdir -p $(TEST_DIR)/session_staging_mods
+	$(FC) $(FFLAGS) -J $(TEST_DIR)/session_staging_mods -o $@ \
+		src/common/mod_kinds.f90 \
+		src/common/mod_status.f90 \
+		src/common/mod_types.f90 \
+		src/runtime/mod_session.f90 \
+		tests/unit/test_session_staging.f90
 
 $(TEST_DIR)/test_cuda_planner: $(TEST_DIR)
 	mkdir -p $(TEST_DIR)/cuda_planner_mods
@@ -176,6 +198,7 @@ $(TEST_DIR)/test_cuda_executor: $(TEST_DIR) $(CUDA_BRIDGE_OBJ)
 		src/common/mod_kinds.f90 \
 		src/common/mod_status.f90 \
 		src/common/mod_types.f90 \
+		src/runtime/mod_workspace.f90 \
 		src/model/mod_model_manifest.f90 \
 		src/backends/cuda/mod_cuda_bridge.f90 \
 		src/backends/cuda/mod_cuda_executor.f90 \

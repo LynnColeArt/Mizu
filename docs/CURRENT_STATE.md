@@ -1,6 +1,6 @@
 # Mizu Current State
 
-Last updated: 2026-04-06
+Last updated: 2026-04-07
 
 ## What Exists
 
@@ -19,6 +19,15 @@ Last updated: 2026-04-06
 - manifest loading and validation are implemented
 - target fallback manifests exist for the current Qwen and Gemma targets
 - runtime create now records a detected backend inventory for Apple and CUDA
+- session staging now retains attached token values and copied modal-byte inputs
+  long enough for stage execution, along with stable content hashes
+- live session context identity now survives prefill and advances after decode,
+  so later decode steps can depend on prior staged and emitted content
+- live sessions now also retain a persisted backend-owned context byte buffer
+  for the active route, starting with CUDA
+- `park` and `resume` now materialize and reload a small session-checkpoint
+  payload when `cache_root` is configured and route-specific context state
+  exists
 
 ### Self-Optimization
 
@@ -49,6 +58,19 @@ Last updated: 2026-04-06
 - CUDA-selected projector, prefill, and decode stages now execute through a
   backend-owned CUDA bridge that launches minimal real kernels on NVIDIA
   hardware
+- CUDA placeholder projector and prefill execution now incorporate staged-input
+  content hashes instead of relying on counts alone
+- CUDA prefill now also receives copied staged token buffers and modal byte
+  buffers through the backend bridge, so placeholder execution can depend on
+  actual staged tensor content
+- CUDA prefill now emits a persisted live-context byte buffer into session
+  state
+- CUDA placeholder decode execution now consumes that persisted byte buffer
+  and updates it across steps instead of depending on a tiny surrogate record
+- runtime workspace reservations now allocate a reusable host scratch buffer
+  instead of tracking bytes alone
+- CUDA projector, prefill, and decode now receive that runtime workspace buffer
+  through the backend bridge and stamp stage-local scratch data into it
 - the build now falls back to a CPU CUDA bridge stub when `nvcc` is not present,
   so non-CUDA environments can still build and run the current tests
 - `make test` now passes from a clean tree without requiring stray root-level
@@ -73,6 +95,9 @@ Last updated: 2026-04-06
   - artifact format label
   - payload fingerprint
   - future payload path
+- session-store metadata now persists alongside weight, plan, and multimodal
+  metadata, so parked-session checkpoint artifacts can be reloaded across
+  runtime create/destroy boundaries
 
 ### Tests That Pass
 
@@ -82,6 +107,8 @@ Last updated: 2026-04-06
 - `test_optimization_store`
 - `test_stage_reports`
 - `test_backend_registry`
+- `test_runtime_workspace`
+- `test_session_staging`
 - `test_cuda_planner`
 - `test_cuda_executor`
 - `test_cuda_artifacts`
@@ -96,6 +123,9 @@ Last updated: 2026-04-06
 - plan selection does not materialize backend-native plan payloads
 - CUDA projector, prefill, and decode use real but placeholder kernels; they do
   not execute transformer math yet
+- decode still does not consume a persisted tensor/KV buffer from prior
+  execution state; it now uses a persisted backend-owned context byte buffer
+  plus placeholder kernel logic
 - Go bindings do not exist yet
 
 ## Important Honesty Notes
@@ -110,12 +140,25 @@ Last updated: 2026-04-06
 - CUDA-selected artifacts are the first exception: they now write stub planner
   payload files to the persisted artifact location and mark those records as
   materialized
+- parked CUDA sessions are now the second exception: they write a small
+  checkpoint payload keyed by the live context hash and configuration so
+  `resume` can reload backend-owned session state through the runtime cache
 - CUDA projector, prefill, and decode now consume those materialized payloads
   through a backend-owned CUDA bridge and launch tiny placeholder kernels to
   prove the runtime-to-device seam
 - persisted artifact metadata now carries planned workspace bytes from the
-  stage planner, but the runtime still does not have a full reusable workspace
-  arena behind those numbers
+  stage planner, and the runtime now keeps a reusable high-water-mark workspace
+  arena around stage execution, backed by a reusable host scratch buffer
+- staged token and modal content are now preserved inside session state, but
+  only projector, prefill, and the derived live decode context currently fold
+  that content identity into the CUDA placeholder execution path
+- CUDA prefill now reads real staged token and modal buffers through the bridge,
+  but it still uses them for placeholder seed generation rather than real
+  transformer activations
+- the persisted CUDA context buffer is still a fixed-capacity backend-owned
+  surrogate, not a real KV-cache or transformer activation buffer
+- the parked-session checkpoint currently persists that same surrogate buffer,
+  not a full backend KV-cache image
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing

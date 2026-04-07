@@ -144,18 +144,18 @@ These are the highest-leverage next tasks.
 
 ### 3.2 Lifecycle
 
-- [ ] Implement runtime create and destroy
-- [ ] Implement model open and close
-- [ ] Implement session open and close
-- [ ] Implement session park and resume
+- [x] Implement runtime create and destroy
+- [x] Implement model open and close
+- [x] Implement session open and close
+- [x] Implement session park and resume
 - [ ] Implement request-local cleanup rules
 
 ### 3.3 Workspace and Memory
 
 - [ ] Create `src/common/mod_memory.f90`
 - [ ] Implement aligned host allocation
-- [ ] Implement reusable workspace arenas
-- [ ] Implement scratch reservation and release
+- [x] Implement reusable workspace arenas
+- [x] Implement scratch reservation and release
 - [ ] Add hot-path no-allocation assertions where practical
 
 ### 3.4 Blocking Request Flow
@@ -165,6 +165,8 @@ These are the highest-leverage next tasks.
 - [x] Implement prefill entrypoint
 - [x] Implement decode step entrypoint
 - [x] Implement output read entrypoint
+- [x] Preserve live session context identity across prefill and decode
+- [x] Replace the small CUDA live-context record with a backend-owned byte buffer
 
 ### 3.5 Optimization Store
 
@@ -228,8 +230,12 @@ These are the highest-leverage next tasks.
 - [x] Implement CUDA packed weight path
 - [x] Implement CUDA projector path
 - [x] Implement CUDA prefill path
+- [x] Make CUDA prefill consume staged token and modal buffers
 - [x] Implement CUDA decode path
-- [ ] Implement CUDA workspace handoff
+- [x] Persist a CUDA live-context buffer across prefill and decode
+- [x] Make CUDA decode depend on persisted live-session context identity
+- [x] Implement CUDA workspace handoff
+- [x] Materialize a parked-session checkpoint artifact for CUDA sessions
 
 ### 5.3 CUDA Validation
 
@@ -257,7 +263,7 @@ These are the highest-leverage next tasks.
 ### 6.3 Session Cache
 
 - [ ] Create `src/cache/mod_session_cache.f90`
-- [ ] Implement parked session identity
+- [x] Implement parked session identity
 - [ ] Implement KV retention policy
 - [ ] Implement safe eviction policy for inactive sessions
 
