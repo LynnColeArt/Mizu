@@ -59,6 +59,21 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
     *status_code = MIZU_STATUS_OK;
 }
 
+void mizu_cuda_bridge_projector(int64_t payload_hash,
+                                int64_t modal_byte_count,
+                                int32_t placeholder_count,
+                                int64_t *embedding_count,
+                                int32_t *status_code) {
+    uint64_t seed;
+
+    if (embedding_count == NULL || status_code == NULL) return;
+
+    seed = mix_u64((uint64_t)payload_hash ^ ((uint64_t)modal_byte_count << 1));
+    *embedding_count = (placeholder_count > 0) ? (int64_t)placeholder_count : 1;
+    if (modal_byte_count > 0) *embedding_count += (int64_t)(seed % UINT64_C(2));
+    *status_code = MIZU_STATUS_OK;
+}
+
 void mizu_cuda_bridge_decode(int64_t payload_hash,
                              int64_t kv_before,
                              int64_t token_budget,

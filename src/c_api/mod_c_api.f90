@@ -66,7 +66,7 @@ module mod_c_api
   use mod_model_loader,   only: load_model_manifest_from_root
   use mod_cuda_planner,   only: CUDA_ARTIFACT_PAYLOAD_LEN, plan_cuda_stage, &
                                 build_cuda_artifact_payload_text
-  use mod_cuda_executor,  only: execute_cuda_prefill, execute_cuda_decode
+  use mod_cuda_executor,  only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
   use mod_cache_keys,     only: MAX_CACHE_KEY_LEN, plan_cache_key, weight_cache_key, &
                                 session_cache_key, multimodal_cache_key, build_plan_cache_key, &
                                 build_weight_cache_key, build_session_cache_key, &
@@ -913,7 +913,10 @@ contains
     integer(i64) :: required_reports
     integer(i64) :: kv_before
     integer(i64) :: staged_tokens_before
+    integer(i64) :: staged_modal_byte_count_before
     integer(i32) :: staged_modal_before
+    integer(i32) :: staged_modal_kind_before
+    integer(i32) :: staged_modal_dtype_before
     integer(i64) :: projector_cache_flags
     integer(i64) :: prefill_cache_flags
     integer(i64) :: projector_plan_id
@@ -921,18 +924,24 @@ contains
     integer(i64) :: projector_elapsed_us
     integer(i64) :: prefill_elapsed_us
     integer(i64) :: stage_started_us
+    integer(i64) :: projector_embedding_count
     integer(i64) :: consumed_token_count
     integer(i32) :: prefill_cold_state
     integer(i32) :: projector_selection_mode
     integer(i32) :: prefill_selection_mode
     integer(i32) :: projector_backend_family
     integer(i32) :: projector_route
+    integer(i32) :: projector_placeholder_count
     integer(i32) :: prefill_backend_family
     integer(i32) :: prefill_route
+    character(len=MAX_PATH_LEN) :: staged_modal_slot_name_before
+    character(len=MAX_CACHE_KEY_LEN) :: projector_optimization_key_text
+    character(len=MAX_CACHE_KEY_LEN) :: projector_candidate_key_text
     character(len=MAX_CACHE_KEY_LEN) :: prefill_optimization_key_text
     character(len=MAX_CACHE_KEY_LEN) :: prefill_candidate_key_text
     logical      :: has_modal_inputs
     type(execution_report) :: projector_report
+    type(artifact_metadata_record) :: projector_artifact_metadata
     type(artifact_metadata_record) :: prefill_artifact_metadata
 
     call resolve_session_handle(session_ptr, box, session, status_code)
@@ -967,12 +976,44 @@ contains
     kv_before = session%kv_token_count
     staged_tokens_before = session%staged_token_count
     staged_modal_before = session%staged_modal_count
+    staged_modal_byte_count_before = session%staged_modal_byte_count
+    staged_modal_kind_before = session%staged_modal_kind
+    staged_modal_dtype_before = session%staged_modal_dtype
+    staged_modal_slot_name_before = session%staged_modal_slot_name
     prefill_cold_state = merge(MIZU_COLD_STATE_WARM, MIZU_COLD_STATE_COLD, session%has_live_context)
 
     status_code = prepare_report_buffer(out_reports_ptr, required_reports)
     if (status_code /= MIZU_STATUS_OK) then
       mizu_session_prefill = int(status_code, kind=c_int32_t)
       return
+    end if
+
+    if (has_modal_inputs) then
+      call prepare_projector_stage_candidate(runtime, optimization_store, model, staged_modal_byte_count_before, &
+        staged_modal_kind_before, staged_modal_dtype_before, staged_modal_slot_name_before, &
+        projector_optimization_key_text, projector_candidate_key_text, projector_plan_id, &
+        projector_selection_mode, projector_backend_family, projector_route, projector_artifact_metadata, &
+        projector_placeholder_count)
+
+      stage_started_us = monotonic_timestamp_us()
+      projector_embedding_count = 0_i64
+      if (projector_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. projector_route == MIZU_EXEC_ROUTE_CUDA) then
+        call execute_cuda_projector(runtime%config%cache_root, trim(projector_artifact_metadata%payload_path), &
+          staged_modal_byte_count_before, projector_placeholder_count, projector_embedding_count, status_code)
+        if (status_code /= MIZU_STATUS_OK) then
+          mizu_session_prefill = int(status_code, kind=c_int32_t)
+          return
+        end if
+      end if
+      projector_elapsed_us = elapsed_since_us(stage_started_us)
+      call finalize_projector_stage_cache(runtime_cache, optimization_store, trim(projector_optimization_key_text), &
+        trim(projector_candidate_key_text), projector_plan_id, projector_selection_mode, projector_elapsed_us, &
+        projector_artifact_metadata, projector_cache_flags)
+      projector_report = make_stage_report(MIZU_STAGE_PROJECTOR, projector_backend_family, &
+        projector_route, MIZU_FALLBACK_REASON_NONE, projector_selection_mode, prefill_cold_state, &
+        projector_cache_flags, projector_plan_id, projector_elapsed_us)
+    else
+      projector_report = execution_report()
     end if
 
     call prepare_plan_stage_candidate(runtime, optimization_store, model, MIZU_STAGE_PREFILL, &
@@ -997,19 +1038,6 @@ contains
       return
     end if
     prefill_elapsed_us = elapsed_since_us(stage_started_us)
-
-    if (has_modal_inputs) then
-      stage_started_us = monotonic_timestamp_us()
-      projector_elapsed_us = elapsed_since_us(stage_started_us)
-      call resolve_projector_stage_cache(runtime, runtime_cache, optimization_store, model, session, &
-        projector_elapsed_us, projector_plan_id, projector_selection_mode, projector_backend_family, &
-        projector_route, projector_cache_flags)
-      projector_report = make_stage_report(MIZU_STAGE_PROJECTOR, projector_backend_family, &
-        projector_route, MIZU_FALLBACK_REASON_NONE, projector_selection_mode, prefill_cold_state, &
-        projector_cache_flags, projector_plan_id, projector_elapsed_us)
-    else
-      projector_report = execution_report()
-    end if
 
     call finalize_plan_stage_cache(runtime_cache, optimization_store, trim(prefill_optimization_key_text), &
       trim(prefill_candidate_key_text), prefill_plan_id, prefill_selection_mode, prefill_elapsed_us, &
@@ -1831,48 +1859,50 @@ contains
     cache_flags = compose_cache_flags(MIZU_CACHE_FLAG_PLAN_HIT, was_hit, reused_winner)
   end subroutine finalize_plan_stage_cache
 
-  subroutine resolve_projector_stage_cache(runtime, runtime_cache, optimization_store, model, session, &
-                                           elapsed_us, plan_id, selection_mode, backend_family, &
-                                           execution_route, cache_flags)
+  subroutine prepare_projector_stage_candidate(runtime, optimization_store, model, staged_modal_byte_count, &
+                                               staged_modal_kind, staged_modal_dtype, staged_modal_slot_name, &
+                                               optimization_key_text, candidate_key_text, plan_id, &
+                                               selection_mode, backend_family, execution_route, &
+                                               artifact_metadata, placeholder_count)
     type(runtime_state), intent(in)                 :: runtime
-    type(runtime_cache_bundle), intent(inout)       :: runtime_cache
-    type(runtime_optimization_store), intent(inout) :: optimization_store
+    type(runtime_optimization_store), intent(in)    :: optimization_store
     type(model_state), intent(in)                   :: model
-    type(session_state), intent(in)                 :: session
-    integer(i64), intent(in)                        :: elapsed_us
+    integer(i64), intent(in)                        :: staged_modal_byte_count
+    integer(i32), intent(in)                        :: staged_modal_kind
+    integer(i32), intent(in)                        :: staged_modal_dtype
+    character(len=*), intent(in)                    :: staged_modal_slot_name
+    character(len=*), intent(out)                   :: optimization_key_text
+    character(len=*), intent(out)                   :: candidate_key_text
     integer(i64), intent(out)                       :: plan_id
     integer(i32), intent(out)                       :: selection_mode
     integer(i32), intent(out)                       :: backend_family
     integer(i32), intent(out)                       :: execution_route
-    integer(i64), intent(out)                       :: cache_flags
+    type(artifact_metadata_record), intent(out)     :: artifact_metadata
+    integer(i32), intent(out)                       :: placeholder_count
     type(plan_request)                              :: stage_request
     type(model_manifest)                            :: manifest
     type(multimodal_cache_key)                      :: key
     integer(i32)                                    :: modality_kind
     integer(i32)                                    :: modality_dtype
     character(len=MAX_PATH_LEN)                     :: slot_name
-    character(len=MAX_CACHE_KEY_LEN)                :: optimization_key_text
-    character(len=MAX_CACHE_KEY_LEN)                :: candidate_key_text
     character(len=MAX_CACHE_KEY_LEN)                :: candidate_key_texts(3)
     integer(i64)                                    :: candidate_plan_ids(3)
     integer(i32)                                    :: candidate_backend_families(3)
     integer(i32)                                    :: candidate_execution_routes(3)
     integer(i32)                                    :: candidate_count
     integer(i32)                                    :: candidate_index
-    logical                                         :: was_hit
-    logical                                         :: reused_winner
 
     call populate_manifest_identity(model, manifest)
-    slot_name = trim(session%staged_modal_slot_name)
+    slot_name = trim(staged_modal_slot_name)
     if (len_trim(slot_name) == 0) slot_name = "image"
-    modality_kind = session%staged_modal_kind
+    modality_kind = staged_modal_kind
     if (modality_kind <= 0_i32) modality_kind = MIZU_MODALITY_KIND_IMAGE
-    modality_dtype = session%staged_modal_dtype
+    modality_dtype = staged_modal_dtype
     if (modality_dtype <= 0_i32) modality_dtype = MIZU_DTYPE_U8
     call initialize_plan_request(stage_request, MIZU_STAGE_PROJECTOR, OP_FAMILY_PROJECTOR, &
       model%info%model_family, model%info%allowed_backend_mask)
     stage_request%shape_signature = 0_i64
-    stage_request%shape_signature(1) = max(0_i64, session%staged_modal_byte_count)
+    stage_request%shape_signature(1) = max(0_i64, staged_modal_byte_count)
     stage_request%shape_signature(2) = int(modality_kind, kind=i64)
     stage_request%shape_signature(3) = int(modality_dtype, kind=i64)
     stage_request%planner_version_hint = 1_i64
@@ -1884,10 +1914,12 @@ contains
 
     call enumerate_candidate_routes(model%info%allowed_backend_mask, candidate_backend_families, &
       candidate_execution_routes, candidate_count)
+    optimization_key_text = ""
+    candidate_key_text = ""
     candidate_key_texts = ""
     candidate_plan_ids = 0_i64
     call build_multimodal_cache_key(manifest, "unbound", trim(slot_name), modality_kind, &
-      modality_dtype, max(0_i64, session%staged_modal_byte_count), key)
+      modality_dtype, max(0_i64, staged_modal_byte_count), key)
     optimization_key_text = append_allowed_mask_identity(trim(key%key_text), model%info%allowed_backend_mask)
 
     do candidate_index = 1_i32, candidate_count
@@ -1899,15 +1931,33 @@ contains
     call resolve_stage_candidate(runtime, optimization_store, trim(optimization_key_text), candidate_count, &
       candidate_backend_families, candidate_execution_routes, candidate_plan_ids, candidate_key_texts, &
       candidate_key_text, plan_id, selection_mode, backend_family, execution_route)
+    artifact_metadata = build_stage_artifact_metadata(MIZU_STAGE_PROJECTOR, backend_family, execution_route, &
+      trim(candidate_key_text), stage_request, runtime%config%cache_root)
+    placeholder_count = max(1_i32, stage_request%projector%placeholder_count)
+  end subroutine prepare_projector_stage_candidate
+
+  subroutine finalize_projector_stage_cache(runtime_cache, optimization_store, optimization_key_text, &
+                                            candidate_key_text, plan_id, selection_mode, elapsed_us, &
+                                            artifact_metadata, cache_flags)
+    type(runtime_cache_bundle), intent(inout)       :: runtime_cache
+    type(runtime_optimization_store), intent(inout) :: optimization_store
+    character(len=*), intent(in)                    :: optimization_key_text
+    character(len=*), intent(in)                    :: candidate_key_text
+    integer(i64), intent(in)                        :: plan_id
+    integer(i32), intent(in)                        :: selection_mode
+    integer(i64), intent(in)                        :: elapsed_us
+    type(artifact_metadata_record), intent(in)      :: artifact_metadata
+    integer(i64), intent(out)                       :: cache_flags
+    logical                                         :: was_hit
+    logical                                         :: reused_winner
+
     call touch_multimodal_cache_key(runtime_cache, trim(candidate_key_text), was_hit)
-    call record_multimodal_artifact_metadata(runtime_cache, trim(candidate_key_text), &
-      build_stage_artifact_metadata(MIZU_STAGE_PROJECTOR, backend_family, execution_route, &
-        trim(candidate_key_text), stage_request, runtime%config%cache_root))
+    call record_multimodal_artifact_metadata(runtime_cache, trim(candidate_key_text), artifact_metadata)
     reused_winner = (selection_mode == MIZU_SELECTION_MODE_REUSE)
     call record_execution_sample(optimization_store, trim(optimization_key_text), plan_id, elapsed_us, &
       trim(candidate_key_text))
     cache_flags = compose_cache_flags(MIZU_CACHE_FLAG_MM_HIT, was_hit, reused_winner)
-  end subroutine resolve_projector_stage_cache
+  end subroutine finalize_projector_stage_cache
 
   subroutine resolve_stage_candidate(runtime, optimization_store, optimization_key_text, &
                                      candidate_count, candidate_backend_families, &
@@ -2081,6 +2131,7 @@ contains
     metadata%stage_kind = stage_kind
     metadata%is_materialized = .false.
     metadata%payload_bytes = 0_i64
+    metadata%workspace_bytes = 0_i64
     metadata%artifact_format = build_artifact_format_label(stage_kind, backend_family, execution_route)
     fingerprint_token = build_artifact_fingerprint_token(trim(candidate_key_text))
     metadata%payload_fingerprint = trim(fingerprint_token)
@@ -2095,6 +2146,7 @@ contains
     if (.not. planner_result_is_success(planning_result)) return
 
     metadata%artifact_format = trim(planning_result%chosen_plan%pack_format)
+    metadata%workspace_bytes = max(0_i64, planning_result%chosen_plan%workspace_bytes)
     call build_cuda_artifact_payload_text(request, planning_result%chosen_plan, trim(candidate_key_text), &
       payload_text, payload_bytes)
     if (present(cache_root)) then

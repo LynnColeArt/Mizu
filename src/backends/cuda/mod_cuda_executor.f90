@@ -3,15 +3,49 @@ module mod_cuda_executor
   use mod_status,         only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_ARGUMENT, &
                                 MIZU_STATUS_INVALID_STATE
   use mod_types,          only: MIZU_STOP_REASON_NONE
-  use mod_cuda_bridge,    only: launch_cuda_prefill, launch_cuda_decode
+  use mod_cuda_bridge,    only: launch_cuda_projector, launch_cuda_prefill, launch_cuda_decode
   use mod_model_manifest, only: hash_text64
 
   implicit none
 
   private
-  public :: execute_cuda_prefill, execute_cuda_decode
+  public :: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
 
 contains
+
+  subroutine execute_cuda_projector(cache_root, artifact_path, modal_byte_count, placeholder_count, &
+                                    embedding_count, status_code)
+    character(len=*), intent(in) :: cache_root
+    character(len=*), intent(in) :: artifact_path
+    integer(i64), intent(in)     :: modal_byte_count
+    integer(i32), intent(in)     :: placeholder_count
+    integer(i64), intent(out)    :: embedding_count
+    integer(i32), intent(out)    :: status_code
+    character(len=1024)          :: payload_text
+    integer(i64)                 :: payload_hash
+    logical                      :: loaded_ok
+
+    embedding_count = 0_i64
+    if (len_trim(cache_root) == 0 .or. len_trim(artifact_path) == 0) then
+      status_code = MIZU_STATUS_INVALID_ARGUMENT
+      return
+    end if
+
+    call load_cuda_artifact_payload(cache_root, artifact_path, payload_text, loaded_ok)
+    if (.not. loaded_ok) then
+      status_code = MIZU_STATUS_INVALID_STATE
+      return
+    end if
+
+    if (index(payload_text, "stage=2") <= 0) then
+      status_code = MIZU_STATUS_INVALID_STATE
+      return
+    end if
+
+    payload_hash = positive_hash64(trim(payload_text))
+    call launch_cuda_projector(payload_hash, max(0_i64, modal_byte_count), placeholder_count, embedding_count, &
+      status_code)
+  end subroutine execute_cuda_projector
 
   subroutine execute_cuda_prefill(cache_root, artifact_path, staged_tokens, staged_modal_count, &
                                   consumed_token_count, status_code)

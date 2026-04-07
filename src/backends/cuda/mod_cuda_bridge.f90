@@ -7,7 +7,7 @@ module mod_cuda_bridge
 
   private
   public :: cuda_device_info
-  public :: query_cuda_device_info, launch_cuda_prefill, launch_cuda_decode
+  public :: query_cuda_device_info, launch_cuda_projector, launch_cuda_prefill, launch_cuda_decode
 
   type :: cuda_device_info
     logical                    :: is_available = .false.
@@ -45,6 +45,17 @@ module mod_cuda_bridge
       integer(c_int64_t), intent(out) :: consumed_token_count
       integer(c_int32_t), intent(out) :: status_code
     end subroutine c_mizu_cuda_bridge_prefill
+
+    subroutine c_mizu_cuda_bridge_projector(payload_hash, modal_byte_count, placeholder_count, &
+                                            embedding_count, status_code) &
+        bind(c, name="mizu_cuda_bridge_projector")
+      import c_int32_t, c_int64_t
+      integer(c_int64_t), value       :: payload_hash
+      integer(c_int64_t), value       :: modal_byte_count
+      integer(c_int32_t), value       :: placeholder_count
+      integer(c_int64_t), intent(out) :: embedding_count
+      integer(c_int32_t), intent(out) :: status_code
+    end subroutine c_mizu_cuda_bridge_projector
 
     subroutine c_mizu_cuda_bridge_decode(payload_hash, kv_before, token_budget, emitted_token_count, &
                                          token_value, stop_reason, status_code) &
@@ -114,6 +125,23 @@ contains
     consumed_token_count = int(consumed_token_count_c, kind=i64)
     status_code = int(status_code_c, kind=i32)
   end subroutine launch_cuda_prefill
+
+  subroutine launch_cuda_projector(payload_hash, modal_byte_count, placeholder_count, embedding_count, &
+                                   status_code)
+    integer(i64), intent(in)  :: payload_hash
+    integer(i64), intent(in)  :: modal_byte_count
+    integer(i32), intent(in)  :: placeholder_count
+    integer(i64), intent(out) :: embedding_count
+    integer(i32), intent(out) :: status_code
+    integer(c_int64_t)        :: embedding_count_c
+    integer(c_int32_t)        :: status_code_c
+
+    call c_mizu_cuda_bridge_projector(int(payload_hash, kind=c_int64_t), int(modal_byte_count, kind=c_int64_t), &
+      int(placeholder_count, kind=c_int32_t), embedding_count_c, status_code_c)
+
+    embedding_count = int(embedding_count_c, kind=i64)
+    status_code = int(status_code_c, kind=i32)
+  end subroutine launch_cuda_projector
 
   subroutine launch_cuda_decode(payload_hash, kv_before, token_budget, emitted_token_count, token_value, &
                                 stop_reason, status_code)

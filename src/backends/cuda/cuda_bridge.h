@@ -23,6 +23,12 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                               int64_t *consumed_token_count,
                               int32_t *status_code);
 
+void mizu_cuda_bridge_projector(int64_t payload_hash,
+                                int64_t modal_byte_count,
+                                int32_t placeholder_count,
+                                int64_t *embedding_count,
+                                int32_t *status_code);
+
 void mizu_cuda_bridge_decode(int64_t payload_hash,
                              int64_t kv_before,
                              int64_t token_budget,

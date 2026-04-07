@@ -26,6 +26,19 @@ __global__ void mizu_prefill_kernel(int64_t staged_tokens,
   }
 }
 
+__global__ void mizu_projector_kernel(int64_t payload_hash,
+                                      int64_t modal_byte_count,
+                                      int32_t placeholder_count,
+                                      int64_t *embedding_count) {
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    unsigned long long seed = mix_u64(static_cast<unsigned long long>(payload_hash) ^
+                                      (static_cast<unsigned long long>(modal_byte_count) << 1));
+    int64_t resolved_count = placeholder_count > 0 ? static_cast<int64_t>(placeholder_count) : 1;
+    if (modal_byte_count > 0) resolved_count += static_cast<int64_t>(seed % 2ULL);
+    *embedding_count = resolved_count;
+  }
+}
+
 __global__ void mizu_decode_kernel(int64_t payload_hash,
                                    int64_t kv_before,
                                    int64_t token_budget,
@@ -129,6 +142,34 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
   *status_code = (status == cudaSuccess) ? MIZU_STATUS_OK : MIZU_STATUS_EXECUTION_ERROR;
 
   cudaFree(managed_consumed_token_count);
+}
+
+extern "C" void mizu_cuda_bridge_projector(int64_t payload_hash,
+                                           int64_t modal_byte_count,
+                                           int32_t placeholder_count,
+                                           int64_t *embedding_count,
+                                           int32_t *status_code) {
+  int64_t *managed_embedding_count = nullptr;
+
+  if (embedding_count == nullptr || status_code == nullptr) return;
+
+  *embedding_count = 0;
+  *status_code = MIZU_STATUS_OK;
+
+  cudaError_t status = cudaMallocManaged(&managed_embedding_count, sizeof(*managed_embedding_count));
+  if (status != cudaSuccess) {
+    *status_code = MIZU_STATUS_EXECUTION_ERROR;
+    return;
+  }
+
+  *managed_embedding_count = 0;
+  mizu_projector_kernel<<<1, 1>>>(payload_hash, modal_byte_count, placeholder_count, managed_embedding_count);
+  status = cudaGetLastError();
+  if (status == cudaSuccess) status = cudaDeviceSynchronize();
+  if (status == cudaSuccess) *embedding_count = *managed_embedding_count;
+  *status_code = (status == cudaSuccess) ? MIZU_STATUS_OK : MIZU_STATUS_EXECUTION_ERROR;
+
+  cudaFree(managed_embedding_count);
 }
 
 extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,

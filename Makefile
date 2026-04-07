@@ -136,6 +136,9 @@ $(TEST_DIR)/test_optimization_store: $(TEST_DIR)
 	mkdir -p $(TEST_DIR)/optimization_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/optimization_mods -o $@ \
 		src/common/mod_kinds.f90 \
+		src/common/mod_status.f90 \
+		src/common/mod_types.f90 \
+		src/model/mod_model_manifest.f90 \
 		src/cache/mod_cache_keys.f90 \
 		src/runtime/mod_optimization_store.f90 \
 		tests/unit/test_optimization_store.f90
@@ -222,4 +225,4 @@ $(TEST_DIR)/test_stage_reports: $(TEST_DIR)/test_stage_reports.o $(CUDA_BRIDGE_O
 		$(CUDA_BRIDGE_LINK_LIBS)
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) ./*.mod

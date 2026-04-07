@@ -38,6 +38,7 @@ program test_cache_store
   weight_metadata%execution_route = MIZU_EXEC_ROUTE_ANE
   weight_metadata%stage_kind = MIZU_STAGE_MODEL_LOAD
   weight_metadata%artifact_format = "apple_ane_weight_pack_v1"
+  weight_metadata%workspace_bytes = 1048576_8
   weight_metadata%payload_fingerprint = "1111AAAA"
   weight_metadata%payload_path = "artifacts/apple/ane/weights/1111AAAA.pack"
   call record_weight_artifact_metadata(bundle, "weight:key:ane", weight_metadata)
@@ -48,6 +49,7 @@ program test_cache_store
   plan_metadata%stage_kind = MIZU_STAGE_PREFILL
   plan_metadata%is_materialized = .true.
   plan_metadata%payload_bytes = 4096
+  plan_metadata%workspace_bytes = 8388608_8
   plan_metadata%artifact_format = "apple_metal_prefill_plan_v1"
   plan_metadata%payload_fingerprint = "2222BBBB"
   plan_metadata%payload_path = "artifacts/apple/metal/plans/prefill/2222BBBB.plan"
@@ -58,6 +60,7 @@ program test_cache_store
   multimodal_metadata%execution_route = MIZU_EXEC_ROUTE_ANE
   multimodal_metadata%stage_kind = MIZU_STAGE_PROJECTOR
   multimodal_metadata%artifact_format = "apple_ane_projector_cache_v1"
+  multimodal_metadata%workspace_bytes = 2097152_8
   multimodal_metadata%payload_fingerprint = "3333CCCC"
   multimodal_metadata%payload_path = "artifacts/apple/ane/projector/3333CCCC.mm"
   call record_multimodal_artifact_metadata(bundle, "mm:key:ane", multimodal_metadata)
@@ -83,6 +86,7 @@ program test_cache_store
   call expect_equal_i32("weight metadata route", reloaded_metadata%execution_route, MIZU_EXEC_ROUTE_ANE)
   call expect_equal_i32("weight metadata stage", reloaded_metadata%stage_kind, MIZU_STAGE_MODEL_LOAD)
   call expect_false("weight metadata should remain virtual", reloaded_metadata%is_materialized)
+  call expect_equal_i64("weight metadata workspace", reloaded_metadata%workspace_bytes, 1048576_8)
   call expect_equal_string("weight metadata format", trim(reloaded_metadata%artifact_format), &
     "apple_ane_weight_pack_v1")
   call expect_equal_string("weight metadata path", trim(reloaded_metadata%payload_path), &
@@ -94,12 +98,14 @@ program test_cache_store
   call expect_equal_i32("plan metadata stage", reloaded_metadata%stage_kind, MIZU_STAGE_PREFILL)
   call expect_true("plan metadata should remain materialized", reloaded_metadata%is_materialized)
   call expect_equal_i64("plan metadata bytes", reloaded_metadata%payload_bytes, 4096_8)
+  call expect_equal_i64("plan metadata workspace", reloaded_metadata%workspace_bytes, 8388608_8)
   call expect_equal_string("plan metadata format", trim(reloaded_metadata%artifact_format), &
     "apple_metal_prefill_plan_v1")
 
   call lookup_multimodal_artifact_metadata(reloaded_bundle, "mm:key:ane", reloaded_metadata, found)
   call expect_true("reloaded multimodal metadata should exist", found)
   call expect_equal_i32("multimodal metadata stage", reloaded_metadata%stage_kind, MIZU_STAGE_PROJECTOR)
+  call expect_equal_i64("multimodal metadata workspace", reloaded_metadata%workspace_bytes, 2097152_8)
   call expect_equal_string("multimodal metadata fingerprint", trim(reloaded_metadata%payload_fingerprint), &
     "3333CCCC")
 

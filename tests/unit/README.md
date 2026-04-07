@@ -38,6 +38,7 @@ bodies.
   - validates save/load roundtrips for persisted artifact-cache presence
   - validates route-specific artifact metadata roundtrips for weight, plan, and
     multimodal records
+  - validates planned workspace bytes survive metadata persistence
   - validates reloaded weight, plan, and multimodal keys report hits
 - `test_optimization_store.f90`
   - validates runtime-scoped winner selection based on recorded execution
@@ -52,7 +53,8 @@ bodies.
     prefill, and decode records
   - validates planner payload text includes materialization-relevant metadata
 - `test_cuda_executor.f90`
-  - validates CUDA stub prefill execution consumes staged tokens through a
+  - validates CUDA projector execution consumes a materialized projector payload
+  - validates CUDA prefill execution consumes staged tokens through a
     materialized plan payload
-  - validates CUDA stub decode execution produces a deterministic token from a
+  - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload

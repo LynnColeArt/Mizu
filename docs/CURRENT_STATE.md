@@ -46,10 +46,13 @@ Last updated: 2026-04-06
   - decode plan records
 - CUDA-selected artifacts can now materialize stub payload files under the
   configured `cache_root`
-- CUDA-selected prefill and decode stages now execute through a backend-owned
-  CUDA bridge that launches minimal real kernels on NVIDIA hardware
+- CUDA-selected projector, prefill, and decode stages now execute through a
+  backend-owned CUDA bridge that launches minimal real kernels on NVIDIA
+  hardware
 - the build now falls back to a CPU CUDA bridge stub when `nvcc` is not present,
   so non-CUDA environments can still build and run the current tests
+- `make test` now passes from a clean tree without requiring stray root-level
+  `.mod` files from earlier compiler runs
 
 ### Cache and Artifact Identity
 
@@ -66,6 +69,7 @@ Last updated: 2026-04-06
   - stage kind
   - materialization flag
   - payload byte count
+  - planned workspace byte count
   - artifact format label
   - payload fingerprint
   - future payload path
@@ -90,9 +94,8 @@ Last updated: 2026-04-06
 - CUDA planner records are still scaffold-level and do not launch kernels
 - model load does not build actual packed weights
 - plan selection does not materialize backend-native plan payloads
-- projector does not run a real kernel yet
-- CUDA prefill and decode use real but placeholder kernels; they do not execute
-  transformer math yet
+- CUDA projector, prefill, and decode use real but placeholder kernels; they do
+  not execute transformer math yet
 - Go bindings do not exist yet
 
 ## Important Honesty Notes
@@ -107,9 +110,12 @@ Last updated: 2026-04-06
 - CUDA-selected artifacts are the first exception: they now write stub planner
   payload files to the persisted artifact location and mark those records as
   materialized
-- CUDA prefill and decode now consume those materialized payloads through a
-  backend-owned CUDA bridge and launch tiny placeholder kernels to prove the
-  runtime-to-device seam
+- CUDA projector, prefill, and decode now consume those materialized payloads
+  through a backend-owned CUDA bridge and launch tiny placeholder kernels to
+  prove the runtime-to-device seam
+- persisted artifact metadata now carries planned workspace bytes from the
+  stage planner, but the runtime still does not have a full reusable workspace
+  arena behind those numbers
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing

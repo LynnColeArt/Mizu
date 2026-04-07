@@ -22,8 +22,11 @@ Current implementation status:
   and materializes stub payload files under `cache_root`
 - CUDA capability probing now prefers a real device bridge when available and
   falls back cleanly when it is not
-- CUDA prefill and decode now run through a backend-owned CUDA bridge, with a
-  CPU stub fallback when `nvcc` is unavailable
+- CUDA projector, prefill, and decode now run through a backend-owned CUDA
+  bridge, with placeholder kernels on NVIDIA hardware and a CPU stub fallback
+  when `nvcc` is unavailable
+- `make test` now succeeds from a clean tree without relying on stray Fortran
+  module files
 - Apple and CUDA execution backends are not implemented yet
 
 Build and test:

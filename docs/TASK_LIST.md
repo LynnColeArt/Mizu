@@ -226,7 +226,7 @@ These are the highest-leverage next tasks.
 
 - [x] Implement CUDA planner
 - [x] Implement CUDA packed weight path
-- [ ] Implement CUDA projector path
+- [x] Implement CUDA projector path
 - [x] Implement CUDA prefill path
 - [x] Implement CUDA decode path
 - [ ] Implement CUDA workspace handoff

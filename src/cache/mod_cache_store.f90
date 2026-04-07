@@ -28,6 +28,7 @@ module mod_cache_store
     integer(i32)                :: stage_kind       = MIZU_STAGE_NONE
     logical                     :: is_materialized  = .false.
     integer(i64)                :: payload_bytes    = 0_i64
+    integer(i64)                :: workspace_bytes  = 0_i64
     character(len=MAX_NAME_LEN) :: artifact_format  = ""
     character(len=MAX_NAME_LEN) :: payload_fingerprint = ""
     character(len=MAX_PATH_LEN) :: payload_path     = ""
@@ -154,6 +155,7 @@ contains
       metadata%stage_kind /= MIZU_STAGE_NONE .or. &
       metadata%is_materialized .or. &
       metadata%payload_bytes > 0_i64 .or. &
+      metadata%workspace_bytes > 0_i64 .or. &
       len_trim(metadata%artifact_format) > 0 .or. &
       len_trim(metadata%payload_fingerprint) > 0 .or. &
       len_trim(metadata%payload_path) > 0
@@ -224,7 +226,7 @@ contains
         stage_kind = MIZU_STAGE_NONE
         materialized_flag = 0_i32
         read(line, *, iostat=ios) tag, kind_tag, key_text, backend_family, execution_route, &
-          stage_kind, materialized_flag, metadata%payload_bytes, metadata%artifact_format, &
+          stage_kind, materialized_flag, metadata%payload_bytes, metadata%workspace_bytes, metadata%artifact_format, &
           metadata%payload_fingerprint, metadata%payload_path
         if (ios /= 0) cycle
         if (len_trim(key_text) == 0) cycle
@@ -406,10 +408,11 @@ contains
       payload_path = persisted_text_or_dash(store%metadata(index)%payload_path, MAX_PATH_LEN)
       quoted_payload_path = quote_persisted_path(payload_path)
 
-      write(unit_id, "(A,1X,A,1X,A,1X,I0,1X,I0,1X,I0,1X,I0,1X,I0,1X,A,1X,A,1X,A)", iostat=ios) &
+      write(unit_id, "(A,1X,A,1X,A,1X,I0,1X,I0,1X,I0,1X,I0,1X,I0,1X,I0,1X,A,1X,A,1X,A)", iostat=ios) &
         "meta", trim(tag), trim(store%entries(index)), store%metadata(index)%backend_family, &
         store%metadata(index)%execution_route, store%metadata(index)%stage_kind, &
-        materialized_flag, max(0_i64, store%metadata(index)%payload_bytes), trim(artifact_format), &
+        materialized_flag, max(0_i64, store%metadata(index)%payload_bytes), &
+        max(0_i64, store%metadata(index)%workspace_bytes), trim(artifact_format), &
         trim(payload_fingerprint), trim(quoted_payload_path)
       if (ios /= 0_i32) return
     end do
