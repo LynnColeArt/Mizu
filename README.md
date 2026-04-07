@@ -62,6 +62,10 @@ Current implementation status:
 - that CUDA live-context image now widens again to 512 bytes and carries
   compact key and value lane planes plus per-page digests, so page-local decode
   state looks more like a tiny KV-style image than token slots alone
+- that same 512-byte CUDA image now also carries per-page tensor-layout records
+  for key rows, value rows, lane counts, head blocks, and page generations, so
+  decode can preserve untouched page identity while advancing only the page it
+  mutates
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran

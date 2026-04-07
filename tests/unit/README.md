@@ -94,6 +94,10 @@ bodies.
     lane planes plus stable per-page digests
   - validates repeated CUDA decode steps preserve the digest of untouched pages
     while still advancing the decode-owned page digest
+  - validates the widened CUDA context payload now also carries per-page tensor
+    layout records for row counts, lane counts, head blocks, and generations
+  - validates repeated CUDA decode steps preserve layout for untouched pages and
+    advance generation only on the decode-owned page
   - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload and varies with direct context-buffer identity
   - validates CUDA decode rejects a context produced by a different decode

@@ -245,6 +245,8 @@ These are the highest-leverage next tasks.
 - [x] Add page-backed slot payloads to CUDA live-context state images
 - [x] Widen CUDA live-context state images into compact KV-style key/value lane
   planes with per-page digests
+- [x] Add per-page tensor-layout records to CUDA KV images and preserve decode
+  generation on the page that changes
 
 ### 5.3 CUDA Validation
 

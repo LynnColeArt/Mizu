@@ -4,13 +4,15 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `39e4374` (`Add page-backed
-  CUDA decode state slots`)
-- current milestone: CUDA live-context payloads now widen into a compact
-  512-byte key/value lane image with per-page digests, so decode state carries
-  more backend-shaped page content instead of token slots alone
-- immediate next target: replace the compact CUDA key/value lane image with a
-  more realistic tensor-backed page record or backend-native KV-state payload
+- latest published baseline before this slice: `5f970e5` (`Document roadmap
+  status and CUDA KV lane milestone`)
+- current milestone: CUDA live-context payloads now keep the 512-byte key/value
+  lane image but add explicit per-page tensor-layout records, so decode can
+  preserve untouched page layout while advancing generation on the page it
+  actually mutates
+- immediate next target: replace the compact CUDA key/value lane image plus
+  synthetic page-layout records with a more realistic tensor-backed page record
+  or backend-native KV-state payload
 
 ## Roadmap Status
 
@@ -99,6 +101,17 @@ In short:
 - the runtime can now read those compact KV-style lane planes back through a
   Fortran-side extractor, which makes the widened decode image inspectable in
   tests instead of opaque
+- the remaining tail of that 512-byte payload now carries explicit per-page
+  tensor-layout records:
+  - key row count
+  - key lane count
+  - value row count
+  - value lane count
+  - derived head block
+  - page generation
+- the runtime can now read those page-layout records back through a second
+  Fortran-side extractor, which makes the compact page image look more like a
+  small tensor record than a bag of lanes
 
 ### Self-Optimization
 
@@ -150,6 +163,9 @@ In short:
 - CUDA decode now also writes compact value-lane payloads and stable per-page
   lane digests, so unchanged pages retain their own identity while the overall
   state image digest still advances across decode
+- CUDA decode now also preserves layout metadata for untouched pages and
+  advances the generation counter only on the decode-owned page, which makes
+  checkpointed state more honest about what changed
 - runtime workspace reservations now allocate a reusable host scratch buffer
   instead of tracking bytes alone
 - CUDA projector, prefill, and decode now receive that runtime workspace buffer
@@ -261,6 +277,8 @@ In short:
   transformer KV tensors or backend-native cache pages
 - the per-page lane digests are page-identity aids for the runtime and tests,
   not real backend checksums over device-resident tensor tiles
+- the new page-layout records are still synthetic descriptors, not real tensor
+  strides, allocator metadata, or backend-owned page tables
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing
@@ -270,6 +288,7 @@ In short:
 1. Build the Apple capability and planner layer.
 2. Materialize route-specific Apple pack and plan payloads behind the existing
    metadata records.
-3. Replace the compact CUDA key/value lane image with a more realistic
-   tensor-backed page record or backend-owned KV-state payload.
+3. Replace the compact CUDA key/value lane image and synthetic page-layout
+   records with a more realistic tensor-backed page record or backend-owned
+   KV-state payload.
 4. Start the thin Go binding once the C ABI settles a bit more.
