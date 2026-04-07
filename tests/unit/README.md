@@ -78,6 +78,8 @@ bodies.
     header
   - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload and varies with direct context-buffer identity
+  - validates CUDA decode rejects a context produced by a different decode
+    artifact, even when the route stays the same
   - validates CUDA decode rejects a corrupted context payload instead of
     consuming invalid restored state
   - validates the CUDA bridge receives and stamps the runtime workspace scratch

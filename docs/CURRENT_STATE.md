@@ -34,6 +34,9 @@ Last updated: 2026-04-07
 - CUDA live-context payloads now include a small versioned, checksummed
   header, and both `resume` and CUDA decode validate header plus payload
   integrity before treating restored bytes as usable backend state
+- CUDA live-context payloads now also retain producer-stage and producer-plan
+  lineage, so decode rejects incompatible plan drift and resume rejects
+  mismatched checkpoint reloads for offloaded CUDA sessions
 
 ### Self-Optimization
 

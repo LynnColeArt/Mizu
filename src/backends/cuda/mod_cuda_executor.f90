@@ -3,7 +3,8 @@ module mod_cuda_executor
   use mod_kinds,          only: i8, i32, i64, MAX_PATH_LEN
   use mod_status,         only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_ARGUMENT, &
                                 MIZU_STATUS_INVALID_STATE
-  use mod_types,          only: MIZU_STOP_REASON_NONE
+  use mod_types,          only: MIZU_STOP_REASON_NONE, MIZU_STAGE_NONE, MIZU_STAGE_PREFILL, &
+                                MIZU_STAGE_DECODE
   use mod_cuda_bridge,    only: launch_cuda_projector, launch_cuda_prefill, launch_cuda_decode
   use mod_model_manifest, only: hash_text64
 
@@ -11,7 +12,7 @@ module mod_cuda_executor
 
   private
   public :: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
-  public :: cuda_context_bytes_are_valid
+  public :: cuda_context_bytes_are_valid, extract_cuda_context_lineage
 
 contains
 
@@ -62,7 +63,7 @@ contains
   subroutine execute_cuda_prefill(cache_root, artifact_path, staged_tokens, staged_modal_count, &
                                   token_content_hash, modal_content_hash, consumed_token_count, status_code, &
                                   workspace_buffer, workspace_bytes, token_values, modal_bytes, &
-                                  context_bytes, context_byte_count)
+                                  context_bytes, context_byte_count, context_artifact_hash)
     character(len=*), intent(in) :: cache_root
     character(len=*), intent(in) :: artifact_path
     integer(i64), intent(in)     :: staged_tokens
@@ -77,13 +78,16 @@ contains
     integer(i8), intent(in), optional  :: modal_bytes(:)
     integer(i8), intent(out)           :: context_bytes(:)
     integer(i32), intent(out)          :: context_byte_count
+    integer(i64), intent(out), optional :: context_artifact_hash
     character(len=1024)          :: payload_text
+    integer(i64)                 :: artifact_hash
     integer(i64)                 :: payload_hash
     integer(i64)                 :: workspace_bytes_local
     logical                      :: loaded_ok
     type(c_ptr)                  :: workspace_buffer_local
 
     consumed_token_count = 0_i64
+    if (present(context_artifact_hash)) context_artifact_hash = 0_i64
     if (len_trim(cache_root) == 0 .or. len_trim(artifact_path) == 0) then
       status_code = MIZU_STATUS_INVALID_ARGUMENT
       return
@@ -113,22 +117,24 @@ contains
       end if
     end if
 
-    payload_hash = positive_hash64(trim(payload_text))
+    artifact_hash = positive_hash64(trim(payload_text))
+    payload_hash = artifact_hash
     payload_hash = combine_positive_hash64(payload_hash, token_content_hash)
     payload_hash = combine_positive_hash64(payload_hash, modal_content_hash)
     workspace_buffer_local = c_null_ptr
     workspace_bytes_local = 0_i64
     if (present(workspace_buffer)) workspace_buffer_local = workspace_buffer
     if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
-    call launch_cuda_prefill(payload_hash, max(0_i64, staged_tokens), staged_modal_count, &
+    call launch_cuda_prefill(payload_hash, artifact_hash, max(0_i64, staged_tokens), staged_modal_count, &
       consumed_token_count, status_code, workspace_buffer_local, workspace_bytes_local, token_values, &
       modal_bytes, context_bytes, context_byte_count)
+    if (present(context_artifact_hash)) context_artifact_hash = merge(artifact_hash, 0_i64, status_code == MIZU_STATUS_OK)
   end subroutine execute_cuda_prefill
 
   subroutine execute_cuda_decode(cache_root, artifact_path, kv_before, token_budget, emitted_token_count, &
                                  token_value, stop_reason, status_code, workspace_buffer, workspace_bytes, &
                                  context_bytes, context_byte_count, updated_context_bytes, &
-                                 updated_context_byte_count)
+                                 updated_context_byte_count, context_artifact_hash)
     character(len=*), intent(in) :: cache_root
     character(len=*), intent(in) :: artifact_path
     integer(i64), intent(in)     :: kv_before
@@ -143,15 +149,24 @@ contains
     integer(i32), intent(in)           :: context_byte_count
     integer(i8), intent(out)           :: updated_context_bytes(:)
     integer(i32), intent(out)          :: updated_context_byte_count
+    integer(i64), intent(out), optional :: context_artifact_hash
     character(len=1024)          :: payload_text
+    integer(i64)                 :: artifact_hash
     integer(i64)                 :: payload_hash
     integer(i64)                 :: workspace_bytes_local
+    integer(i64)                 :: current_context_artifact_hash
+    integer(i32)                 :: current_context_stage
     logical                      :: loaded_ok
+    logical                      :: lineage_known
     type(c_ptr)                  :: workspace_buffer_local
 
     emitted_token_count = 0_i64
     token_value = 0_i32
     stop_reason = MIZU_STOP_REASON_NONE
+    current_context_stage = MIZU_STAGE_NONE
+    current_context_artifact_hash = 0_i64
+    lineage_known = .false.
+    if (present(context_artifact_hash)) context_artifact_hash = 0_i64
 
     if (len_trim(cache_root) == 0 .or. len_trim(artifact_path) == 0 .or. token_budget <= 0_i64) then
       status_code = MIZU_STATUS_INVALID_ARGUMENT
@@ -173,14 +188,24 @@ contains
       return
     end if
 
-    payload_hash = positive_hash64(trim(payload_text))
+    artifact_hash = positive_hash64(trim(payload_text))
+    payload_hash = artifact_hash
+    call extract_cuda_context_lineage(context_bytes, context_byte_count, current_context_stage, &
+      current_context_artifact_hash, lineage_known)
+    if (lineage_known .and. current_context_stage == MIZU_STAGE_DECODE) then
+      if (current_context_artifact_hash /= artifact_hash) then
+        status_code = MIZU_STATUS_INVALID_STATE
+        return
+      end if
+    end if
     workspace_buffer_local = c_null_ptr
     workspace_bytes_local = 0_i64
     if (present(workspace_buffer)) workspace_buffer_local = workspace_buffer
     if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
-    call launch_cuda_decode(payload_hash, kv_before, token_budget, emitted_token_count, token_value, &
+    call launch_cuda_decode(payload_hash, artifact_hash, kv_before, token_budget, emitted_token_count, token_value, &
       stop_reason, status_code, workspace_buffer_local, workspace_bytes_local, context_bytes, &
       context_byte_count, updated_context_bytes, updated_context_byte_count)
+    if (present(context_artifact_hash)) context_artifact_hash = merge(artifact_hash, 0_i64, status_code == MIZU_STATUS_OK)
   end subroutine execute_cuda_decode
 
   subroutine load_cuda_artifact_payload(cache_root, artifact_path, payload_text, loaded_ok)
@@ -279,6 +304,36 @@ contains
     is_valid = .true.
   end function cuda_context_bytes_are_valid
 
+  pure subroutine extract_cuda_context_lineage(context_bytes, context_byte_count, producer_stage, artifact_hash, &
+                                               lineage_known)
+    integer(i8), intent(in)  :: context_bytes(:)
+    integer(i32), intent(in) :: context_byte_count
+    integer(i32), intent(out) :: producer_stage
+    integer(i64), intent(out) :: artifact_hash
+    logical, intent(out)      :: lineage_known
+    integer(i32)              :: producer_kind
+
+    producer_stage = MIZU_STAGE_NONE
+    artifact_hash = 0_i64
+    lineage_known = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+
+    producer_kind = int(context_bytes(6), kind=i32)
+    select case (producer_kind)
+    case (1_i32)
+      producer_stage = MIZU_STAGE_PREFILL
+    case (2_i32)
+      producer_stage = MIZU_STAGE_DECODE
+    case default
+      producer_stage = MIZU_STAGE_NONE
+    end select
+    if (context_byte_count < 56_i32) return
+
+    artifact_hash = decode_context_u64le(context_bytes(49), context_bytes(50), context_bytes(51), context_bytes(52), &
+      context_bytes(53), context_bytes(54), context_bytes(55), context_bytes(56))
+    lineage_known = (producer_stage /= MIZU_STAGE_NONE .and. artifact_hash /= 0_i64)
+  end subroutine extract_cuda_context_lineage
+
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1
     integer(i8), intent(in) :: byte_2
@@ -297,6 +352,27 @@ contains
     value_u32 = value_u32 + shiftl(int(context_byte_to_u32(byte_3), kind=i64), 16)
     value_u32 = value_u32 + shiftl(int(context_byte_to_u32(byte_4), kind=i64), 24)
   end function decode_context_u32le
+
+  pure integer(i64) function decode_context_u64le(byte_1, byte_2, byte_3, byte_4, byte_5, byte_6, byte_7, &
+                                                  byte_8) result(value_u64)
+    integer(i8), intent(in) :: byte_1
+    integer(i8), intent(in) :: byte_2
+    integer(i8), intent(in) :: byte_3
+    integer(i8), intent(in) :: byte_4
+    integer(i8), intent(in) :: byte_5
+    integer(i8), intent(in) :: byte_6
+    integer(i8), intent(in) :: byte_7
+    integer(i8), intent(in) :: byte_8
+
+    value_u64 = int(context_byte_to_u32(byte_1), kind=i64)
+    value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_2), kind=i64), 8)
+    value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_3), kind=i64), 16)
+    value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_4), kind=i64), 24)
+    value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_5), kind=i64), 32)
+    value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_6), kind=i64), 40)
+    value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_7), kind=i64), 48)
+    value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_8), kind=i64), 56)
+  end function decode_context_u64le
 
   pure integer(i64) function compute_context_checksum32(context_bytes, stored_count) result(checksum_value)
     integer(i8), intent(in) :: context_bytes(:)

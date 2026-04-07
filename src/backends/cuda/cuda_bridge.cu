@@ -139,6 +139,7 @@ inline void stamp_workspace_buffer(void *workspace_buffer,
 }
 
 inline void fill_prefill_context_bytes(unsigned long long seed,
+                                       unsigned long long artifact_hash,
                                        int64_t token_count,
                                        int64_t modal_byte_count,
                                        int32_t staged_modal_count,
@@ -156,7 +157,7 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   *context_byte_count = 0;
   if (context_bytes == nullptr || context_capacity <= 0) return;
 
-  stored_count = context_capacity < 48 ? context_capacity : 48;
+  stored_count = context_capacity < 64 ? context_capacity : 64;
   memset(bytes, 0, static_cast<size_t>(stored_count));
 
   if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
@@ -181,7 +182,6 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   if (stored_count > 36) {
     memcpy(bytes + 36, &consumed_token_count, static_cast<size_t>(stored_count - 36 < 8 ? stored_count - 36 : 8));
   }
-
   for (int32_t index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
     seed_copy = mix_u64_host(seed_copy ^
                              (static_cast<unsigned long long>(token_count) << 1) ^
@@ -190,6 +190,10 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
                              (static_cast<unsigned long long>(consumed_token_count) << 25) ^
                              static_cast<unsigned long long>(index));
     bytes[index] ^= static_cast<unsigned char>(seed_copy & 0xffULL);
+  }
+
+  if (stored_count > 48) {
+    memcpy(bytes + 48, &artifact_hash, static_cast<size_t>(stored_count - 48 < 8 ? stored_count - 48 : 8));
   }
 
   checksum = compute_context_checksum(bytes, stored_count);
@@ -201,6 +205,7 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
 }
 
 inline void fill_decode_context_bytes(unsigned long long seed,
+                                      unsigned long long artifact_hash,
                                       int64_t kv_after,
                                       int64_t emitted_token_count,
                                       int32_t token_value,
@@ -218,7 +223,7 @@ inline void fill_decode_context_bytes(unsigned long long seed,
   *context_byte_count = 0;
   if (context_bytes == nullptr || context_capacity <= 0) return;
 
-  stored_count = context_capacity < 48 ? context_capacity : 48;
+  stored_count = context_capacity < 64 ? context_capacity : 64;
   memset(bytes, 0, static_cast<size_t>(stored_count));
 
   if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
@@ -243,7 +248,6 @@ inline void fill_decode_context_bytes(unsigned long long seed,
   if (stored_count > 36) {
     memcpy(bytes + 36, &stop_reason, static_cast<size_t>(stored_count - 36 < 4 ? stored_count - 36 : 4));
   }
-
   for (int32_t index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
     seed_copy = mix_u64_host(seed_copy ^
                              (static_cast<unsigned long long>(kv_after) << 1) ^
@@ -252,6 +256,10 @@ inline void fill_decode_context_bytes(unsigned long long seed,
                              (static_cast<unsigned long long>(stop_reason) << 25) ^
                              static_cast<unsigned long long>(index));
     bytes[index] ^= static_cast<unsigned char>(seed_copy & 0xffULL);
+  }
+
+  if (stored_count > 48) {
+    memcpy(bytes + 48, &artifact_hash, static_cast<size_t>(stored_count - 48 < 8 ? stored_count - 48 : 8));
   }
 
   checksum = compute_context_checksum(bytes, stored_count);
@@ -309,6 +317,7 @@ extern "C" void mizu_cuda_bridge_get_device_info(int32_t *device_count,
 }
 
 extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
+                                         int64_t artifact_hash,
                                          const int32_t *token_values,
                                          int64_t token_count,
                                          const int8_t *modal_bytes,
@@ -382,8 +391,9 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
   if (status == cudaSuccess) {
     *consumed_token_count = *managed_consumed_token_count;
     workspace_seed = mix_u64_host(static_cast<unsigned long long>(payload_hash) ^ *managed_tensor_seed);
-    fill_prefill_context_bytes(workspace_seed, token_count, modal_byte_count, staged_modal_count,
-                               *consumed_token_count, context_bytes, context_capacity, context_byte_count);
+    fill_prefill_context_bytes(workspace_seed, static_cast<unsigned long long>(artifact_hash), token_count,
+                               modal_byte_count, staged_modal_count, *consumed_token_count, context_bytes,
+                               context_capacity, context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes, workspace_seed, 3U);
   }
   *status_code = (status == cudaSuccess) ? MIZU_STATUS_OK : MIZU_STATUS_EXECUTION_ERROR;
@@ -431,6 +441,7 @@ extern "C" void mizu_cuda_bridge_projector(int64_t payload_hash,
 }
 
 extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
+                                        int64_t artifact_hash,
                                         int64_t kv_before,
                                         int64_t token_budget,
                                         const int8_t *context_bytes,
@@ -500,9 +511,9 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
     *token_value = *managed_token_value;
     *stop_reason = *managed_stop_reason;
     fill_decode_context_bytes(decode_seed ^ static_cast<unsigned long long>(*token_value),
-                              kv_before + *emitted_token_count, *emitted_token_count, *token_value,
-                              *stop_reason, updated_context_bytes, updated_context_capacity,
-                              updated_context_byte_count);
+                              static_cast<unsigned long long>(artifact_hash), kv_before + *emitted_token_count,
+                              *emitted_token_count, *token_value, *stop_reason, updated_context_bytes,
+                              updated_context_capacity, updated_context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes,
                            mix_u64_host(decode_seed ^
                                         static_cast<unsigned long long>(kv_before)),

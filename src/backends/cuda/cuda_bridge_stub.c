@@ -72,6 +72,7 @@ static void stamp_workspace_buffer(void *workspace_buffer,
 }
 
 static void fill_prefill_context_bytes(uint64_t seed,
+                                       uint64_t artifact_hash,
                                        int64_t token_count,
                                        int64_t modal_byte_count,
                                        int32_t staged_modal_count,
@@ -91,7 +92,7 @@ static void fill_prefill_context_bytes(uint64_t seed,
     if (context_bytes == NULL || context_capacity <= 0) return;
 
     bytes = (uint8_t *)context_bytes;
-    stored_count = context_capacity < 48 ? context_capacity : 48;
+    stored_count = context_capacity < 64 ? context_capacity : 64;
     memset(bytes, 0, (size_t)stored_count);
 
     if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
@@ -116,7 +117,6 @@ static void fill_prefill_context_bytes(uint64_t seed,
     if (stored_count > 36) {
         memcpy(bytes + 36, &consumed_token_count, (size_t)(stored_count - 36 < 8 ? stored_count - 36 : 8));
     }
-
     seed_copy = seed;
     for (index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
         seed_copy = mix_u64(seed_copy ^
@@ -128,6 +128,10 @@ static void fill_prefill_context_bytes(uint64_t seed,
         bytes[index] ^= (uint8_t)(seed_copy & UINT64_C(0xff));
     }
 
+    if (stored_count > 48) {
+        memcpy(bytes + 48, &artifact_hash, (size_t)(stored_count - 48 < 8 ? stored_count - 48 : 8));
+    }
+
     checksum = compute_context_checksum(bytes, stored_count);
     if (stored_count > 8) {
         memcpy(bytes + 8, &checksum, (size_t)(stored_count - 8 < 4 ? stored_count - 8 : 4));
@@ -137,6 +141,7 @@ static void fill_prefill_context_bytes(uint64_t seed,
 }
 
 static void fill_decode_context_bytes(uint64_t seed,
+                                      uint64_t artifact_hash,
                                       int64_t kv_after,
                                       int64_t emitted_token_count,
                                       int32_t token_value,
@@ -156,7 +161,7 @@ static void fill_decode_context_bytes(uint64_t seed,
     if (context_bytes == NULL || context_capacity <= 0) return;
 
     bytes = (uint8_t *)context_bytes;
-    stored_count = context_capacity < 48 ? context_capacity : 48;
+    stored_count = context_capacity < 64 ? context_capacity : 64;
     memset(bytes, 0, (size_t)stored_count);
 
     if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
@@ -181,7 +186,6 @@ static void fill_decode_context_bytes(uint64_t seed,
     if (stored_count > 36) {
         memcpy(bytes + 36, &stop_reason, (size_t)(stored_count - 36 < 4 ? stored_count - 36 : 4));
     }
-
     seed_copy = seed;
     for (index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
         seed_copy = mix_u64(seed_copy ^
@@ -191,6 +195,10 @@ static void fill_decode_context_bytes(uint64_t seed,
                             ((uint64_t)(uint32_t)stop_reason << 25) ^
                             (uint64_t)(uint32_t)index);
         bytes[index] ^= (uint8_t)(seed_copy & UINT64_C(0xff));
+    }
+
+    if (stored_count > 48) {
+        memcpy(bytes + 48, &artifact_hash, (size_t)(stored_count - 48 < 8 ? stored_count - 48 : 8));
     }
 
     checksum = compute_context_checksum(bytes, stored_count);
@@ -224,6 +232,7 @@ void mizu_cuda_bridge_get_device_info(int32_t *device_count,
 }
 
 void mizu_cuda_bridge_prefill(int64_t payload_hash,
+                              int64_t artifact_hash,
                               const int32_t *token_values,
                               int64_t token_count,
                               const int8_t *modal_bytes,
@@ -255,8 +264,8 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
         }
     }
     seed = mix_u64((uint64_t)payload_hash ^ seed ^ ((uint64_t)(uint32_t)staged_modal_count << 33));
-    fill_prefill_context_bytes(seed, token_count, modal_byte_count, staged_modal_count, *consumed_token_count,
-                               context_bytes, context_capacity, context_byte_count);
+    fill_prefill_context_bytes(seed, (uint64_t)artifact_hash, token_count, modal_byte_count, staged_modal_count,
+                               *consumed_token_count, context_bytes, context_capacity, context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes, seed, UINT8_C(3));
     *status_code = MIZU_STATUS_OK;
 }
@@ -280,6 +289,7 @@ void mizu_cuda_bridge_projector(int64_t payload_hash,
 }
 
 void mizu_cuda_bridge_decode(int64_t payload_hash,
+                             int64_t artifact_hash,
                              int64_t kv_before,
                              int64_t token_budget,
                              const int8_t *context_bytes,
@@ -314,9 +324,10 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
     *emitted_token_count = token_budget > 0 ? 1 : 0;
     *token_value = 1 + (int32_t)(seed % UINT64_C(4095));
     *stop_reason = MIZU_STOP_REASON_NONE;
-    fill_decode_context_bytes(seed ^ (uint64_t)(uint32_t)(*token_value), kv_before + *emitted_token_count,
-                              *emitted_token_count, *token_value, *stop_reason, updated_context_bytes,
-                              updated_context_capacity, updated_context_byte_count);
+    fill_decode_context_bytes(seed ^ (uint64_t)(uint32_t)(*token_value), (uint64_t)artifact_hash,
+                              kv_before + *emitted_token_count, *emitted_token_count, *token_value,
+                              *stop_reason, updated_context_bytes, updated_context_capacity,
+                              updated_context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes, seed, UINT8_C(4));
     *status_code = MIZU_STATUS_OK;
 }

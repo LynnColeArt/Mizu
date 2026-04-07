@@ -15,6 +15,7 @@ program test_cuda_executor
   integer(c_i8) :: prefill_scratch_b(16)
   integer(i8)  :: context_bytes_a(MAX_LIVE_CONTEXT_BYTES)
   integer(i8)  :: context_bytes_b(MAX_LIVE_CONTEXT_BYTES)
+  integer(i8)  :: decode_context_bytes(MAX_LIVE_CONTEXT_BYTES)
   integer(i8)  :: updated_context_bytes(MAX_LIVE_CONTEXT_BYTES)
   integer(i64) :: embedding_count
   integer(i64) :: consumed_token_count
@@ -23,6 +24,7 @@ program test_cuda_executor
   integer(i32) :: token_value_with_other_context
   integer(i32) :: context_byte_count_a
   integer(i32) :: context_byte_count_b
+  integer(i32) :: decode_context_byte_count
   integer(i32) :: updated_context_byte_count
   integer(i32) :: stop_reason
   integer(i32) :: status_code
@@ -42,9 +44,11 @@ program test_cuda_executor
   modal_bytes_b = [2_i8, 4_i8, 6_i8, 8_i8, 10_i8, 12_i8]
   context_bytes_a = 0_i8
   context_bytes_b = 0_i8
+  decode_context_bytes = 0_i8
   updated_context_bytes = 0_i8
   context_byte_count_a = 0_i32
   context_byte_count_b = 0_i32
+  decode_context_byte_count = 0_i32
   updated_context_byte_count = 0_i32
 
   shell_status = 0
@@ -119,6 +123,8 @@ program test_cuda_executor
   call expect_true("cuda decode should emit an updated context buffer", updated_context_byte_count > 32_i32)
   call expect_equal_i32("cuda decode context should keep magic M", int(updated_context_bytes(1), kind=i32), iachar("M"))
   call expect_equal_i32("cuda decode context should declare decode kind", int(updated_context_bytes(6), kind=i32), 2_i32)
+  decode_context_bytes = updated_context_bytes
+  decode_context_byte_count = updated_context_byte_count
 
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value_with_other_context, &
     stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, context_bytes_b, &
@@ -126,6 +132,16 @@ program test_cuda_executor
   call expect_equal_i32("cuda decode with another context should succeed", status_code, MIZU_STATUS_OK)
   call expect_true("cuda decode should reflect direct context buffer identity", &
     token_value_with_other_context /= token_value)
+
+  open(unit=12, file=trim(cache_root) // "/" // trim(decode_path), status="replace", action="write")
+  write(12, "(A)") "candidate=decode;stage=4;format=cuda_bf16_decode_plan_v2"
+  close(12)
+
+  call execute_cuda_decode(cache_root, decode_path, 43_i64, 1_i64, emitted_token_count, token_value_with_other_context, &
+    stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
+    decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
+  call expect_equal_i32("cuda decode should reject a context from another decode artifact", &
+    status_code, MIZU_STATUS_INVALID_STATE)
 
   context_bytes_b(20) = context_bytes_b(20) + 1_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value_with_other_context, &

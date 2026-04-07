@@ -27,5 +27,7 @@ These suites cover the `API-C*` portion of
     checkpoint artifact under `cache_root`
   - verifies parked CUDA sessions can resume after their active context has
     been offloaded behind that checkpoint
+  - verifies resumed CUDA sessions only accept checkpoint state that still
+    matches the stored route and producer lineage expectations
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

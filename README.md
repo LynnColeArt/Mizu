@@ -43,6 +43,9 @@ Current implementation status:
 - CUDA live-context payloads are now versioned, self-describing, and
   checksummed, and decode validates both header and payload integrity before
   consuming restored backend state
+- CUDA live-context payloads now also carry the producer artifact identity, so
+  decode can reject same-route plan drift and `resume` can reject mismatched
+  checkpoint state instead of silently reusing it
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - `make test` now succeeds from a clean tree without relying on stray Fortran

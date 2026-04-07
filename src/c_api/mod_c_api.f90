@@ -69,7 +69,7 @@ module mod_c_api
   use mod_cuda_planner,   only: CUDA_ARTIFACT_PAYLOAD_LEN, plan_cuda_stage, &
                                 build_cuda_artifact_payload_text
   use mod_cuda_executor,  only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
-                                cuda_context_bytes_are_valid
+                                cuda_context_bytes_are_valid, extract_cuda_context_lineage
   use mod_cache_keys,     only: MAX_CACHE_KEY_LEN, plan_cache_key, weight_cache_key, &
                                 session_cache_key, multimodal_cache_key, build_plan_cache_key, &
                                 build_weight_cache_key, build_session_cache_key, &
@@ -973,6 +973,7 @@ contains
     integer(i32) :: projector_placeholder_count
     integer(i32) :: prefill_context_byte_count
     integer(i8)  :: prefill_context_bytes(MAX_LIVE_CONTEXT_BYTES)
+    integer(i64) :: prefill_context_artifact_hash
     integer(i32) :: prefill_backend_family
     integer(i32) :: prefill_route
     character(len=MAX_PATH_LEN) :: staged_modal_slot_name_before
@@ -1087,6 +1088,7 @@ contains
     consumed_token_count = staged_tokens_before
     prefill_context_byte_count = 0_i32
     prefill_context_bytes = 0_i8
+    prefill_context_artifact_hash = 0_i64
     if (prefill_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. prefill_route == MIZU_EXEC_ROUTE_CUDA) then
       if (allocated(session%staged_tokens)) then
         if (allocated(session%staged_modal_bytes)) then
@@ -1094,25 +1096,27 @@ contains
             staged_tokens_before, staged_modal_before, staged_token_hash_before, staged_modal_hash_before, &
             consumed_token_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
             token_values=session%staged_tokens, modal_bytes=session%staged_modal_bytes, &
-            context_bytes=prefill_context_bytes, context_byte_count=prefill_context_byte_count)
+            context_bytes=prefill_context_bytes, context_byte_count=prefill_context_byte_count, &
+            context_artifact_hash=prefill_context_artifact_hash)
         else
           call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
             staged_tokens_before, staged_modal_before, staged_token_hash_before, staged_modal_hash_before, &
             consumed_token_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
             token_values=session%staged_tokens, context_bytes=prefill_context_bytes, &
-            context_byte_count=prefill_context_byte_count)
+            context_byte_count=prefill_context_byte_count, context_artifact_hash=prefill_context_artifact_hash)
         end if
       else if (allocated(session%staged_modal_bytes)) then
         call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
           staged_tokens_before, staged_modal_before, staged_token_hash_before, staged_modal_hash_before, &
           consumed_token_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
           modal_bytes=session%staged_modal_bytes, context_bytes=prefill_context_bytes, &
-          context_byte_count=prefill_context_byte_count)
+          context_byte_count=prefill_context_byte_count, context_artifact_hash=prefill_context_artifact_hash)
       else
         call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
           staged_tokens_before, staged_modal_before, staged_token_hash_before, staged_modal_hash_before, &
           consumed_token_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
-          context_bytes=prefill_context_bytes, context_byte_count=prefill_context_byte_count)
+          context_bytes=prefill_context_bytes, context_byte_count=prefill_context_byte_count, &
+          context_artifact_hash=prefill_context_artifact_hash)
       end if
       if (status_code /= MIZU_STATUS_OK) then
         call release_stage_workspace(runtime, prefill_workspace_reserved)
@@ -1129,7 +1133,7 @@ contains
       return
     end if
     call store_live_context_record(session, prefill_backend_family, prefill_route, prefill_context_bytes, &
-      prefill_context_byte_count)
+      prefill_context_byte_count, producer_stage=MIZU_STAGE_PREFILL, artifact_hash=prefill_context_artifact_hash)
     prefill_elapsed_us = elapsed_since_us(stage_started_us)
 
     call finalize_plan_stage_cache(runtime_cache, optimization_store, trim(prefill_optimization_key_text), &
@@ -1170,6 +1174,7 @@ contains
     integer(i32) :: decode_stop_reason
     integer(i32) :: updated_context_byte_count
     integer(i8)  :: updated_context_bytes(MAX_LIVE_CONTEXT_BYTES)
+    integer(i64) :: decode_context_artifact_hash
     integer(i32) :: selection_mode
     integer(i32) :: report_backend_family
     integer(i32) :: report_route
@@ -1233,11 +1238,20 @@ contains
     emitted_tokens_local = 0_i32
     updated_context_byte_count = 0_i32
     updated_context_bytes = 0_i8
+    decode_context_artifact_hash = 0_i64
     call prepare_plan_stage_candidate(runtime, optimization_store, model, MIZU_STAGE_DECODE, &
       OP_FAMILY_DECODE, [max(0_i64, kv_before), max(0_i64, int(options%token_budget, kind=i64)), 1_i64], &
       max(0_i64, int(options%token_budget, kind=i64)), decode_optimization_key_text, &
       decode_candidate_key_text, decode_plan_id, selection_mode, report_backend_family, report_route, &
       decode_artifact_metadata)
+
+    if (session%has_live_context .and. session%live_context_producer_stage == MIZU_STAGE_DECODE) then
+      if (report_backend_family /= session%live_context_backend_family .or. &
+          report_route /= session%live_context_execution_route) then
+        mizu_session_decode_step = int(MIZU_STATUS_INVALID_STATE, kind=c_int32_t)
+        return
+      end if
+    end if
 
     call reserve_stage_workspace(runtime, decode_artifact_metadata, decode_workspace_reserved, status_code)
     if (status_code /= MIZU_STATUS_OK) then
@@ -1255,7 +1269,7 @@ contains
         kv_before, int(options%token_budget, kind=i64), emitted_token_count, token_value, &
         decode_stop_reason, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
         session%live_context_bytes, session%live_context_byte_count, updated_context_bytes, &
-        updated_context_byte_count)
+        updated_context_byte_count, context_artifact_hash=decode_context_artifact_hash)
       if (status_code /= MIZU_STATUS_OK) then
         call release_stage_workspace(runtime, decode_workspace_reserved)
         mizu_session_decode_step = int(status_code, kind=c_int32_t)
@@ -1285,7 +1299,9 @@ contains
       return
     end if
     if (report_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. report_route == MIZU_EXEC_ROUTE_CUDA) then
-      call update_live_context_record(session, updated_context_bytes, updated_context_byte_count)
+      call update_live_context_record(session, updated_context_bytes, updated_context_byte_count, &
+        producer_stage=MIZU_STAGE_DECODE, artifact_hash=decode_context_artifact_hash, &
+        backend_family=report_backend_family, execution_route=report_route)
     end if
     decode_elapsed_us = elapsed_since_us(stage_started_us)
 
@@ -1921,10 +1937,13 @@ contains
     integer(i64)                              :: kv_token_count
     integer(i64)                              :: live_context_hash
     integer(i8)                               :: context_bytes(MAX_LIVE_CONTEXT_BYTES)
+    integer(i64)                              :: context_artifact_hash
     integer(i32)                              :: backend_family
     integer(i32)                              :: execution_route
     integer(i32)                              :: context_byte_count
+    integer(i32)                              :: context_producer_stage
     logical                                   :: found
+    logical                                   :: lineage_known
     logical                                   :: loaded_ok
 
     restored_ok = .false.
@@ -1947,11 +1966,27 @@ contains
       execution_route, context_bytes, context_byte_count, loaded_ok)
     if (.not. loaded_ok) return
     if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (backend_family /= session%live_context_backend_family) return
+    if (execution_route /= session%live_context_execution_route) return
+    if (kv_token_count /= session%kv_token_count) return
+    if (live_context_hash /= session%live_context_hash) return
+    if (context_byte_count /= session%live_context_byte_count) return
+    call extract_cuda_context_lineage(context_bytes, context_byte_count, context_producer_stage, &
+      context_artifact_hash, lineage_known)
+    if (session%live_context_producer_stage /= MIZU_STAGE_NONE) then
+      if (.not. lineage_known) return
+      if (context_producer_stage /= session%live_context_producer_stage) return
+    end if
+    if (session%live_context_artifact_hash /= 0_i64) then
+      if (.not. lineage_known) return
+      if (context_artifact_hash /= session%live_context_artifact_hash) return
+    end if
 
     session%kv_token_count = kv_token_count
     session%live_context_hash = live_context_hash
     session%has_live_context = .true.
-    call store_live_context_record(session, backend_family, execution_route, context_bytes, context_byte_count)
+    call store_live_context_record(session, backend_family, execution_route, context_bytes, context_byte_count, &
+      producer_stage=context_producer_stage, artifact_hash=context_artifact_hash)
     restored_ok = .true.
   end subroutine restore_session_checkpoint
 

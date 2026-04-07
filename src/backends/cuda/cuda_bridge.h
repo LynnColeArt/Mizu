@@ -18,6 +18,7 @@ void mizu_cuda_bridge_get_device_info(int32_t *device_count,
                                       int32_t *status_code);
 
 void mizu_cuda_bridge_prefill(int64_t payload_hash,
+                              int64_t artifact_hash,
                               const int32_t *token_values,
                               int64_t token_count,
                               const int8_t *modal_bytes,
@@ -40,6 +41,7 @@ void mizu_cuda_bridge_projector(int64_t payload_hash,
                                 int32_t *status_code);
 
 void mizu_cuda_bridge_decode(int64_t payload_hash,
+                             int64_t artifact_hash,
                              int64_t kv_before,
                              int64_t token_budget,
                              const int8_t *context_bytes,

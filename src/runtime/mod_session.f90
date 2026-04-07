@@ -4,7 +4,7 @@ module mod_session
                         MIZU_STATUS_INVALID_STATE, MIZU_STATUS_SESSION_EVICTED
   use mod_types,  only: MIZU_SESSION_STATE_NONE, MIZU_SESSION_STATE_PENDING_INPUTS, &
                         MIZU_SESSION_STATE_LIVE_CONTEXT, MIZU_SESSION_STATE_PARKED, &
-                        MIZU_STOP_REASON_NONE, MIZU_MODALITY_KIND_UNKNOWN, &
+                        MIZU_STOP_REASON_NONE, MIZU_STAGE_NONE, MIZU_MODALITY_KIND_UNKNOWN, &
                         MIZU_DTYPE_UNKNOWN, session_config, session_info, &
                         session_state, execution_report, MIZU_BACKEND_FAMILY_NONE, &
                         MIZU_BACKEND_FAMILY_CUDA, MIZU_EXEC_ROUTE_NONE, &
@@ -503,22 +503,29 @@ contains
 
     session%live_context_backend_family = MIZU_BACKEND_FAMILY_NONE
     session%live_context_execution_route = MIZU_EXEC_ROUTE_NONE
+    session%live_context_producer_stage = MIZU_STAGE_NONE
+    session%live_context_artifact_hash = 0_i64
     session%live_context_byte_count = 0_i32
     session%live_context_bytes = 0_i8
     session%has_resident_live_context = .false.
   end subroutine clear_live_context_record
 
-  subroutine store_live_context_record(session, backend_family, execution_route, context_bytes, context_byte_count)
+  subroutine store_live_context_record(session, backend_family, execution_route, context_bytes, context_byte_count, &
+                                       producer_stage, artifact_hash)
     type(session_state), intent(inout) :: session
     integer(i32), intent(in)           :: backend_family
     integer(i32), intent(in)           :: execution_route
     integer(i8), intent(in)            :: context_bytes(:)
     integer(i32), intent(in)           :: context_byte_count
+    integer(i32), intent(in), optional :: producer_stage
+    integer(i64), intent(in), optional :: artifact_hash
     integer(i32)                       :: stored_count
 
     call clear_live_context_record(session)
     session%live_context_backend_family = backend_family
     session%live_context_execution_route = execution_route
+    if (present(producer_stage)) session%live_context_producer_stage = producer_stage
+    if (present(artifact_hash)) session%live_context_artifact_hash = artifact_hash
     stored_count = max(0_i32, min(context_byte_count, min(int(size(context_bytes), kind=i32), MAX_LIVE_CONTEXT_BYTES)))
     session%live_context_byte_count = stored_count
     session%has_resident_live_context = (stored_count > 0_i32)
@@ -527,13 +534,22 @@ contains
     session%live_context_bytes(1:stored_count) = context_bytes(1:stored_count)
   end subroutine store_live_context_record
 
-  subroutine update_live_context_record(session, context_bytes, context_byte_count)
+  subroutine update_live_context_record(session, context_bytes, context_byte_count, producer_stage, artifact_hash, &
+                                        backend_family, execution_route)
     type(session_state), intent(inout) :: session
     integer(i8), intent(in)            :: context_bytes(:)
     integer(i32), intent(in)           :: context_byte_count
+    integer(i32), intent(in), optional :: producer_stage
+    integer(i64), intent(in), optional :: artifact_hash
+    integer(i32), intent(in), optional :: backend_family
+    integer(i32), intent(in), optional :: execution_route
     integer(i32)                       :: stored_count
 
     session%live_context_bytes = 0_i8
+    if (present(producer_stage)) session%live_context_producer_stage = producer_stage
+    if (present(artifact_hash)) session%live_context_artifact_hash = artifact_hash
+    if (present(backend_family)) session%live_context_backend_family = backend_family
+    if (present(execution_route)) session%live_context_execution_route = execution_route
     stored_count = max(0_i32, min(context_byte_count, min(int(size(context_bytes), kind=i32), MAX_LIVE_CONTEXT_BYTES)))
     session%live_context_byte_count = stored_count
     session%has_resident_live_context = (stored_count > 0_i32)
