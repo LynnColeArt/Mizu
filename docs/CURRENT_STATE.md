@@ -37,6 +37,9 @@ Last updated: 2026-04-07
 - CUDA live-context payloads now also retain producer-stage and producer-plan
   lineage, so decode rejects incompatible plan drift and resume rejects
   mismatched checkpoint reloads for offloaded CUDA sessions
+- CUDA live-context payloads now use a fixed-size state block with explicit
+  state lanes and a compact summary word, so decode consumes structured
+  backend state instead of folding arbitrary context bytes into one seed
 
 ### Self-Optimization
 

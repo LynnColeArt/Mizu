@@ -76,6 +76,8 @@ bodies.
     decode consumes that buffer directly
   - validates those context buffers now carry a versioned, checksummed CUDA
     header
+  - validates CUDA prefill and decode now fully populate the fixed-size CUDA
+    context payload instead of leaving a partial scratch record
   - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload and varies with direct context-buffer identity
   - validates CUDA decode rejects a context produced by a different decode

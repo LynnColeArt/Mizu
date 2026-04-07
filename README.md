@@ -46,6 +46,9 @@ Current implementation status:
 - CUDA live-context payloads now also carry the producer artifact identity, so
   decode can reject same-route plan drift and `resume` can reject mismatched
   checkpoint state instead of silently reusing it
+- CUDA live-context payloads now use a fixed-size state block with explicit
+  decode-state lanes plus a compact summary word, so decode consumes
+  structured backend state instead of hashing an opaque byte bag
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - `make test` now succeeds from a clean tree without relying on stray Fortran

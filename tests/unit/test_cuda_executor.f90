@@ -91,6 +91,8 @@ program test_cuda_executor
   call expect_equal_i64("cuda prefill should consume staged tokens", consumed_token_count, 7_i64)
   call expect_true("cuda prefill should stamp workspace scratch bytes", any(workspace_view(1:16) /= 0_c_i8))
   call expect_true("cuda prefill should emit a live context buffer", context_byte_count_a > 32_i32)
+  call expect_equal_i32("cuda prefill should fully populate the fixed context payload", context_byte_count_a, &
+    MAX_LIVE_CONTEXT_BYTES)
   call expect_equal_i32("cuda prefill context should start with magic M", int(context_bytes_a(1), kind=i32), iachar("M"))
   call expect_equal_i32("cuda prefill context should start with magic Z", int(context_bytes_a(2), kind=i32), iachar("Z"))
   call expect_equal_i32("cuda prefill context should declare version 1", int(context_bytes_a(5), kind=i32), 1_i32)
@@ -121,6 +123,8 @@ program test_cuda_executor
   call expect_equal_i32("cuda decode stop reason should stay none", stop_reason, MIZU_STOP_REASON_NONE)
   call expect_true("cuda decode should stamp workspace scratch bytes", any(workspace_view(1:16) /= 0_c_i8))
   call expect_true("cuda decode should emit an updated context buffer", updated_context_byte_count > 32_i32)
+  call expect_equal_i32("cuda decode should fully populate the fixed context payload", updated_context_byte_count, &
+    MAX_LIVE_CONTEXT_BYTES)
   call expect_equal_i32("cuda decode context should keep magic M", int(updated_context_bytes(1), kind=i32), iachar("M"))
   call expect_equal_i32("cuda decode context should declare decode kind", int(updated_context_bytes(6), kind=i32), 2_i32)
   decode_context_bytes = updated_context_bytes
