@@ -68,7 +68,8 @@ module mod_c_api
   use mod_model_loader,   only: load_model_manifest_from_root
   use mod_cuda_planner,   only: CUDA_ARTIFACT_PAYLOAD_LEN, plan_cuda_stage, &
                                 build_cuda_artifact_payload_text
-  use mod_cuda_executor,  only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
+  use mod_cuda_executor,  only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
+                                cuda_context_bytes_are_valid
   use mod_cache_keys,     only: MAX_CACHE_KEY_LEN, plan_cache_key, weight_cache_key, &
                                 session_cache_key, multimodal_cache_key, build_plan_cache_key, &
                                 build_weight_cache_key, build_session_cache_key, &
@@ -1895,6 +1896,7 @@ contains
     if (session%live_context_byte_count <= 0_i32) return
     if (session%live_context_backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
     if (session%live_context_execution_route /= MIZU_EXEC_ROUTE_CUDA) return
+    if (.not. cuda_context_bytes_are_valid(session%live_context_bytes, session%live_context_byte_count)) return
 
     call build_session_checkpoint_key(model, session, checkpoint_key_text)
     if (len_trim(checkpoint_key_text) == 0) return
@@ -1944,6 +1946,7 @@ contains
     call load_session_checkpoint_payload(trim(full_path), kv_token_count, live_context_hash, backend_family, &
       execution_route, context_bytes, context_byte_count, loaded_ok)
     if (.not. loaded_ok) return
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
 
     session%kv_token_count = kv_token_count
     session%live_context_hash = live_context_hash

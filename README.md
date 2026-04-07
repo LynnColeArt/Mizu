@@ -40,6 +40,8 @@ Current implementation status:
   runtime cache layer
 - parked CUDA sessions now offload the resident in-memory context buffer after
   checkpointing, so `resume` is the path that reconstructs active decode state
+- CUDA live-context payloads are now versioned and self-describing, and decode
+  validates that header before consuming restored backend state
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - `make test` now succeeds from a clean tree without relying on stray Fortran

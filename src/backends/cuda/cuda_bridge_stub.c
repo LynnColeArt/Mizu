@@ -5,6 +5,15 @@
 #include <stddef.h>
 #include <string.h>
 
+#define MIZU_CUDA_CONTEXT_MAGIC_0 ((uint8_t)'M')
+#define MIZU_CUDA_CONTEXT_MAGIC_1 ((uint8_t)'Z')
+#define MIZU_CUDA_CONTEXT_MAGIC_2 ((uint8_t)'C')
+#define MIZU_CUDA_CONTEXT_MAGIC_3 ((uint8_t)'T')
+#define MIZU_CUDA_CONTEXT_VERSION UINT8_C(1)
+#define MIZU_CUDA_CONTEXT_KIND_PREFILL UINT8_C(1)
+#define MIZU_CUDA_CONTEXT_KIND_DECODE UINT8_C(2)
+#define MIZU_CUDA_CONTEXT_HEADER_SIZE INT32_C(16)
+
 static uint64_t mix_u64(uint64_t value) {
     value += UINT64_C(0x9e3779b97f4a7c15);
     value = (value ^ (value >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
@@ -62,24 +71,34 @@ static void fill_prefill_context_bytes(uint64_t seed,
     stored_count = context_capacity < 48 ? context_capacity : 48;
     memset(bytes, 0, (size_t)stored_count);
 
-    if (stored_count > 0) {
-        memcpy(bytes, &seed, (size_t)(stored_count < 8 ? stored_count : 8));
+    if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
+    if (stored_count >= 2) bytes[1] = MIZU_CUDA_CONTEXT_MAGIC_1;
+    if (stored_count >= 3) bytes[2] = MIZU_CUDA_CONTEXT_MAGIC_2;
+    if (stored_count >= 4) bytes[3] = MIZU_CUDA_CONTEXT_MAGIC_3;
+    if (stored_count >= 5) bytes[4] = MIZU_CUDA_CONTEXT_VERSION;
+    if (stored_count >= 6) bytes[5] = MIZU_CUDA_CONTEXT_KIND_PREFILL;
+    if (stored_count >= 8) {
+        bytes[6] = (uint8_t)(stored_count & UINT8_C(0xff));
+        bytes[7] = UINT8_C(0);
     }
     if (stored_count > 8) {
-        memcpy(bytes + 8, &token_count, (size_t)(stored_count - 8 < 8 ? stored_count - 8 : 8));
+        memcpy(bytes + 8, &seed, (size_t)(stored_count - 8 < 8 ? stored_count - 8 : 8));
     }
     if (stored_count > 16) {
-        memcpy(bytes + 16, &modal_byte_count, (size_t)(stored_count - 16 < 8 ? stored_count - 16 : 8));
+        memcpy(bytes + 16, &token_count, (size_t)(stored_count - 16 < 8 ? stored_count - 16 : 8));
     }
     if (stored_count > 24) {
-        memcpy(bytes + 24, &staged_modal_count, (size_t)(stored_count - 24 < 4 ? stored_count - 24 : 4));
+        memcpy(bytes + 24, &modal_byte_count, (size_t)(stored_count - 24 < 8 ? stored_count - 24 : 8));
     }
-    if (stored_count > 28) {
-        memcpy(bytes + 28, &consumed_token_count, (size_t)(stored_count - 28 < 8 ? stored_count - 28 : 8));
+    if (stored_count > 32) {
+        memcpy(bytes + 32, &staged_modal_count, (size_t)(stored_count - 32 < 4 ? stored_count - 32 : 4));
+    }
+    if (stored_count > 36) {
+        memcpy(bytes + 36, &consumed_token_count, (size_t)(stored_count - 36 < 8 ? stored_count - 36 : 8));
     }
 
     seed_copy = seed;
-    for (index = 0; index < stored_count; ++index) {
+    for (index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
         seed_copy = mix_u64(seed_copy ^
                             ((uint64_t)token_count << 1) ^
                             ((uint64_t)modal_byte_count << 9) ^
@@ -114,24 +133,34 @@ static void fill_decode_context_bytes(uint64_t seed,
     stored_count = context_capacity < 48 ? context_capacity : 48;
     memset(bytes, 0, (size_t)stored_count);
 
-    if (stored_count > 0) {
-        memcpy(bytes, &seed, (size_t)(stored_count < 8 ? stored_count : 8));
+    if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
+    if (stored_count >= 2) bytes[1] = MIZU_CUDA_CONTEXT_MAGIC_1;
+    if (stored_count >= 3) bytes[2] = MIZU_CUDA_CONTEXT_MAGIC_2;
+    if (stored_count >= 4) bytes[3] = MIZU_CUDA_CONTEXT_MAGIC_3;
+    if (stored_count >= 5) bytes[4] = MIZU_CUDA_CONTEXT_VERSION;
+    if (stored_count >= 6) bytes[5] = MIZU_CUDA_CONTEXT_KIND_DECODE;
+    if (stored_count >= 8) {
+        bytes[6] = (uint8_t)(stored_count & UINT8_C(0xff));
+        bytes[7] = UINT8_C(0);
     }
     if (stored_count > 8) {
-        memcpy(bytes + 8, &kv_after, (size_t)(stored_count - 8 < 8 ? stored_count - 8 : 8));
+        memcpy(bytes + 8, &seed, (size_t)(stored_count - 8 < 8 ? stored_count - 8 : 8));
     }
     if (stored_count > 16) {
-        memcpy(bytes + 16, &emitted_token_count, (size_t)(stored_count - 16 < 8 ? stored_count - 16 : 8));
+        memcpy(bytes + 16, &kv_after, (size_t)(stored_count - 16 < 8 ? stored_count - 16 : 8));
     }
     if (stored_count > 24) {
-        memcpy(bytes + 24, &token_value, (size_t)(stored_count - 24 < 4 ? stored_count - 24 : 4));
+        memcpy(bytes + 24, &emitted_token_count, (size_t)(stored_count - 24 < 8 ? stored_count - 24 : 8));
     }
-    if (stored_count > 28) {
-        memcpy(bytes + 28, &stop_reason, (size_t)(stored_count - 28 < 4 ? stored_count - 28 : 4));
+    if (stored_count > 32) {
+        memcpy(bytes + 32, &token_value, (size_t)(stored_count - 32 < 4 ? stored_count - 32 : 4));
+    }
+    if (stored_count > 36) {
+        memcpy(bytes + 36, &stop_reason, (size_t)(stored_count - 36 < 4 ? stored_count - 36 : 4));
     }
 
     seed_copy = seed;
-    for (index = 0; index < stored_count; ++index) {
+    for (index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
         seed_copy = mix_u64(seed_copy ^
                             ((uint64_t)kv_after << 1) ^
                             ((uint64_t)emitted_token_count << 9) ^

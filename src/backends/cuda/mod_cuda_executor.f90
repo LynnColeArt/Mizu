@@ -11,6 +11,7 @@ module mod_cuda_executor
 
   private
   public :: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
+  public :: cuda_context_bytes_are_valid
 
 contains
 
@@ -167,6 +168,10 @@ contains
       status_code = MIZU_STATUS_INVALID_STATE
       return
     end if
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) then
+      status_code = MIZU_STATUS_INVALID_STATE
+      return
+    end if
 
     payload_hash = positive_hash64(trim(payload_text))
     workspace_buffer_local = c_null_ptr
@@ -243,5 +248,27 @@ contains
     hash_value = iand(ieor(mixed_hash, shiftr(mixed_hash, 31)), int(z'7FFFFFFFFFFFFFFF', kind=i64))
     if (hash_value == 0_i64) hash_value = 1_i64
   end function combine_positive_hash64
+
+  pure logical function cuda_context_bytes_are_valid(context_bytes, context_byte_count) result(is_valid)
+    integer(i8), intent(in) :: context_bytes(:)
+    integer(i32), intent(in) :: context_byte_count
+    integer(i32), parameter :: HEADER_SIZE = 16_i32
+    integer(i32), parameter :: VERSION_1 = 1_i32
+    integer(i32), parameter :: KIND_PREFILL = 1_i32
+    integer(i32), parameter :: KIND_DECODE = 2_i32
+
+    is_valid = .false.
+    if (context_byte_count < HEADER_SIZE) return
+    if (int(size(context_bytes), kind=i32) < context_byte_count) return
+    if (int(context_bytes(1), kind=i32) /= iachar("M")) return
+    if (int(context_bytes(2), kind=i32) /= iachar("Z")) return
+    if (int(context_bytes(3), kind=i32) /= iachar("C")) return
+    if (int(context_bytes(4), kind=i32) /= iachar("T")) return
+    if (int(context_bytes(5), kind=i32) /= VERSION_1) return
+    if (int(context_bytes(6), kind=i32) /= KIND_PREFILL .and. &
+        int(context_bytes(6), kind=i32) /= KIND_DECODE) return
+    if (int(context_bytes(7), kind=i32) /= min(context_byte_count, 255_i32)) return
+    is_valid = .true.
+  end function cuda_context_bytes_are_valid
 
 end module mod_cuda_executor

@@ -31,6 +31,9 @@ Last updated: 2026-04-07
 - parked CUDA sessions now offload that resident context buffer after the
   checkpoint is safely materialized, and `resume` restores it before the
   session becomes live again
+- CUDA live-context payloads now include a small versioned header, and both
+  `resume` and CUDA decode validate that header before treating restored bytes
+  as usable backend state
 
 ### Self-Optimization
 
@@ -166,6 +169,8 @@ Last updated: 2026-04-07
   not a full backend KV-cache image
 - decode now explicitly requires a resident CUDA live-context buffer for CUDA
   sessions; parked/offloaded sessions have to come back through `resume`
+- CUDA live-context bytes are no longer just unstructured payloads; they now
+  carry format/version/kind markers so stale or corrupted context can fail fast
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing

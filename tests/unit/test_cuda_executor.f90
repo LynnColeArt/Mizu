@@ -1,7 +1,7 @@
 program test_cuda_executor
   use iso_c_binding,     only: c_associated, c_f_pointer
   use mod_kinds,         only: c_i8, i8, i32, i64
-  use mod_status,        only: MIZU_STATUS_OK
+  use mod_status,        only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_STATE
   use mod_types,         only: MIZU_STOP_REASON_NONE, workspace_state, MAX_LIVE_CONTEXT_BYTES
   use mod_cuda_executor, only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
   use mod_workspace,     only: initialize_workspace, reserve_workspace_bytes, release_workspace_bytes, &
@@ -87,6 +87,10 @@ program test_cuda_executor
   call expect_equal_i64("cuda prefill should consume staged tokens", consumed_token_count, 7_i64)
   call expect_true("cuda prefill should stamp workspace scratch bytes", any(workspace_view(1:16) /= 0_c_i8))
   call expect_true("cuda prefill should emit a live context buffer", context_byte_count_a > 32_i32)
+  call expect_equal_i32("cuda prefill context should start with magic M", int(context_bytes_a(1), kind=i32), iachar("M"))
+  call expect_equal_i32("cuda prefill context should start with magic Z", int(context_bytes_a(2), kind=i32), iachar("Z"))
+  call expect_equal_i32("cuda prefill context should declare version 1", int(context_bytes_a(5), kind=i32), 1_i32)
+  call expect_equal_i32("cuda prefill context should declare prefill kind", int(context_bytes_a(6), kind=i32), 1_i32)
   prefill_scratch_a = workspace_view(1:16)
 
   workspace_view = 0_c_i8
@@ -113,6 +117,8 @@ program test_cuda_executor
   call expect_equal_i32("cuda decode stop reason should stay none", stop_reason, MIZU_STOP_REASON_NONE)
   call expect_true("cuda decode should stamp workspace scratch bytes", any(workspace_view(1:16) /= 0_c_i8))
   call expect_true("cuda decode should emit an updated context buffer", updated_context_byte_count > 32_i32)
+  call expect_equal_i32("cuda decode context should keep magic M", int(updated_context_bytes(1), kind=i32), iachar("M"))
+  call expect_equal_i32("cuda decode context should declare decode kind", int(updated_context_bytes(6), kind=i32), 2_i32)
 
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value_with_other_context, &
     stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, context_bytes_b, &
@@ -120,6 +126,12 @@ program test_cuda_executor
   call expect_equal_i32("cuda decode with another context should succeed", status_code, MIZU_STATUS_OK)
   call expect_true("cuda decode should reflect direct context buffer identity", &
     token_value_with_other_context /= token_value)
+
+  context_bytes_b(1) = 0_i8
+  call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value_with_other_context, &
+    stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, context_bytes_b, &
+    context_byte_count_b, updated_context_bytes, updated_context_byte_count)
+  call expect_equal_i32("cuda decode should reject an invalid context header", status_code, MIZU_STATUS_INVALID_STATE)
 
   call release_workspace_bytes(workspace)
   call reset_workspace(workspace)

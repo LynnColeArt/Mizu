@@ -9,6 +9,15 @@
 
 namespace {
 
+constexpr unsigned char MIZU_CUDA_CONTEXT_MAGIC_0 = static_cast<unsigned char>('M');
+constexpr unsigned char MIZU_CUDA_CONTEXT_MAGIC_1 = static_cast<unsigned char>('Z');
+constexpr unsigned char MIZU_CUDA_CONTEXT_MAGIC_2 = static_cast<unsigned char>('C');
+constexpr unsigned char MIZU_CUDA_CONTEXT_MAGIC_3 = static_cast<unsigned char>('T');
+constexpr unsigned char MIZU_CUDA_CONTEXT_VERSION = 1U;
+constexpr unsigned char MIZU_CUDA_CONTEXT_KIND_PREFILL = 1U;
+constexpr unsigned char MIZU_CUDA_CONTEXT_KIND_DECODE = 2U;
+constexpr int32_t MIZU_CUDA_CONTEXT_HEADER_SIZE = 16;
+
 __device__ __forceinline__ unsigned long long mix_u64(unsigned long long value) {
   value += 0x9e3779b97f4a7c15ULL;
   value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -130,23 +139,33 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   stored_count = context_capacity < 48 ? context_capacity : 48;
   memset(bytes, 0, static_cast<size_t>(stored_count));
 
-  if (stored_count > 0) {
-    memcpy(bytes, &seed, static_cast<size_t>(stored_count < 8 ? stored_count : 8));
+  if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
+  if (stored_count >= 2) bytes[1] = MIZU_CUDA_CONTEXT_MAGIC_1;
+  if (stored_count >= 3) bytes[2] = MIZU_CUDA_CONTEXT_MAGIC_2;
+  if (stored_count >= 4) bytes[3] = MIZU_CUDA_CONTEXT_MAGIC_3;
+  if (stored_count >= 5) bytes[4] = MIZU_CUDA_CONTEXT_VERSION;
+  if (stored_count >= 6) bytes[5] = MIZU_CUDA_CONTEXT_KIND_PREFILL;
+  if (stored_count >= 8) {
+    bytes[6] = static_cast<unsigned char>(stored_count & 0xff);
+    bytes[7] = 0U;
   }
   if (stored_count > 8) {
-    memcpy(bytes + 8, &token_count, static_cast<size_t>(stored_count - 8 < 8 ? stored_count - 8 : 8));
+    memcpy(bytes + 8, &seed, static_cast<size_t>(stored_count - 8 < 8 ? stored_count - 8 : 8));
   }
   if (stored_count > 16) {
-    memcpy(bytes + 16, &modal_byte_count, static_cast<size_t>(stored_count - 16 < 8 ? stored_count - 16 : 8));
+    memcpy(bytes + 16, &token_count, static_cast<size_t>(stored_count - 16 < 8 ? stored_count - 16 : 8));
   }
   if (stored_count > 24) {
-    memcpy(bytes + 24, &staged_modal_count, static_cast<size_t>(stored_count - 24 < 4 ? stored_count - 24 : 4));
+    memcpy(bytes + 24, &modal_byte_count, static_cast<size_t>(stored_count - 24 < 8 ? stored_count - 24 : 8));
   }
-  if (stored_count > 28) {
-    memcpy(bytes + 28, &consumed_token_count, static_cast<size_t>(stored_count - 28 < 8 ? stored_count - 28 : 8));
+  if (stored_count > 32) {
+    memcpy(bytes + 32, &staged_modal_count, static_cast<size_t>(stored_count - 32 < 4 ? stored_count - 32 : 4));
+  }
+  if (stored_count > 36) {
+    memcpy(bytes + 36, &consumed_token_count, static_cast<size_t>(stored_count - 36 < 8 ? stored_count - 36 : 8));
   }
 
-  for (int32_t index = 0; index < stored_count; ++index) {
+  for (int32_t index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
     seed_copy = mix_u64_host(seed_copy ^
                              (static_cast<unsigned long long>(token_count) << 1) ^
                              (static_cast<unsigned long long>(modal_byte_count) << 9) ^
@@ -179,23 +198,33 @@ inline void fill_decode_context_bytes(unsigned long long seed,
   stored_count = context_capacity < 48 ? context_capacity : 48;
   memset(bytes, 0, static_cast<size_t>(stored_count));
 
-  if (stored_count > 0) {
-    memcpy(bytes, &seed, static_cast<size_t>(stored_count < 8 ? stored_count : 8));
+  if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
+  if (stored_count >= 2) bytes[1] = MIZU_CUDA_CONTEXT_MAGIC_1;
+  if (stored_count >= 3) bytes[2] = MIZU_CUDA_CONTEXT_MAGIC_2;
+  if (stored_count >= 4) bytes[3] = MIZU_CUDA_CONTEXT_MAGIC_3;
+  if (stored_count >= 5) bytes[4] = MIZU_CUDA_CONTEXT_VERSION;
+  if (stored_count >= 6) bytes[5] = MIZU_CUDA_CONTEXT_KIND_DECODE;
+  if (stored_count >= 8) {
+    bytes[6] = static_cast<unsigned char>(stored_count & 0xff);
+    bytes[7] = 0U;
   }
   if (stored_count > 8) {
-    memcpy(bytes + 8, &kv_after, static_cast<size_t>(stored_count - 8 < 8 ? stored_count - 8 : 8));
+    memcpy(bytes + 8, &seed, static_cast<size_t>(stored_count - 8 < 8 ? stored_count - 8 : 8));
   }
   if (stored_count > 16) {
-    memcpy(bytes + 16, &emitted_token_count, static_cast<size_t>(stored_count - 16 < 8 ? stored_count - 16 : 8));
+    memcpy(bytes + 16, &kv_after, static_cast<size_t>(stored_count - 16 < 8 ? stored_count - 16 : 8));
   }
   if (stored_count > 24) {
-    memcpy(bytes + 24, &token_value, static_cast<size_t>(stored_count - 24 < 4 ? stored_count - 24 : 4));
+    memcpy(bytes + 24, &emitted_token_count, static_cast<size_t>(stored_count - 24 < 8 ? stored_count - 24 : 8));
   }
-  if (stored_count > 28) {
-    memcpy(bytes + 28, &stop_reason, static_cast<size_t>(stored_count - 28 < 4 ? stored_count - 28 : 4));
+  if (stored_count > 32) {
+    memcpy(bytes + 32, &token_value, static_cast<size_t>(stored_count - 32 < 4 ? stored_count - 32 : 4));
+  }
+  if (stored_count > 36) {
+    memcpy(bytes + 36, &stop_reason, static_cast<size_t>(stored_count - 36 < 4 ? stored_count - 36 : 4));
   }
 
-  for (int32_t index = 0; index < stored_count; ++index) {
+  for (int32_t index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
     seed_copy = mix_u64_host(seed_copy ^
                              (static_cast<unsigned long long>(kv_after) << 1) ^
                              (static_cast<unsigned long long>(emitted_token_count) << 9) ^
