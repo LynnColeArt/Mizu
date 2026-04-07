@@ -7,7 +7,8 @@ module mod_session
                         MIZU_STOP_REASON_NONE, MIZU_MODALITY_KIND_UNKNOWN, &
                         MIZU_DTYPE_UNKNOWN, session_config, session_info, &
                         session_state, execution_report, MIZU_BACKEND_FAMILY_NONE, &
-                        MIZU_EXEC_ROUTE_NONE, MAX_LIVE_CONTEXT_BYTES
+                        MIZU_BACKEND_FAMILY_CUDA, MIZU_EXEC_ROUTE_NONE, &
+                        MIZU_EXEC_ROUTE_CUDA, MAX_LIVE_CONTEXT_BYTES
 
   implicit none
 
@@ -19,7 +20,7 @@ module mod_session
   public :: validate_read_output
   public :: stage_tokens, stage_modal_input, clear_pending_inputs
   public :: complete_prefill, complete_decode
-  public :: store_live_context_record, update_live_context_record
+  public :: store_live_context_record, update_live_context_record, offload_live_context_record
   public :: park_session_state, resume_session_state
   public :: evict_parked_session, build_session_info
 
@@ -110,6 +111,10 @@ contains
     else if (session%is_parked) then
       status_code = MIZU_STATUS_INVALID_STATE
     else if (.not. session%has_live_context) then
+      status_code = MIZU_STATUS_INVALID_STATE
+    else if (session%live_context_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. &
+             session%live_context_execution_route == MIZU_EXEC_ROUTE_CUDA .and. &
+             .not. session%has_resident_live_context) then
       status_code = MIZU_STATUS_INVALID_STATE
     else if (session%has_pending_inputs) then
       status_code = MIZU_STATUS_INVALID_STATE
@@ -500,6 +505,7 @@ contains
     session%live_context_execution_route = MIZU_EXEC_ROUTE_NONE
     session%live_context_byte_count = 0_i32
     session%live_context_bytes = 0_i8
+    session%has_resident_live_context = .false.
   end subroutine clear_live_context_record
 
   subroutine store_live_context_record(session, backend_family, execution_route, context_bytes, context_byte_count)
@@ -515,6 +521,7 @@ contains
     session%live_context_execution_route = execution_route
     stored_count = max(0_i32, min(context_byte_count, min(int(size(context_bytes), kind=i32), MAX_LIVE_CONTEXT_BYTES)))
     session%live_context_byte_count = stored_count
+    session%has_resident_live_context = (stored_count > 0_i32)
     if (stored_count <= 0_i32) return
 
     session%live_context_bytes(1:stored_count) = context_bytes(1:stored_count)
@@ -529,10 +536,18 @@ contains
     session%live_context_bytes = 0_i8
     stored_count = max(0_i32, min(context_byte_count, min(int(size(context_bytes), kind=i32), MAX_LIVE_CONTEXT_BYTES)))
     session%live_context_byte_count = stored_count
+    session%has_resident_live_context = (stored_count > 0_i32)
     if (stored_count > 0_i32) then
       session%live_context_bytes(1:stored_count) = context_bytes(1:stored_count)
     end if
   end subroutine update_live_context_record
+
+  subroutine offload_live_context_record(session)
+    type(session_state), intent(inout) :: session
+
+    session%live_context_bytes = 0_i8
+    session%has_resident_live_context = .false.
+  end subroutine offload_live_context_record
 
   subroutine update_live_context_after_prefill(session, token_count, token_content_hash, modal_content_hash, &
                                                projector_embedding_count)

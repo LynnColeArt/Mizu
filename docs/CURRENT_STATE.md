@@ -28,6 +28,9 @@ Last updated: 2026-04-07
 - `park` and `resume` now materialize and reload a small session-checkpoint
   payload when `cache_root` is configured and route-specific context state
   exists
+- parked CUDA sessions now offload that resident context buffer after the
+  checkpoint is safely materialized, and `resume` restores it before the
+  session becomes live again
 
 ### Self-Optimization
 
@@ -143,6 +146,8 @@ Last updated: 2026-04-07
 - parked CUDA sessions are now the second exception: they write a small
   checkpoint payload keyed by the live context hash and configuration so
   `resume` can reload backend-owned session state through the runtime cache
+- once that checkpoint is materialized, the parked session drops its resident
+  CUDA context bytes in memory and relies on `resume` to reconstruct them
 - CUDA projector, prefill, and decode now consume those materialized payloads
   through a backend-owned CUDA bridge and launch tiny placeholder kernels to
   prove the runtime-to-device seam
@@ -159,6 +164,8 @@ Last updated: 2026-04-07
   surrogate, not a real KV-cache or transformer activation buffer
 - the parked-session checkpoint currently persists that same surrogate buffer,
   not a full backend KV-cache image
+- decode now explicitly requires a resident CUDA live-context buffer for CUDA
+  sessions; parked/offloaded sessions have to come back through `resume`
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing

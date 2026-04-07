@@ -25,5 +25,7 @@ These suites cover the `API-C*` portion of
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
   - verifies CUDA `park` and `resume` materialize a persisted session
     checkpoint artifact under `cache_root`
+  - verifies parked CUDA sessions can resume after their active context has
+    been offloaded behind that checkpoint
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

@@ -49,7 +49,7 @@ module mod_c_api
                            complete_prefill, complete_decode, park_session_state, &
                            resume_session_state, evict_parked_session, &
                            build_session_info, validate_read_output, store_live_context_record, &
-                           update_live_context_record
+                           update_live_context_record, offload_live_context_record
   use mod_optimization_store, only: runtime_optimization_store, &
                                      initialize_runtime_optimization_store, &
                                      reset_runtime_optimization_store, &
@@ -658,6 +658,7 @@ contains
     integer(i32) :: selection_mode
     integer(i32) :: report_backend_family
     integer(i32) :: report_route
+    logical      :: checkpoint_offloaded
     integer(i32) :: status_code
 
     call resolve_session_handle(session_ptr, box, session, status_code)
@@ -699,7 +700,8 @@ contains
       mizu_session_park = int(status_code, kind=c_int32_t)
       return
     end if
-    call persist_session_checkpoint(runtime, runtime_cache, model, session)
+    call persist_session_checkpoint(runtime, runtime_cache, model, session, checkpoint_offloaded)
+    if (checkpoint_offloaded) call offload_live_context_record(session)
 
     stage_elapsed_us = elapsed_since_us(stage_started_us)
     call resolve_session_stage_cache(runtime, runtime_cache, optimization_store, model, session, &
@@ -729,6 +731,7 @@ contains
     integer(i32) :: selection_mode
     integer(i32) :: report_backend_family
     integer(i32) :: report_route
+    logical      :: restored_ok
     integer(i32) :: status_code
 
     call resolve_session_handle(session_ptr, box, session, status_code)
@@ -765,12 +768,20 @@ contains
     end if
 
     stage_started_us = monotonic_timestamp_us()
+    restored_ok = .true.
+    if (session%live_context_execution_route == MIZU_EXEC_ROUTE_CUDA .and. &
+        .not. session%has_resident_live_context) then
+      call restore_session_checkpoint(runtime%config%cache_root, runtime_cache, model, session, restored_ok)
+      if (.not. restored_ok) then
+        mizu_session_resume = int(MIZU_STATUS_INVALID_STATE, kind=c_int32_t)
+        return
+      end if
+    end if
     call resume_session_state(session, status_code)
     if (status_code /= MIZU_STATUS_OK) then
       mizu_session_resume = int(status_code, kind=c_int32_t)
       return
     end if
-    call restore_session_checkpoint(runtime%config%cache_root, runtime_cache, model, session)
 
     stage_elapsed_us = elapsed_since_us(stage_started_us)
     call resolve_session_stage_cache(runtime, runtime_cache, optimization_store, model, session, &
@@ -1868,20 +1879,22 @@ contains
     cache_flags = compose_cache_flags(MIZU_CACHE_FLAG_SESSION_HIT, was_hit, reused_winner)
   end subroutine resolve_session_stage_cache
 
-  subroutine persist_session_checkpoint(runtime, runtime_cache, model, session)
+  subroutine persist_session_checkpoint(runtime, runtime_cache, model, session, checkpoint_ready)
     type(runtime_state), intent(in)           :: runtime
     type(runtime_cache_bundle), intent(inout) :: runtime_cache
     type(model_state), intent(in)             :: model
     type(session_state), intent(in)           :: session
+    logical, intent(out)                      :: checkpoint_ready
     type(artifact_metadata_record)            :: metadata
     character(len=MAX_CACHE_KEY_LEN)          :: checkpoint_key_text
     character(len=1024)                       :: payload_text
     integer(i64)                             :: payload_bytes
 
+    checkpoint_ready = .false.
     if (len_trim(runtime%config%cache_root) == 0) return
     if (session%live_context_byte_count <= 0_i32) return
-    if (session%live_context_backend_family == MIZU_BACKEND_FAMILY_NONE) return
-    if (session%live_context_execution_route == MIZU_EXEC_ROUTE_NONE) return
+    if (session%live_context_backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
+    if (session%live_context_execution_route /= MIZU_EXEC_ROUTE_CUDA) return
 
     call build_session_checkpoint_key(model, session, checkpoint_key_text)
     if (len_trim(checkpoint_key_text) == 0) return
@@ -1891,13 +1904,15 @@ contains
     call build_session_checkpoint_payload_text(session, payload_text, payload_bytes)
     call materialize_artifact_payload(runtime%config%cache_root, metadata, trim(payload_text), payload_bytes)
     call record_session_artifact_metadata(runtime_cache, trim(checkpoint_key_text), metadata)
+    checkpoint_ready = metadata%is_materialized
   end subroutine persist_session_checkpoint
 
-  subroutine restore_session_checkpoint(cache_root, runtime_cache, model, session)
+  subroutine restore_session_checkpoint(cache_root, runtime_cache, model, session, restored_ok)
     character(len=*), intent(in)              :: cache_root
     type(runtime_cache_bundle), intent(in)    :: runtime_cache
     type(model_state), intent(in)             :: model
     type(session_state), intent(inout)        :: session
+    logical, intent(out)                      :: restored_ok
     type(artifact_metadata_record)            :: metadata
     character(len=MAX_CACHE_KEY_LEN)          :: checkpoint_key_text
     character(len=MAX_PATH_LEN)               :: full_path
@@ -1910,9 +1925,10 @@ contains
     logical                                   :: found
     logical                                   :: loaded_ok
 
+    restored_ok = .false.
     if (len_trim(cache_root) == 0) return
-    if (session%live_context_backend_family == MIZU_BACKEND_FAMILY_NONE) return
-    if (session%live_context_execution_route == MIZU_EXEC_ROUTE_NONE) return
+    if (session%live_context_backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
+    if (session%live_context_execution_route /= MIZU_EXEC_ROUTE_CUDA) return
 
     call build_session_checkpoint_key(model, session, checkpoint_key_text)
     if (len_trim(checkpoint_key_text) == 0) return
@@ -1933,6 +1949,7 @@ contains
     session%live_context_hash = live_context_hash
     session%has_live_context = .true.
     call store_live_context_record(session, backend_family, execution_route, context_bytes, context_byte_count)
+    restored_ok = .true.
   end subroutine restore_session_checkpoint
 
   subroutine build_session_checkpoint_key(model, session, checkpoint_key_text)

@@ -60,6 +60,8 @@ bodies.
     advances it while retaining emitted tokens
   - validates a backend-owned live-context byte buffer can be stored and
     updated in session state
+  - validates an offloaded CUDA live-context buffer makes direct decode invalid
+    until the runtime restores residency
 - `test_cuda_planner.f90`
   - validates stage-specific CUDA plan candidates for weight-pack, projector,
     prefill, and decode records

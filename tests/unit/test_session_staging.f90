@@ -1,10 +1,10 @@
 program test_session_staging
   use mod_kinds,   only: i8, i32, i64
-  use mod_status,  only: MIZU_STATUS_OK
+  use mod_status,  only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_STATE
   use mod_types,   only: session_state, session_config, MIZU_BACKEND_FAMILY_CUDA, MIZU_EXEC_ROUTE_CUDA
   use mod_session, only: initialize_session_state, stage_tokens, stage_modal_input, clear_pending_inputs, &
                          complete_prefill, complete_decode, store_live_context_record, &
-                         update_live_context_record
+                         update_live_context_record, offload_live_context_record, validate_decode
 
   implicit none
 
@@ -92,6 +92,13 @@ program test_session_staging
   call expect_equal_i32("updated context buffer should keep byte count", session%live_context_byte_count, 6_i32)
   call expect_equal_i32("updated context buffer should overwrite first byte", &
     int(session%live_context_bytes(1), kind=i32), 21_i32)
+  call expect_equal_i32("decode should remain valid with resident CUDA context", validate_decode(session), &
+    MIZU_STATUS_OK)
+
+  call offload_live_context_record(session)
+  call expect_true("offloaded context buffer should clear residency", .not. session%has_resident_live_context)
+  call expect_equal_i32("offloaded CUDA context should make decode invalid until restored", &
+    validate_decode(session), MIZU_STATUS_INVALID_STATE)
 
   write(*, "(A)") "test_session_staging: PASS"
 

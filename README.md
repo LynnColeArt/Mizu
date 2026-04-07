@@ -38,6 +38,8 @@ Current implementation status:
 - CUDA `park` now materializes a small session-checkpoint artifact when
   `cache_root` is set, and `resume` reloads that checkpoint through the
   runtime cache layer
+- parked CUDA sessions now offload the resident in-memory context buffer after
+  checkpointing, so `resume` is the path that reconstructs active decode state
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - `make test` now succeeds from a clean tree without relying on stray Fortran

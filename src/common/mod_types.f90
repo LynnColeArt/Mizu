@@ -356,6 +356,7 @@ module mod_types
     integer(i32)                      :: live_context_execution_route = MIZU_EXEC_ROUTE_NONE
     integer(i32)                      :: live_context_byte_count = 0_i32
     integer(i8)                       :: live_context_bytes(MAX_LIVE_CONTEXT_BYTES) = 0_i8
+    logical                           :: has_resident_live_context = .false.
     integer(i64)                      :: staged_token_count  = 0_i64
     integer(i64)                      :: staged_token_hash   = 0_i64
     integer(i32), allocatable         :: staged_tokens(:)
