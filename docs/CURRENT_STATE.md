@@ -18,6 +18,7 @@ Last updated: 2026-04-06
 - session open, close, park, resume, prefill, decode, and output read are wired
 - manifest loading and validation are implemented
 - target fallback manifests exist for the current Qwen and Gemma targets
+- runtime create now records a detected backend inventory for Apple and CUDA
 
 ### Self-Optimization
 
@@ -26,6 +27,27 @@ Last updated: 2026-04-06
 - exploration is bounded by `exploration_budget`
 - repeated work can reuse the measured winner
 - optimization evidence is persisted to disk through `optimization_store_v1.txt`
+
+### Build and Backend Scaffolding
+
+- a top-level `Makefile` now builds and runs the current test set through
+  `make test`
+- backend scaffolding now exists under:
+  - `src/backends/apple/`
+  - `src/backends/cuda/`
+- initial capability probes exist for:
+  - Apple Metal
+  - Apple ANE via explicit override
+  - CUDA via `nvidia-smi` or explicit override
+- CUDA planner scaffolding exists for:
+  - model load weight-pack records
+  - projector plan records
+  - prefill plan records
+  - decode plan records
+- CUDA-selected artifacts can now materialize stub payload files under the
+  configured `cache_root`
+- CUDA-selected prefill and decode stages now execute through backend-owned stub
+  executors that consume those materialized payload records
 
 ### Cache and Artifact Identity
 
@@ -53,13 +75,18 @@ Last updated: 2026-04-06
 - `test_cache_store`
 - `test_optimization_store`
 - `test_stage_reports`
+- `test_backend_registry`
+- `test_cuda_planner`
+- `test_cuda_executor`
+- `test_cuda_artifacts`
 
 ## What Is Still Stubbed
 
 - no real Apple backend exists yet
 - no real ANE planner or executor exists yet
 - no real Metal executor exists yet
-- no real CUDA planner or executor exists yet
+- no real CUDA kernel executor exists yet
+- CUDA planner records are still scaffold-level and do not launch kernels
 - model load does not build actual packed weights
 - plan selection does not materialize backend-native plan payloads
 - projector, prefill, and decode do not run real kernels yet
@@ -75,11 +102,20 @@ Last updated: 2026-04-06
   backend-owned pack or plan record would use
 - `is_materialized = .false.` means the runtime knows the artifact identity and
   route, but does not yet claim to have built the payload
+- CUDA-selected artifacts are the first exception: they now write stub planner
+  payload files to the persisted artifact location and mark those records as
+  materialized
+- CUDA prefill and decode now consume those materialized payloads through a
+  backend-owned stub executor, but they still do not launch GPU kernels
+- Apple ANE detection is still conservative and scaffold-level; it currently
+  relies on an explicit environment override instead of validated hardware
+  probing
 
 ## Most Useful Next Steps
 
 1. Build the Apple capability and planner layer.
 2. Materialize route-specific Apple pack and plan payloads behind the existing
    metadata records.
-3. Add a real build entrypoint so tests and library builds are reproducible.
+3. Replace CUDA stub planner payloads and stub executors with real backend-owned
+   pack, plan, and kernel execution.
 4. Start the thin Go binding once the C ABI settles a bit more.

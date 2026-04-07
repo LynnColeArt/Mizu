@@ -2,7 +2,8 @@ module mod_runtime
   use mod_kinds,  only: i32, i64
   use mod_status, only: MIZU_STATUS_OK, MIZU_STATUS_BUSY, MIZU_STATUS_INVALID_STATE
   use mod_types,  only: runtime_config, runtime_state, model_open_config, model_info, &
-                        model_state, execution_report, SOURCE_FORMAT_UNKNOWN
+                        model_state, execution_report, SOURCE_FORMAT_UNKNOWN, &
+                        backend_descriptor
 
   implicit none
 
@@ -24,6 +25,9 @@ contains
     runtime%config            = config
     runtime%last_status_code  = MIZU_STATUS_OK
     runtime%live_model_count  = 0_i32
+    runtime%detected_backend_mask = 0_i64
+    runtime%detected_backend_count = 0_i32
+    runtime%detected_backends = backend_descriptor()
     runtime%is_initialized    = .true.
     runtime%last_error_message = ""
   end subroutine initialize_runtime_state
@@ -34,6 +38,9 @@ contains
     runtime%config             = runtime_config()
     runtime%last_status_code   = MIZU_STATUS_OK
     runtime%live_model_count   = 0_i32
+    runtime%detected_backend_mask = 0_i64
+    runtime%detected_backend_count = 0_i32
+    runtime%detected_backends = backend_descriptor()
     runtime%is_initialized     = .false.
     runtime%last_error_message = ""
   end subroutine reset_runtime_state

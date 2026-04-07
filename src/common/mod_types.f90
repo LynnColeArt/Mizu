@@ -62,6 +62,7 @@ module mod_types
   public :: decode_options, decode_result, output_buffer
   public :: execution_report, runtime_state, model_state
   public :: session_state, workspace_state
+  public :: MAX_RUNTIME_BACKENDS
   public :: MAX_RECENT_OUTPUT_TOKENS
 
   integer(i32), parameter :: MIZU_ABI_VERSION = int(z'00010000', kind=i32)
@@ -174,6 +175,7 @@ module mod_types
   integer(i32), parameter :: SOURCE_FORMAT_MIZU_MANIFEST  = 1_i32
   integer(i32), parameter :: SOURCE_FORMAT_BUILTIN_TARGET = 2_i32
 
+  integer(i32), parameter :: MAX_RUNTIME_BACKENDS = 2_i32
   integer(i32), parameter :: MAX_RECENT_OUTPUT_TOKENS = 8_i32
 
   type :: runtime_handle
@@ -309,6 +311,9 @@ module mod_types
     type(runtime_config)              :: config
     integer(i32)                      :: last_status_code    = MIZU_STATUS_OK
     integer(i32)                      :: live_model_count    = 0_i32
+    integer(i64)                      :: detected_backend_mask = MIZU_BACKEND_MASK_NONE
+    integer(i32)                      :: detected_backend_count = 0_i32
+    type(backend_descriptor)          :: detected_backends(MAX_RUNTIME_BACKENDS)
     logical                           :: is_initialized      = .false.
     character(len=MAX_ERROR_MESSAGE_LEN) :: last_error_message = ""
   end type runtime_state

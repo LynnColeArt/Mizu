@@ -43,3 +43,16 @@ bodies.
   - validates runtime-scoped winner selection based on recorded execution
     samples rather than key reuse alone
   - validates save/load roundtrips for persisted optimization evidence
+- `test_backend_registry.f90`
+  - validates deterministic backend-inventory aggregation independent of local
+    hardware
+  - validates runtime state retains the aggregated backend mask and descriptors
+- `test_cuda_planner.f90`
+  - validates stage-specific CUDA plan candidates for weight-pack, projector,
+    prefill, and decode records
+  - validates planner payload text includes materialization-relevant metadata
+- `test_cuda_executor.f90`
+  - validates CUDA stub prefill execution consumes staged tokens through a
+    materialized plan payload
+  - validates CUDA stub decode execution produces a deterministic token from a
+    materialized decode payload

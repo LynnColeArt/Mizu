@@ -18,5 +18,10 @@ These suites cover the `API-C*` portion of
     route-specific artifact hits for weight, multimodal, and plan stages
   - inspects the persisted artifact cache file to confirm backend-specific
     weight and plan metadata records are written
+- `test_cuda_artifacts.c`
+  - forces the CUDA route through the public API
+  - verifies route-specific CUDA formats are persisted
+  - verifies CUDA stub artifact payload files are materialized under `cache_root`
+  - verifies the public API can drive CUDA-owned stub prefill and decode paths
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

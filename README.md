@@ -16,7 +16,17 @@ Current implementation status:
 - the public C header exists in `include/mizu.h`
 - model manifests, cache keys, and session flow are implemented as scaffolds
 - route-aware optimization and persisted cache metadata are implemented
+- runtime backend inventory and capability-probe scaffolding exist for Apple and
+  CUDA
+- CUDA planner scaffolding now emits route-specific plan and weight-pack records
+  and materializes stub payload files under `cache_root`
+- CUDA prefill and decode now run through backend-owned stub executors using the
+  materialized payload records
 - Apple and CUDA execution backends are not implemented yet
+
+Build and test:
+
+- `make test`
 
 Documentation:
 

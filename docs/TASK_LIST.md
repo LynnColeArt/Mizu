@@ -39,7 +39,7 @@ These are the highest-leverage next tasks.
 - [x] Create `docs/README.md`
 - [x] Create planning docs
 - [x] Add top-level `README.md`
-- [ ] Add initial `Makefile` or build entrypoint
+- [x] Add initial `Makefile` or build entrypoint
 - [x] Add test directory skeleton
 
 ## Phase 1: Core Contracts
@@ -177,7 +177,7 @@ These are the highest-leverage next tasks.
 
 ### 4.1 Apple Capability Layer
 
-- [ ] Create Apple backend directory structure
+- [x] Create Apple backend directory structure
 - [ ] Define Apple device descriptor
 - [ ] Implement Apple capability probe
 - [ ] Detect ANE availability
@@ -217,15 +217,15 @@ These are the highest-leverage next tasks.
 
 ### 5.1 CUDA Capability Layer
 
-- [ ] Create CUDA backend directory structure
+- [x] Create CUDA backend directory structure
 - [ ] Define CUDA device descriptor
 - [ ] Implement CUDA capability probe
 - [ ] Define CUDA planner-visible constraints
 
 ### 5.2 CUDA Planner and Execution
 
-- [ ] Implement CUDA planner
-- [ ] Implement CUDA packed weight path
+- [x] Implement CUDA planner
+- [x] Implement CUDA packed weight path
 - [ ] Implement CUDA projector path
 - [ ] Implement CUDA prefill path
 - [ ] Implement CUDA decode path

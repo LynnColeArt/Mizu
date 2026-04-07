@@ -55,10 +55,18 @@ module mod_c_api
                                      lookup_optimization_entry_stats, &
                                      load_runtime_optimization_store, &
                                      save_runtime_optimization_store
+  use mod_backend_registry, only: runtime_backend_registry, initialize_runtime_backend_registry, &
+                                  probe_runtime_backend_registry, apply_backend_registry_to_runtime
+  use mod_backend_contract, only: plan_request, planner_result, initialize_plan_request, &
+                                  planner_result_is_success, OP_FAMILY_NONE, OP_FAMILY_PROJECTOR, &
+                                  OP_FAMILY_PREFILL, OP_FAMILY_DECODE
   use mod_model_manifest, only: model_manifest, populate_model_info_from_manifest, &
                                 manifest_tensor_count, manifest_modality_count, &
                                 hash_text64
   use mod_model_loader,   only: load_model_manifest_from_root
+  use mod_cuda_planner,   only: CUDA_ARTIFACT_PAYLOAD_LEN, plan_cuda_stage, &
+                                build_cuda_artifact_payload_text
+  use mod_cuda_executor,  only: execute_cuda_prefill, execute_cuda_decode
   use mod_cache_keys,     only: MAX_CACHE_KEY_LEN, plan_cache_key, weight_cache_key, &
                                 session_cache_key, multimodal_cache_key, build_plan_cache_key, &
                                 build_weight_cache_key, build_session_cache_key, &
@@ -238,6 +246,7 @@ contains
     type(c_runtime_config), pointer :: c_config
     type(runtime_box), pointer      :: box
     type(runtime_config)            :: config
+    type(runtime_backend_registry)  :: backend_registry
     integer(i64)                    :: slot_id
 
     out_runtime_ptr = c_null_ptr
@@ -268,6 +277,9 @@ contains
     call initialize_runtime_state(runtime_registry(slot_id), config)
     call initialize_runtime_cache_bundle(runtime_cache_registry(slot_id))
     call initialize_runtime_optimization_store(runtime_optimization_registry(slot_id))
+    call initialize_runtime_backend_registry(backend_registry)
+    call probe_runtime_backend_registry(backend_registry)
+    call apply_backend_registry_to_runtime(backend_registry, runtime_registry(slot_id))
     runtime_registry(slot_id)%handle%value = slot_id
     call hydrate_runtime_cache_state(runtime_registry(slot_id), runtime_cache_registry(slot_id))
     call hydrate_runtime_optimization_state(runtime_registry(slot_id), runtime_optimization_registry(slot_id))
@@ -909,6 +921,7 @@ contains
     integer(i64) :: projector_elapsed_us
     integer(i64) :: prefill_elapsed_us
     integer(i64) :: stage_started_us
+    integer(i64) :: consumed_token_count
     integer(i32) :: prefill_cold_state
     integer(i32) :: projector_selection_mode
     integer(i32) :: prefill_selection_mode
@@ -916,8 +929,11 @@ contains
     integer(i32) :: projector_route
     integer(i32) :: prefill_backend_family
     integer(i32) :: prefill_route
+    character(len=MAX_CACHE_KEY_LEN) :: prefill_optimization_key_text
+    character(len=MAX_CACHE_KEY_LEN) :: prefill_candidate_key_text
     logical      :: has_modal_inputs
     type(execution_report) :: projector_report
+    type(artifact_metadata_record) :: prefill_artifact_metadata
 
     call resolve_session_handle(session_ptr, box, session, status_code)
     if (status_code /= MIZU_STATUS_OK) then
@@ -959,8 +975,23 @@ contains
       return
     end if
 
+    call prepare_plan_stage_candidate(runtime, optimization_store, model, MIZU_STAGE_PREFILL, &
+      OP_FAMILY_PREFILL, [max(0_i64, kv_before), max(0_i64, staged_tokens_before), &
+      max(0_i64, int(staged_modal_before, kind=i64))], max(0_i64, staged_tokens_before), &
+      prefill_optimization_key_text, prefill_candidate_key_text, prefill_plan_id, &
+      prefill_selection_mode, prefill_backend_family, prefill_route, prefill_artifact_metadata)
+
     stage_started_us = monotonic_timestamp_us()
-    call complete_prefill(session, status_code=status_code)
+    consumed_token_count = staged_tokens_before
+    if (prefill_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. prefill_route == MIZU_EXEC_ROUTE_CUDA) then
+      call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+        staged_tokens_before, staged_modal_before, consumed_token_count, status_code)
+      if (status_code /= MIZU_STATUS_OK) then
+        mizu_session_prefill = int(status_code, kind=c_int32_t)
+        return
+      end if
+    end if
+    call complete_prefill(session, consumed_token_count=consumed_token_count, status_code=status_code)
     if (status_code /= MIZU_STATUS_OK) then
       mizu_session_prefill = int(status_code, kind=c_int32_t)
       return
@@ -980,9 +1011,9 @@ contains
       projector_report = execution_report()
     end if
 
-    call resolve_prefill_stage_cache(runtime, runtime_cache, optimization_store, model, kv_before, &
-      staged_tokens_before, staged_modal_before, prefill_elapsed_us, prefill_plan_id, &
-      prefill_selection_mode, prefill_backend_family, prefill_route, prefill_cache_flags)
+    call finalize_plan_stage_cache(runtime_cache, optimization_store, trim(prefill_optimization_key_text), &
+      trim(prefill_candidate_key_text), prefill_plan_id, prefill_selection_mode, prefill_elapsed_us, &
+      prefill_artifact_metadata, prefill_cache_flags)
     session%last_report = make_stage_report(MIZU_STAGE_PREFILL, prefill_backend_family, prefill_route, &
       MIZU_FALLBACK_REASON_NONE, prefill_selection_mode, prefill_cold_state, &
       prefill_cache_flags, prefill_plan_id, prefill_elapsed_us)
@@ -1015,9 +1046,13 @@ contains
     integer(i64) :: decode_plan_id
     integer(i64) :: decode_elapsed_us
     integer(i64) :: stage_started_us
+    integer(i32) :: decode_stop_reason
     integer(i32) :: selection_mode
     integer(i32) :: report_backend_family
     integer(i32) :: report_route
+    character(len=MAX_CACHE_KEY_LEN) :: decode_optimization_key_text
+    character(len=MAX_CACHE_KEY_LEN) :: decode_candidate_key_text
+    type(artifact_metadata_record) :: decode_artifact_metadata
 
     call resolve_session_handle(session_ptr, box, session, status_code)
     if (status_code /= MIZU_STATUS_OK) then
@@ -1070,9 +1105,29 @@ contains
     end if
 
     kv_before = session%kv_token_count
+    call prepare_plan_stage_candidate(runtime, optimization_store, model, MIZU_STAGE_DECODE, &
+      OP_FAMILY_DECODE, [max(0_i64, kv_before), max(0_i64, int(options%token_budget, kind=i64)), 1_i64], &
+      max(0_i64, int(options%token_budget, kind=i64)), decode_optimization_key_text, &
+      decode_candidate_key_text, decode_plan_id, selection_mode, report_backend_family, report_route, &
+      decode_artifact_metadata)
+
+    stage_started_us = monotonic_timestamp_us()
     emitted_token_count = min(int(options%token_budget, kind=i64), 1_i64)
+    decode_stop_reason = MIZU_STOP_REASON_NONE
+    token_value = int(mod(session%kv_token_count, 4096_i64), kind=c_int32_t)
+    if (token_value == 0_c_int32_t) token_value = 1_c_int32_t
+    if (report_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. report_route == MIZU_EXEC_ROUTE_CUDA) then
+      call execute_cuda_decode(runtime%config%cache_root, trim(decode_artifact_metadata%payload_path), &
+        kv_before, int(options%token_budget, kind=i64), emitted_token_count, &
+        token_value, decode_stop_reason, status_code)
+      if (status_code /= MIZU_STATUS_OK) then
+        mizu_session_decode_step = int(status_code, kind=c_int32_t)
+        return
+      end if
+    end if
+
     result%token_count  = int(emitted_token_count, kind=c_size_t)
-    result%stop_reason  = int(MIZU_STOP_REASON_NONE, kind=c_int32_t)
+    result%stop_reason  = int(decode_stop_reason, kind=c_int32_t)
     result%result_flags = 0_c_int64_t
 
     if (result%token_capacity < int(emitted_token_count, kind=c_size_t)) then
@@ -1085,16 +1140,13 @@ contains
       return
     end if
 
-    stage_started_us = monotonic_timestamp_us()
-    call complete_decode(session, emitted_token_count, MIZU_STOP_REASON_NONE, status_code)
+    call complete_decode(session, emitted_token_count, decode_stop_reason, status_code)
     if (status_code /= MIZU_STATUS_OK) then
       mizu_session_decode_step = int(status_code, kind=c_int32_t)
       return
     end if
     decode_elapsed_us = elapsed_since_us(stage_started_us)
 
-    token_value = int(mod(session%kv_token_count, 4096_i64), kind=c_int32_t)
-    if (token_value == 0_c_int32_t) token_value = 1_c_int32_t
     session%last_output_tokens = 0_i32
     session%last_output_tokens(1) = int(token_value, kind=i32)
 
@@ -1103,9 +1155,9 @@ contains
       token_buffer(1) = token_value
     end if
 
-    call resolve_decode_stage_cache(runtime, runtime_cache, optimization_store, model, kv_before, &
-      int(options%token_budget, kind=i64), decode_elapsed_us, decode_plan_id, selection_mode, &
-      report_backend_family, report_route, decode_cache_flags)
+    call finalize_plan_stage_cache(runtime_cache, optimization_store, trim(decode_optimization_key_text), &
+      trim(decode_candidate_key_text), decode_plan_id, selection_mode, decode_elapsed_us, &
+      decode_artifact_metadata, decode_cache_flags)
     session%last_report = make_stage_report(MIZU_STAGE_DECODE, report_backend_family, report_route, &
       MIZU_FALLBACK_REASON_NONE, selection_mode, MIZU_COLD_STATE_WARM, &
       decode_cache_flags, decode_plan_id, decode_elapsed_us)
@@ -1579,6 +1631,7 @@ contains
     integer(i32), intent(out)                        :: selection_mode
     integer(i32), intent(out)                        :: backend_family
     integer(i32), intent(out)                        :: execution_route
+    type(plan_request)                               :: stage_request
     type(weight_cache_key)                           :: optimization_key
     type(weight_cache_key)                           :: candidate_key
     character(len=MAX_CACHE_KEY_LEN)                 :: optimization_key_text
@@ -1602,6 +1655,12 @@ contains
     call build_weight_cache_key(manifest, "unbound", "logical", optimization_backend_family, &
       MIZU_EXEC_ROUTE_NONE, optimization_key)
     optimization_key_text = append_allowed_mask_identity(trim(optimization_key%key_text), allowed_backend_mask)
+    call initialize_plan_request(stage_request, MIZU_STAGE_MODEL_LOAD, OP_FAMILY_NONE, &
+      manifest%model_family, allowed_backend_mask)
+    stage_request%shape_signature = 0_i64
+    stage_request%shape_signature(1) = manifest%logical_model_hash
+    stage_request%shape_signature(2) = manifest%projector%revision_identity
+    stage_request%planner_version_hint = int(manifest%runtime_version%planner_version, kind=i64)
 
     do candidate_index = 1_i32, candidate_count
       call build_weight_cache_key(manifest, "unbound", "logical", candidate_backend_families(candidate_index), &
@@ -1616,7 +1675,7 @@ contains
     call touch_weight_cache_key(runtime_cache, trim(candidate_key_text), was_hit)
     call record_weight_artifact_metadata(runtime_cache, trim(candidate_key_text), &
       build_stage_artifact_metadata(MIZU_STAGE_MODEL_LOAD, backend_family, execution_route, &
-        trim(candidate_key_text)))
+        trim(candidate_key_text), stage_request, runtime%config%cache_root))
     reused_winner = (selection_mode == MIZU_SELECTION_MODE_REUSE)
     call record_execution_sample(optimization_store, trim(optimization_key_text), plan_id, elapsed_us, &
       trim(candidate_key_text))
@@ -1682,6 +1741,96 @@ contains
     cache_flags = compose_cache_flags(MIZU_CACHE_FLAG_SESSION_HIT, was_hit, reused_winner)
   end subroutine resolve_session_stage_cache
 
+  subroutine prepare_plan_stage_candidate(runtime, optimization_store, model, stage_kind, op_family, &
+                                          shape, token_count, optimization_key_text, &
+                                          candidate_key_text, plan_id, selection_mode, &
+                                          backend_family, execution_route, artifact_metadata)
+    type(runtime_state), intent(in)                  :: runtime
+    type(runtime_optimization_store), intent(in)     :: optimization_store
+    type(model_state), intent(in)                    :: model
+    integer(i32), intent(in)                         :: stage_kind
+    integer(i32), intent(in)                         :: op_family
+    integer(i64), intent(in)                         :: shape(3)
+    integer(i64), intent(in)                         :: token_count
+    character(len=*), intent(out)                    :: optimization_key_text
+    character(len=*), intent(out)                    :: candidate_key_text
+    integer(i64), intent(out)                        :: plan_id
+    integer(i32), intent(out)                        :: selection_mode
+    integer(i32), intent(out)                        :: backend_family
+    integer(i32), intent(out)                        :: execution_route
+    type(artifact_metadata_record), intent(out)      :: artifact_metadata
+    type(model_manifest)                             :: manifest
+    type(plan_request)                               :: stage_request
+    type(plan_cache_key)                             :: optimization_key
+    type(plan_cache_key)                             :: candidate_key
+    character(len=MAX_CACHE_KEY_LEN)                 :: candidate_key_texts(3)
+    integer(i64)                                     :: candidate_plan_ids(3)
+    integer(i32)                                     :: candidate_backend_families(3)
+    integer(i32)                                     :: candidate_execution_routes(3)
+    integer(i32)                                     :: optimization_backend_family
+    integer(i32)                                     :: candidate_count
+    integer(i32)                                     :: candidate_index
+
+    call populate_manifest_identity(model, manifest)
+    call enumerate_candidate_routes(model%info%allowed_backend_mask, candidate_backend_families, &
+      candidate_execution_routes, candidate_count)
+    optimization_key_text = ""
+    candidate_key_text = ""
+    candidate_key_texts = ""
+    candidate_plan_ids = 0_i64
+    optimization_backend_family = derive_optimization_backend_family(candidate_backend_families, candidate_count)
+
+    call initialize_plan_request(stage_request, stage_kind, op_family, model%info%model_family, &
+      model%info%allowed_backend_mask)
+    stage_request%shape_signature = 0_i64
+    stage_request%shape_signature(1:3) = shape
+    stage_request%token_count = max(0_i64, token_count)
+    stage_request%planner_version_hint = 1_i64
+
+    call build_plan_cache_key(manifest, "unbound", "logical", stage_kind, optimization_backend_family, &
+      MIZU_EXEC_ROUTE_NONE, MIZU_DTYPE_BF16, 3_i32, shape, optimization_key)
+    optimization_key_text = append_allowed_mask_identity(trim(optimization_key%key_text), &
+      model%info%allowed_backend_mask)
+
+    do candidate_index = 1_i32, candidate_count
+      call build_plan_cache_key(manifest, "unbound", "logical", stage_kind, &
+        candidate_backend_families(candidate_index), candidate_execution_routes(candidate_index), &
+        MIZU_DTYPE_BF16, 3_i32, shape, candidate_key)
+      candidate_key_text = trim(candidate_key%key_text)
+      candidate_plan_ids(candidate_index) = hash_text64(trim(candidate_key_text))
+      candidate_key_texts(candidate_index) = trim(candidate_key_text)
+    end do
+
+    call resolve_stage_candidate(runtime, optimization_store, trim(optimization_key_text), candidate_count, &
+      candidate_backend_families, candidate_execution_routes, candidate_plan_ids, candidate_key_texts, &
+      candidate_key_text, plan_id, selection_mode, backend_family, execution_route)
+    artifact_metadata = build_stage_artifact_metadata(stage_kind, backend_family, execution_route, &
+      trim(candidate_key_text), stage_request, runtime%config%cache_root)
+  end subroutine prepare_plan_stage_candidate
+
+  subroutine finalize_plan_stage_cache(runtime_cache, optimization_store, optimization_key_text, &
+                                       candidate_key_text, plan_id, selection_mode, elapsed_us, &
+                                       artifact_metadata, cache_flags)
+    type(runtime_cache_bundle), intent(inout)       :: runtime_cache
+    type(runtime_optimization_store), intent(inout) :: optimization_store
+    character(len=*), intent(in)                    :: optimization_key_text
+    character(len=*), intent(in)                    :: candidate_key_text
+    integer(i64), intent(in)                        :: plan_id
+    integer(i32), intent(in)                        :: selection_mode
+    integer(i64), intent(in)                        :: elapsed_us
+    type(artifact_metadata_record), intent(in)      :: artifact_metadata
+    integer(i64), intent(out)                       :: cache_flags
+    logical                                         :: was_hit
+    logical                                         :: reused_winner
+
+    call touch_plan_cache_key(runtime_cache, trim(candidate_key_text), was_hit)
+    call record_plan_artifact_metadata(runtime_cache, trim(candidate_key_text), artifact_metadata)
+    reused_winner = (selection_mode == MIZU_SELECTION_MODE_REUSE)
+    call record_execution_sample(optimization_store, trim(optimization_key_text), plan_id, elapsed_us, &
+      trim(candidate_key_text))
+    cache_flags = compose_cache_flags(MIZU_CACHE_FLAG_PLAN_HIT, was_hit, reused_winner)
+  end subroutine finalize_plan_stage_cache
+
   subroutine resolve_prefill_stage_cache(runtime, runtime_cache, optimization_store, model, kv_before, &
                                          staged_tokens, staged_modal_count, elapsed_us, plan_id, &
                                          selection_mode, backend_family, execution_route, cache_flags)
@@ -1698,6 +1847,7 @@ contains
     integer(i32), intent(out)                       :: backend_family
     integer(i32), intent(out)                       :: execution_route
     integer(i64), intent(out)                       :: cache_flags
+    type(plan_request)                              :: stage_request
     type(model_manifest)                            :: manifest
     type(plan_cache_key)                            :: optimization_key
     type(plan_cache_key)                            :: candidate_key
@@ -1721,6 +1871,12 @@ contains
     candidate_plan_ids = 0_i64
     optimization_backend_family = derive_optimization_backend_family(candidate_backend_families, candidate_count)
     shape = [max(0_i64, kv_before), max(0_i64, staged_tokens), max(0_i64, int(staged_modal_count, kind=i64))]
+    call initialize_plan_request(stage_request, MIZU_STAGE_PREFILL, OP_FAMILY_PREFILL, &
+      model%info%model_family, model%info%allowed_backend_mask)
+    stage_request%shape_signature = 0_i64
+    stage_request%shape_signature(1:3) = shape
+    stage_request%token_count = max(0_i64, staged_tokens)
+    stage_request%planner_version_hint = 1_i64
     call build_plan_cache_key(manifest, "unbound", "logical", MIZU_STAGE_PREFILL, &
       optimization_backend_family, MIZU_EXEC_ROUTE_NONE, MIZU_DTYPE_BF16, 3_i32, shape, optimization_key)
     optimization_key_text = append_allowed_mask_identity(trim(optimization_key%key_text), &
@@ -1740,7 +1896,7 @@ contains
     call touch_plan_cache_key(runtime_cache, trim(candidate_key_text), was_hit)
     call record_plan_artifact_metadata(runtime_cache, trim(candidate_key_text), &
       build_stage_artifact_metadata(MIZU_STAGE_PREFILL, backend_family, execution_route, &
-        trim(candidate_key_text)))
+        trim(candidate_key_text), stage_request, runtime%config%cache_root))
     reused_winner = (selection_mode == MIZU_SELECTION_MODE_REUSE)
     call record_execution_sample(optimization_store, trim(optimization_key_text), plan_id, elapsed_us, &
       trim(candidate_key_text))
@@ -1762,6 +1918,7 @@ contains
     integer(i32), intent(out)                       :: backend_family
     integer(i32), intent(out)                       :: execution_route
     integer(i64), intent(out)                       :: cache_flags
+    type(plan_request)                              :: stage_request
     type(model_manifest)                            :: manifest
     type(plan_cache_key)                            :: optimization_key
     type(plan_cache_key)                            :: candidate_key
@@ -1785,6 +1942,12 @@ contains
     candidate_plan_ids = 0_i64
     optimization_backend_family = derive_optimization_backend_family(candidate_backend_families, candidate_count)
     shape = [max(0_i64, kv_before), max(0_i64, token_budget), 1_i64]
+    call initialize_plan_request(stage_request, MIZU_STAGE_DECODE, OP_FAMILY_DECODE, &
+      model%info%model_family, model%info%allowed_backend_mask)
+    stage_request%shape_signature = 0_i64
+    stage_request%shape_signature(1:3) = shape
+    stage_request%token_count = max(0_i64, token_budget)
+    stage_request%planner_version_hint = 1_i64
     call build_plan_cache_key(manifest, "unbound", "logical", MIZU_STAGE_DECODE, &
       optimization_backend_family, MIZU_EXEC_ROUTE_NONE, MIZU_DTYPE_BF16, 3_i32, shape, optimization_key)
     optimization_key_text = append_allowed_mask_identity(trim(optimization_key%key_text), &
@@ -1804,7 +1967,7 @@ contains
     call touch_plan_cache_key(runtime_cache, trim(candidate_key_text), was_hit)
     call record_plan_artifact_metadata(runtime_cache, trim(candidate_key_text), &
       build_stage_artifact_metadata(MIZU_STAGE_DECODE, backend_family, execution_route, &
-        trim(candidate_key_text)))
+        trim(candidate_key_text), stage_request, runtime%config%cache_root))
     reused_winner = (selection_mode == MIZU_SELECTION_MODE_REUSE)
     call record_execution_sample(optimization_store, trim(optimization_key_text), plan_id, elapsed_us, &
       trim(candidate_key_text))
@@ -1825,6 +1988,7 @@ contains
     integer(i32), intent(out)                       :: backend_family
     integer(i32), intent(out)                       :: execution_route
     integer(i64), intent(out)                       :: cache_flags
+    type(plan_request)                              :: stage_request
     type(model_manifest)                            :: manifest
     type(multimodal_cache_key)                      :: key
     integer(i32)                                    :: modality_kind
@@ -1848,6 +2012,18 @@ contains
     if (modality_kind <= 0_i32) modality_kind = MIZU_MODALITY_KIND_IMAGE
     modality_dtype = session%staged_modal_dtype
     if (modality_dtype <= 0_i32) modality_dtype = MIZU_DTYPE_U8
+    call initialize_plan_request(stage_request, MIZU_STAGE_PROJECTOR, OP_FAMILY_PROJECTOR, &
+      model%info%model_family, model%info%allowed_backend_mask)
+    stage_request%shape_signature = 0_i64
+    stage_request%shape_signature(1) = max(0_i64, session%staged_modal_byte_count)
+    stage_request%shape_signature(2) = int(modality_kind, kind=i64)
+    stage_request%shape_signature(3) = int(modality_dtype, kind=i64)
+    stage_request%planner_version_hint = 1_i64
+    stage_request%projector%is_present = manifest%projector%is_present
+    stage_request%projector%placeholder_count = manifest%projector%placeholder_count
+    stage_request%projector%input_dtype = manifest%projector%input_dtype
+    stage_request%projector%embedding_dtype = manifest%projector%embedding_dtype
+    stage_request%projector%slot_name = manifest%projector%slot_name
 
     call enumerate_candidate_routes(model%info%allowed_backend_mask, candidate_backend_families, &
       candidate_execution_routes, candidate_count)
@@ -1869,7 +2045,7 @@ contains
     call touch_multimodal_cache_key(runtime_cache, trim(candidate_key_text), was_hit)
     call record_multimodal_artifact_metadata(runtime_cache, trim(candidate_key_text), &
       build_stage_artifact_metadata(MIZU_STAGE_PROJECTOR, backend_family, execution_route, &
-        trim(candidate_key_text)))
+        trim(candidate_key_text), stage_request, runtime%config%cache_root))
     reused_winner = (selection_mode == MIZU_SELECTION_MODE_REUSE)
     call record_execution_sample(optimization_store, trim(optimization_key_text), plan_id, elapsed_us, &
       trim(candidate_key_text))
@@ -2027,14 +2203,20 @@ contains
       trim(base_key_text), backend_family, execution_route
   end function append_route_identity
 
-  function build_stage_artifact_metadata(stage_kind, backend_family, execution_route, candidate_key_text) &
-      result(metadata)
-    integer(i32), intent(in)    :: stage_kind
-    integer(i32), intent(in)    :: backend_family
-    integer(i32), intent(in)    :: execution_route
-    character(len=*), intent(in) :: candidate_key_text
+  function build_stage_artifact_metadata(stage_kind, backend_family, execution_route, candidate_key_text, &
+                                         request, cache_root) result(metadata)
+    integer(i32), intent(in)      :: stage_kind
+    integer(i32), intent(in)      :: backend_family
+    integer(i32), intent(in)      :: execution_route
+    character(len=*), intent(in)  :: candidate_key_text
+    type(plan_request), intent(in), optional :: request
+    character(len=*), intent(in), optional   :: cache_root
     type(artifact_metadata_record) :: metadata
+    type(planner_result)           :: planning_result
     character(len=MAX_NAME_LEN)    :: fingerprint_token
+    character(len=CUDA_ARTIFACT_PAYLOAD_LEN) :: payload_text
+    integer(i64)                   :: payload_bytes
+    integer(i32)                   :: status_code
 
     metadata = artifact_metadata_record()
     metadata%backend_family = backend_family
@@ -2047,6 +2229,20 @@ contains
     metadata%payload_fingerprint = trim(fingerprint_token)
     metadata%payload_path = build_artifact_payload_path(stage_kind, backend_family, execution_route, &
       trim(fingerprint_token))
+
+    if (backend_family /= MIZU_BACKEND_FAMILY_CUDA .or. execution_route /= MIZU_EXEC_ROUTE_CUDA) return
+    if (.not. present(request)) return
+
+    call plan_cuda_stage(request, planning_result, status_code)
+    if (status_code /= MIZU_STATUS_OK) return
+    if (.not. planner_result_is_success(planning_result)) return
+
+    metadata%artifact_format = trim(planning_result%chosen_plan%pack_format)
+    call build_cuda_artifact_payload_text(request, planning_result%chosen_plan, trim(candidate_key_text), &
+      payload_text, payload_bytes)
+    if (present(cache_root)) then
+      call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
+    end if
   end function build_stage_artifact_metadata
 
   function build_artifact_format_label(stage_kind, backend_family, execution_route) result(format_label)
@@ -2109,6 +2305,75 @@ contains
     key_hash = hash_text64(trim(candidate_key_text))
     write(fingerprint_token, '(Z16.16)') key_hash
   end function build_artifact_fingerprint_token
+
+  subroutine materialize_artifact_payload(cache_root, metadata, payload_text, payload_bytes)
+    character(len=*), intent(in)              :: cache_root
+    type(artifact_metadata_record), intent(inout) :: metadata
+    character(len=*), intent(in)              :: payload_text
+    integer(i64), intent(in)                  :: payload_bytes
+    character(len=MAX_PATH_LEN)               :: full_path
+    character(len=MAX_PATH_LEN)               :: parent_dir
+    integer(i64)                              :: existing_size
+    integer(i32)                              :: unit_id
+    integer(i32)                              :: ios
+    logical                                   :: exists
+
+    if (len_trim(cache_root) == 0) return
+    if (len_trim(metadata%payload_path) == 0) return
+
+    full_path = join_cache_root_with_payload_path(cache_root, metadata%payload_path)
+    inquire(file=trim(full_path), exist=exists, size=existing_size)
+    if (exists) then
+      metadata%is_materialized = .true.
+      metadata%payload_bytes = max(1_i64, existing_size)
+      return
+    end if
+
+    parent_dir = parent_directory_path(full_path)
+    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+
+    open(newunit=unit_id, file=trim(full_path), status="replace", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+    write(unit_id, "(A)", iostat=ios) trim(payload_text)
+    close(unit_id)
+    if (ios /= 0_i32) return
+
+    metadata%is_materialized = .true.
+    metadata%payload_bytes = max(1_i64, payload_bytes)
+  end subroutine materialize_artifact_payload
+
+  function join_cache_root_with_payload_path(cache_root, payload_path) result(full_path)
+    character(len=*), intent(in) :: cache_root
+    character(len=*), intent(in) :: payload_path
+    character(len=MAX_PATH_LEN)  :: full_path
+    integer                      :: root_len
+
+    full_path = ""
+    if (len_trim(cache_root) == 0 .or. len_trim(payload_path) == 0) return
+
+    root_len = len_trim(cache_root)
+    if (cache_root(root_len:root_len) == "/") then
+      full_path = trim(cache_root) // trim(payload_path)
+    else
+      full_path = trim(cache_root) // "/" // trim(payload_path)
+    end if
+  end function join_cache_root_with_payload_path
+
+  function parent_directory_path(file_path) result(parent_path)
+    character(len=*), intent(in) :: file_path
+    character(len=MAX_PATH_LEN)  :: parent_path
+    integer                      :: index_char
+
+    parent_path = ""
+    do index_char = len_trim(file_path), 1, -1
+      if (file_path(index_char:index_char) == "/") then
+        if (index_char > 1) then
+          parent_path = file_path(1:index_char-1)
+        end if
+        return
+      end if
+    end do
+  end function parent_directory_path
 
   pure function artifact_family_token(backend_family) result(family_token)
     integer(i32), intent(in)    :: backend_family
