@@ -68,7 +68,7 @@ program test_cache_store
   session_metadata%workspace_bytes = 4096_8
   session_metadata%artifact_format = "apple_metal_session_checkpoint_v1"
   session_metadata%payload_fingerprint = "2A2A2A2A"
-  session_metadata%payload_path = "artifacts/apple/metal/misc/2A2A2A2A.artifact"
+  session_metadata%payload_path = "artifacts/apple/metal/sessions/2A2A2A2A.session"
   call record_session_artifact_metadata(bundle, "session:key:cuda", session_metadata)
 
   multimodal_metadata = artifact_metadata_record()
@@ -125,7 +125,7 @@ program test_cache_store
   call expect_true("session metadata should remain materialized", reloaded_metadata%is_materialized)
   call expect_equal_i64("session metadata bytes", reloaded_metadata%payload_bytes, 512_8)
   call expect_equal_string("session metadata path", trim(reloaded_metadata%payload_path), &
-    "artifacts/apple/metal/misc/2A2A2A2A.artifact")
+    "artifacts/apple/metal/sessions/2A2A2A2A.session")
 
   call lookup_multimodal_artifact_metadata(reloaded_bundle, "mm:key:ane", reloaded_metadata, found)
   call expect_true("reloaded multimodal metadata should exist", found)

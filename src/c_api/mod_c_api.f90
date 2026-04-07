@@ -2556,6 +2556,9 @@ contains
     case (MIZU_STAGE_DECODE)
       write(payload_path, '(A,"/",A,"/",A,"/plans/decode/",A,".plan")') &
         "artifacts", trim(family_token), trim(route_token), trim(fingerprint_token)
+    case (MIZU_STAGE_PARK, MIZU_STAGE_RESUME)
+      write(payload_path, '(A,"/",A,"/",A,"/sessions/",A,".session")') &
+        "artifacts", trim(family_token), trim(route_token), trim(fingerprint_token)
     case default
       write(payload_path, '(A,"/",A,"/",A,"/misc/",A,".artifact")') &
         "artifacts", trim(family_token), trim(route_token), trim(fingerprint_token)
@@ -2686,6 +2689,8 @@ contains
       stage_token = "prefill_plan"
     case (MIZU_STAGE_DECODE)
       stage_token = "decode_plan"
+    case (MIZU_STAGE_PARK, MIZU_STAGE_RESUME)
+      stage_token = "session_checkpoint"
     case default
       stage_token = "artifact"
     end select

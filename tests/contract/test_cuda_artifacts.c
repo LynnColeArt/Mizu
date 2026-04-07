@@ -225,7 +225,7 @@ int main(void) {
     if (!expect_true("cuda prefill artifact file should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
     if (!expect_true("cuda decode artifact file should exist", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/misc -type f | grep -q .");
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/sessions -type f | grep -q .");
     if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
 
     command_status = system("rm -rf /tmp/mizu_cuda_artifacts");
