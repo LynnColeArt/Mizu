@@ -5,7 +5,8 @@ program test_cuda_executor
   use mod_types,         only: MIZU_STOP_REASON_NONE, MIZU_STAGE_PREFILL, MIZU_STAGE_DECODE, &
                                workspace_state, MAX_LIVE_CONTEXT_BYTES
   use mod_cuda_executor, only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
-                               extract_cuda_context_state_snapshot, extract_cuda_context_window_snapshot
+                               extract_cuda_context_state_snapshot, extract_cuda_context_window_snapshot, &
+                               extract_cuda_context_slot_snapshot
   use mod_workspace,     only: initialize_workspace, reserve_workspace_bytes, release_workspace_bytes, &
                                reset_workspace
 
@@ -52,6 +53,7 @@ program test_cuda_executor
   integer(i64) :: page_anchors(4)
   integer(i64) :: page_token_counts(4)
   integer(i32) :: page_kinds(4)
+  integer(i32) :: page_slot_tokens(8, 4)
   integer(i32) :: recent_tokens(4)
   integer(i32) :: current_page_index
   integer(i32) :: valid_page_count
@@ -151,6 +153,12 @@ program test_cuda_executor
   call expect_equal_i32("cuda prefill window should retain the oldest recent token", recent_tokens(1), 11_i32)
   call expect_equal_i32("cuda prefill window should retain the newest recent token", recent_tokens(4), 19_i32)
   call expect_true("cuda prefill window should retain a nonzero state image digest", state_image_digest /= 0_i64)
+  call extract_cuda_context_slot_snapshot(context_bytes_a, context_byte_count_a, page_slot_tokens, snapshot_valid)
+  call expect_true("cuda prefill slot snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill slot image should retain the first staged token", page_slot_tokens(1, 1), 3_i32)
+  call expect_equal_i32("cuda prefill slot image should retain the seventh staged token", page_slot_tokens(7, 1), &
+    19_i32)
+  call expect_equal_i32("cuda prefill slot image should leave the trailing slot empty", page_slot_tokens(8, 1), 0_i32)
   prefill_token_digest_a = token_digest
   prefill_modal_digest_a = modal_digest
   prefill_rolling_state_a = rolling_state_digest
@@ -199,6 +207,12 @@ program test_cuda_executor
     recent_tokens(4), 14_i32)
   call expect_true("cuda prefill window state digest should change with tensor content", &
     state_image_digest /= prefill_state_image_digest_a)
+  call extract_cuda_context_slot_snapshot(context_bytes_b, context_byte_count_b, page_slot_tokens, snapshot_valid)
+  call expect_true("cuda prefill slot snapshot for the second tensor set should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill slot image for the second tensor set should retain the first staged token", &
+    page_slot_tokens(1, 1), 2_i32)
+  call expect_equal_i32("cuda prefill slot image for the second tensor set should retain the seventh staged token", &
+    page_slot_tokens(7, 1), 14_i32)
 
   workspace_view = 0_c_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value, stop_reason, &
@@ -246,6 +260,14 @@ program test_cuda_executor
     token_value)
   call expect_true("cuda decode window should advance the state image digest", &
     state_image_digest /= prefill_state_image_digest_a)
+  call extract_cuda_context_slot_snapshot(updated_context_bytes, updated_context_byte_count, page_slot_tokens, &
+    snapshot_valid)
+  call expect_true("cuda decode slot snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda decode slot image should preserve the prefill page payload", page_slot_tokens(7, 1), &
+    19_i32)
+  call expect_equal_i32("cuda decode slot image should seed the decode page payload with the emitted token", &
+    page_slot_tokens(1, 2), token_value)
+  call expect_equal_i32("cuda decode slot image should leave the next decode slot empty", page_slot_tokens(2, 2), 0_i32)
   decode_rolling_state_1 = rolling_state_digest
   prefill_state_image_digest_a = state_image_digest
   decode_context_bytes = updated_context_bytes
@@ -283,6 +305,13 @@ program test_cuda_executor
     token_value_step_2)
   call expect_true("second cuda decode window should advance the state image digest", &
     state_image_digest /= prefill_state_image_digest_a)
+  call extract_cuda_context_slot_snapshot(updated_context_bytes, updated_context_byte_count, page_slot_tokens, &
+    snapshot_valid)
+  call expect_true("second cuda decode slot snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("second cuda decode slot image should keep the earlier emitted token", page_slot_tokens(1, 2), &
+    token_value)
+  call expect_equal_i32("second cuda decode slot image should append the latest emitted token", page_slot_tokens(2, 2), &
+    token_value_step_2)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
 

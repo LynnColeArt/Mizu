@@ -56,6 +56,9 @@ Current implementation status:
   page-like KV metadata, a recent-token ring, and a state-image digest, so the
   placeholder decode path can evolve against something closer to compact
   backend-owned decode state
+- that CUDA live-context image now widens again to 256 bytes and carries
+  explicit per-page slot payloads, so decode continuity is represented as a
+  small page-backed state image instead of metadata alone
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - `make test` now succeeds from a clean tree without relying on stray Fortran

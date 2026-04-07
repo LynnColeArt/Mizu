@@ -4,13 +4,13 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `12cf985` (`Add semantic CUDA
-  context state snapshots`)
+- latest published baseline before this slice: `5ab2a41` (`Widen CUDA live
+  contexts into windowed state images`)
 - current milestone: CUDA live-context payloads now carry semantic token/modal
-  digests plus explicit KV and decode-step counters, and now widen into a
-  compact windowed state image
-- immediate next target: replace the compact windowed CUDA state image with a
-  more backend-native decode-state or KV-state representation
+  digests plus explicit KV and decode-step counters, widen into a compact
+  windowed state image, and now carry explicit per-page slot payloads
+- immediate next target: replace the compact page-backed CUDA state image with
+  a more backend-native decode-state or KV-state representation
 
 ## What Exists
 
@@ -62,6 +62,11 @@ Last updated: 2026-04-07
   - page-like KV metadata for a few compact logical decode pages
   - a recent-token ring
   - a state-image digest over the compact window
+- the CUDA live-context payload now reserves 256 bytes instead of 128 so it
+  can carry compact per-page slot contents in addition to page metadata
+- those slot payloads now give each tracked decode page a small explicit token
+  image, which makes the placeholder runtime state look more like compact
+  backend decode state than a metadata-only summary
 
 ### Self-Optimization
 
@@ -107,6 +112,9 @@ Last updated: 2026-04-07
 - CUDA decode now also advances the page-like KV window and recent-token ring
   inside the widened state image, so the placeholder backend state has a
   compact but more realistic notion of decode continuity
+- CUDA decode now also appends emitted tokens into explicit per-page slot
+  payloads inside that state image, so page continuity is represented through
+  actual compact payload contents instead of only page fill counters
 - runtime workspace reservations now allocate a reusable host scratch buffer
   instead of tracking bytes alone
 - CUDA projector, prefill, and decode now receive that runtime workspace buffer
@@ -211,6 +219,8 @@ Last updated: 2026-04-07
 - the new windowed state image is still intentionally tiny and summary-heavy;
   it behaves more like a compact rehearsal for backend decode state than a
   real device-resident KV layout
+- the new page-backed slot payloads are still token-centric stand-ins, not real
+  key/value tensors or backend-native cache pages
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing
@@ -220,6 +230,6 @@ Last updated: 2026-04-07
 1. Build the Apple capability and planner layer.
 2. Materialize route-specific Apple pack and plan payloads behind the existing
    metadata records.
-3. Replace the compact CUDA live-context window with a more realistic
+3. Replace the compact CUDA page-backed state image with a more realistic
    backend-owned decode-state or KV-state payload.
 4. Start the thin Go binding once the C ABI settles a bit more.

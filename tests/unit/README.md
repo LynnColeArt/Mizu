@@ -86,6 +86,10 @@ bodies.
     state image with page-like KV metadata and a recent-token ring
   - validates repeated CUDA decode steps advance that compact windowed state
     image predictably across decode continuity
+  - validates the widened CUDA context payload now carries per-page slot
+    payloads in addition to page metadata
+  - validates repeated CUDA decode steps append emitted tokens into the
+    expected page-local slot payloads
   - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload and varies with direct context-buffer identity
   - validates CUDA decode rejects a context produced by a different decode
