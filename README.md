@@ -52,6 +52,10 @@ Current implementation status:
 - those CUDA live-context payloads now expose semantic state as token digest,
   modal digest, packed KV/decode-step counters, and rolling decode state, with
   unit coverage proving decode advances the structured state predictably
+- CUDA live-context payloads now widen to a 128-byte windowed state image with
+  page-like KV metadata, a recent-token ring, and a state-image digest, so the
+  placeholder decode path can evolve against something closer to compact
+  backend-owned decode state
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - `make test` now succeeds from a clean tree without relying on stray Fortran

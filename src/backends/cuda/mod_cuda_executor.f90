@@ -14,6 +14,7 @@ module mod_cuda_executor
   public :: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
   public :: cuda_context_bytes_are_valid, extract_cuda_context_lineage
   public :: extract_cuda_context_state_snapshot
+  public :: extract_cuda_context_window_snapshot
 
 contains
 
@@ -406,6 +407,70 @@ contains
     summary_control_b = int(iand(shiftr(summary_word, 48), MASK_16), kind=i32)
     snapshot_valid = .true.
   end subroutine extract_cuda_context_state_snapshot
+
+  pure subroutine extract_cuda_context_window_snapshot(context_bytes, context_byte_count, page_anchors, &
+                                                       page_token_counts, page_kinds, current_page_index, &
+                                                       valid_page_count, recent_tokens, recent_token_count, &
+                                                       state_image_digest, snapshot_valid)
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i64), intent(out) :: page_anchors(:)
+    integer(i64), intent(out) :: page_token_counts(:)
+    integer(i32), intent(out) :: page_kinds(:)
+    integer(i32), intent(out) :: current_page_index
+    integer(i32), intent(out) :: valid_page_count
+    integer(i32), intent(out) :: recent_tokens(:)
+    integer(i32), intent(out) :: recent_token_count
+    integer(i64), intent(out) :: state_image_digest
+    logical, intent(out)      :: snapshot_valid
+    integer(i64), parameter   :: MASK_16 = int(z'FFFF', kind=i64)
+    integer(i64)              :: page_word
+    integer(i64)              :: window_meta
+    integer(i32)              :: entry_index
+    integer(i32)              :: page_limit
+    integer(i32)              :: token_limit
+
+    page_anchors = 0_i64
+    page_token_counts = 0_i64
+    page_kinds = 0_i32
+    current_page_index = 0_i32
+    valid_page_count = 0_i32
+    recent_tokens = 0_i32
+    recent_token_count = 0_i32
+    state_image_digest = 0_i64
+    snapshot_valid = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (context_byte_count < 128_i32) return
+
+    page_limit = min(4_i32, min(int(size(page_anchors), kind=i32), min(int(size(page_token_counts), kind=i32), &
+      int(size(page_kinds), kind=i32))))
+    do entry_index = 1_i32, page_limit
+      page_word = decode_context_u64le(context_bytes(65 + ((entry_index - 1_i32) * 8)), &
+        context_bytes(66 + ((entry_index - 1_i32) * 8)), context_bytes(67 + ((entry_index - 1_i32) * 8)), &
+        context_bytes(68 + ((entry_index - 1_i32) * 8)), context_bytes(69 + ((entry_index - 1_i32) * 8)), &
+        context_bytes(70 + ((entry_index - 1_i32) * 8)), context_bytes(71 + ((entry_index - 1_i32) * 8)), &
+        context_bytes(72 + ((entry_index - 1_i32) * 8)))
+      page_anchors(entry_index) = iand(page_word, MASK_16)
+      page_token_counts(entry_index) = iand(shiftr(page_word, 16), MASK_16)
+      page_kinds(entry_index) = int(iand(shiftr(page_word, 48), MASK_16), kind=i32)
+    end do
+
+    token_limit = min(4_i32, int(size(recent_tokens), kind=i32))
+    do entry_index = 1_i32, token_limit
+      recent_tokens(entry_index) = int(decode_context_u32le(context_bytes(97 + ((entry_index - 1_i32) * 4)), &
+        context_bytes(98 + ((entry_index - 1_i32) * 4)), context_bytes(99 + ((entry_index - 1_i32) * 4)), &
+        context_bytes(100 + ((entry_index - 1_i32) * 4))), kind=i32)
+    end do
+
+    window_meta = decode_context_u64le(context_bytes(113), context_bytes(114), context_bytes(115), context_bytes(116), &
+      context_bytes(117), context_bytes(118), context_bytes(119), context_bytes(120))
+    current_page_index = int(iand(window_meta, MASK_16), kind=i32)
+    valid_page_count = int(iand(shiftr(window_meta, 16), MASK_16), kind=i32)
+    recent_token_count = int(iand(shiftr(window_meta, 32), MASK_16), kind=i32)
+    state_image_digest = decode_context_u64le(context_bytes(121), context_bytes(122), context_bytes(123), &
+      context_bytes(124), context_bytes(125), context_bytes(126), context_bytes(127), context_bytes(128))
+    snapshot_valid = .true.
+  end subroutine extract_cuda_context_window_snapshot
 
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1

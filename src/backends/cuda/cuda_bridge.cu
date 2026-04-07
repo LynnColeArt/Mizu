@@ -20,6 +20,14 @@ constexpr int32_t MIZU_CUDA_CONTEXT_HEADER_SIZE = 16;
 constexpr int32_t MIZU_CUDA_CONTEXT_STATE_LANES = 4;
 constexpr int32_t MIZU_CUDA_CONTEXT_ARTIFACT_OFFSET = 48;
 constexpr int32_t MIZU_CUDA_CONTEXT_SUMMARY_OFFSET = 56;
+constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_WORD_OFFSET = 64;
+constexpr int32_t MIZU_CUDA_CONTEXT_RECENT_TOKEN_OFFSET = 96;
+constexpr int32_t MIZU_CUDA_CONTEXT_WINDOW_META_OFFSET = 112;
+constexpr int32_t MIZU_CUDA_CONTEXT_STATE_IMAGE_DIGEST_OFFSET = 120;
+constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 128;
+constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_COUNT = 4;
+constexpr int32_t MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT = 4;
+constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CAPACITY = 16;
 constexpr uint32_t MIZU_CUDA_CONTEXT_CHECKSUM_OFFSET = 2166136261U;
 constexpr uint32_t MIZU_CUDA_CONTEXT_CHECKSUM_PRIME = 16777619U;
 
@@ -93,12 +101,59 @@ inline void write_context_u64(unsigned char *bytes, int32_t stored_count, int32_
   memcpy(bytes + offset, &value, copy_bytes);
 }
 
+inline void write_context_i32(unsigned char *bytes, int32_t stored_count, int32_t offset, int32_t value) {
+  if (bytes == nullptr || stored_count <= offset) return;
+  const size_t copy_bytes = static_cast<size_t>(stored_count - offset < 4 ? stored_count - offset : 4);
+  memcpy(bytes + offset, &value, copy_bytes);
+}
+
 inline unsigned long long read_context_u64(const int8_t *context_bytes, int32_t context_byte_count, int32_t offset) {
   unsigned long long value = 0ULL;
   if (context_bytes == nullptr || context_byte_count <= offset) return value;
   const size_t copy_bytes = static_cast<size_t>(context_byte_count - offset < 8 ? context_byte_count - offset : 8);
   memcpy(&value, reinterpret_cast<const unsigned char *>(context_bytes) + offset, copy_bytes);
   return value;
+}
+
+inline int32_t read_context_i32(const int8_t *context_bytes, int32_t context_byte_count, int32_t offset) {
+  int32_t value = 0;
+  if (context_bytes == nullptr || context_byte_count <= offset) return value;
+  const size_t copy_bytes = static_cast<size_t>(context_byte_count - offset < 4 ? context_byte_count - offset : 4);
+  memcpy(&value, reinterpret_cast<const unsigned char *>(context_bytes) + offset, copy_bytes);
+  return value;
+}
+
+inline unsigned long long pack_kv_page_word(int64_t page_anchor,
+                                            int64_t page_token_count,
+                                            int32_t page_slot,
+                                            int32_t page_kind) {
+  return pack_context_summary(page_anchor, page_token_count, page_slot, page_kind);
+}
+
+inline int32_t unpack_summary_leading_u16(unsigned long long summary_word) {
+  return static_cast<int32_t>(summary_word & 0xffffULL);
+}
+
+inline int32_t unpack_summary_auxiliary_u16(unsigned long long summary_word) {
+  return static_cast<int32_t>((summary_word >> 16) & 0xffffULL);
+}
+
+inline int32_t unpack_summary_control_a_u16(unsigned long long summary_word) {
+  return static_cast<int32_t>((summary_word >> 32) & 0xffffULL);
+}
+
+inline unsigned long long digest_window_state(const unsigned long long page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
+                                              unsigned long long extra_seed) {
+  unsigned long long digest = mix_u64_host(extra_seed ^ 0xD1E57A7E12345678ULL);
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
+    digest = mix_u64_host(digest ^ page_words[index] ^ static_cast<unsigned long long>(index));
+  }
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT; ++index) {
+    digest = mix_u64_host(digest ^ static_cast<unsigned long long>(static_cast<uint32_t>(recent_tokens[index])) ^
+                          (static_cast<unsigned long long>(index) << 40));
+  }
+  return digest;
 }
 
 inline void build_prefill_state_block(unsigned long long seed,
@@ -178,6 +233,179 @@ inline void write_context_state_block(unsigned char *bytes,
   }
   write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_ARTIFACT_OFFSET, artifact_hash);
   write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_SUMMARY_OFFSET, summary_word);
+}
+
+inline void build_prefill_window_block(const int32_t *token_values,
+                                       int64_t token_count,
+                                       int64_t kv_token_count,
+                                       unsigned long long page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
+                                       unsigned long long *window_meta,
+                                       unsigned long long *state_image_digest) {
+  int32_t valid_page_count = 0;
+  int32_t current_page_index = 0;
+  int32_t recent_token_count = 0;
+  int64_t remaining_tokens = kv_token_count > 0 ? kv_token_count : 0;
+  int64_t page_anchor = 0;
+
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
+    page_words[index] = 0ULL;
+  }
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT; ++index) {
+    recent_tokens[index] = 0;
+  }
+
+  for (int32_t page_index = 0; page_index < MIZU_CUDA_CONTEXT_PAGE_COUNT && remaining_tokens > 0; ++page_index) {
+    const int64_t page_token_count = remaining_tokens > MIZU_CUDA_CONTEXT_PAGE_CAPACITY ?
+      MIZU_CUDA_CONTEXT_PAGE_CAPACITY : remaining_tokens;
+    page_words[page_index] = pack_kv_page_word(page_anchor, page_token_count, page_index, 1);
+    page_anchor += page_token_count;
+    remaining_tokens -= page_token_count;
+    valid_page_count = page_index + 1;
+  }
+  if (valid_page_count > 0) current_page_index = valid_page_count - 1;
+
+  recent_token_count = static_cast<int32_t>(token_count > MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT ?
+    MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT : (token_count > 0 ? token_count : 0));
+  if (token_values != nullptr && recent_token_count > 0) {
+    const int64_t token_start = token_count - recent_token_count;
+    for (int32_t index = 0; index < recent_token_count; ++index) {
+      recent_tokens[index] = token_values[token_start + index];
+    }
+  }
+
+  if (window_meta != nullptr) {
+    *window_meta = pack_context_summary(current_page_index, valid_page_count, recent_token_count, 0);
+  }
+  if (state_image_digest != nullptr) {
+    *state_image_digest = digest_window_state(page_words, recent_tokens,
+      static_cast<unsigned long long>(kv_token_count));
+  }
+}
+
+inline void extract_context_window_block(const int8_t *context_bytes,
+                                         int32_t context_byte_count,
+                                         unsigned long long page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
+                                         unsigned long long *window_meta,
+                                         unsigned long long *state_image_digest) {
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
+    page_words[index] = read_context_u64(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_WORD_OFFSET + (index * 8));
+  }
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT; ++index) {
+    recent_tokens[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_RECENT_TOKEN_OFFSET + (index * 4));
+  }
+  if (window_meta != nullptr) {
+    *window_meta = read_context_u64(context_bytes, context_byte_count, MIZU_CUDA_CONTEXT_WINDOW_META_OFFSET);
+  }
+  if (state_image_digest != nullptr) {
+    *state_image_digest = read_context_u64(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_STATE_IMAGE_DIGEST_OFFSET);
+  }
+}
+
+inline void write_context_window_block(unsigned char *bytes,
+                                       int32_t stored_count,
+                                       const unsigned long long page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
+                                       unsigned long long window_meta,
+                                       unsigned long long state_image_digest) {
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
+    write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_PAGE_WORD_OFFSET + (index * 8), page_words[index]);
+  }
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT; ++index) {
+    write_context_i32(bytes, stored_count, MIZU_CUDA_CONTEXT_RECENT_TOKEN_OFFSET + (index * 4), recent_tokens[index]);
+  }
+  write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_WINDOW_META_OFFSET, window_meta);
+  write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_STATE_IMAGE_DIGEST_OFFSET, state_image_digest);
+}
+
+inline void build_decode_window_block(const unsigned long long current_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
+                                      unsigned long long current_window_meta,
+                                      unsigned long long current_state_image_digest,
+                                      int64_t next_kv_tokens,
+                                      int64_t emitted_token_count,
+                                      int32_t token_value,
+                                      unsigned long long next_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
+                                      unsigned long long *next_window_meta,
+                                      unsigned long long *next_state_image_digest) {
+  int32_t current_page_index = unpack_summary_leading_u16(current_window_meta);
+  int32_t valid_page_count = unpack_summary_auxiliary_u16(current_window_meta);
+  int32_t recent_token_count = unpack_summary_control_a_u16(current_window_meta);
+
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
+    next_page_words[index] = current_page_words[index];
+  }
+  for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT; ++index) {
+    next_recent_tokens[index] = current_recent_tokens[index];
+  }
+
+  if (valid_page_count < 0) valid_page_count = 0;
+  if (valid_page_count > MIZU_CUDA_CONTEXT_PAGE_COUNT) valid_page_count = MIZU_CUDA_CONTEXT_PAGE_COUNT;
+  if (recent_token_count < 0) recent_token_count = 0;
+  if (recent_token_count > MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT) {
+    recent_token_count = MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT;
+  }
+  if (current_page_index < 0) current_page_index = 0;
+  if (current_page_index >= MIZU_CUDA_CONTEXT_PAGE_COUNT) {
+    current_page_index = MIZU_CUDA_CONTEXT_PAGE_COUNT - 1;
+  }
+
+  if (emitted_token_count > 0) {
+    const int64_t new_page_anchor = next_kv_tokens - emitted_token_count;
+    bool appended_to_existing_page = false;
+
+    if (valid_page_count > 0) {
+      const unsigned long long current_page_word = next_page_words[current_page_index];
+      const int32_t current_page_anchor = unpack_summary_leading_u16(current_page_word);
+      const int32_t current_page_fill = unpack_summary_auxiliary_u16(current_page_word);
+      if (current_page_fill > 0 &&
+          current_page_fill < MIZU_CUDA_CONTEXT_PAGE_CAPACITY &&
+          current_page_anchor + current_page_fill == new_page_anchor) {
+        next_page_words[current_page_index] = pack_kv_page_word(current_page_anchor,
+          current_page_fill + static_cast<int32_t>(emitted_token_count), current_page_index, 2);
+        appended_to_existing_page = true;
+      }
+    }
+
+    if (!appended_to_existing_page) {
+      if (valid_page_count < MIZU_CUDA_CONTEXT_PAGE_COUNT) {
+        current_page_index = valid_page_count;
+        valid_page_count += 1;
+      } else {
+        for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT - 1; ++index) {
+          next_page_words[index] = next_page_words[index + 1];
+        }
+        next_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0ULL;
+        current_page_index = MIZU_CUDA_CONTEXT_PAGE_COUNT - 1;
+      }
+      next_page_words[current_page_index] = pack_kv_page_word(new_page_anchor, emitted_token_count,
+        current_page_index, 2);
+    }
+
+    if (recent_token_count < MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT) {
+      next_recent_tokens[recent_token_count] = token_value;
+      recent_token_count += 1;
+    } else {
+      for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT - 1; ++index) {
+        next_recent_tokens[index] = next_recent_tokens[index + 1];
+      }
+      next_recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT - 1] = token_value;
+    }
+  }
+
+  if (next_window_meta != nullptr) {
+    *next_window_meta = pack_context_summary(current_page_index, valid_page_count, recent_token_count, 0);
+  }
+  if (next_state_image_digest != nullptr) {
+    *next_state_image_digest = digest_window_state(next_page_words, next_recent_tokens,
+      current_state_image_digest ^ static_cast<unsigned long long>(next_kv_tokens) ^
+      static_cast<unsigned long long>(static_cast<uint32_t>(token_value)));
+  }
 }
 
 __global__ void mizu_prefill_kernel(int64_t staged_tokens,
@@ -269,6 +497,7 @@ inline void stamp_workspace_buffer(void *workspace_buffer,
 
 inline void fill_prefill_context_bytes(unsigned long long seed,
                                        unsigned long long artifact_hash,
+                                       const int32_t *token_values,
                                        int64_t token_count,
                                        int64_t modal_byte_count,
                                        int32_t staged_modal_count,
@@ -280,6 +509,10 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   uint32_t checksum = 0U;
   unsigned long long state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES] = {};
   unsigned long long summary_word = 0ULL;
+  unsigned long long page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT] = {};
+  unsigned long long window_meta = 0ULL;
+  unsigned long long state_image_digest = 0ULL;
   int32_t stored_count = 0;
 
   if (context_byte_count == nullptr) return;
@@ -287,7 +520,7 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   *context_byte_count = 0;
   if (context_bytes == nullptr || context_capacity <= 0) return;
 
-  stored_count = context_capacity < 64 ? context_capacity : 64;
+  stored_count = context_capacity < MIZU_CUDA_CONTEXT_TOTAL_BYTES ? context_capacity : MIZU_CUDA_CONTEXT_TOTAL_BYTES;
   memset(bytes, 0, static_cast<size_t>(stored_count));
 
   if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
@@ -302,7 +535,10 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   }
   build_prefill_state_block(seed, artifact_hash, token_count, modal_byte_count, staged_modal_count,
                             consumed_token_count, state_lanes, &summary_word);
+  build_prefill_window_block(token_values, token_count, consumed_token_count, page_words, recent_tokens,
+                             &window_meta, &state_image_digest);
   write_context_state_block(bytes, stored_count, state_lanes, artifact_hash, summary_word);
+  write_context_window_block(bytes, stored_count, page_words, recent_tokens, window_meta, state_image_digest);
 
   checksum = compute_context_checksum(bytes, stored_count);
   if (stored_count > 8) {
@@ -316,8 +552,12 @@ inline void fill_decode_context_bytes(unsigned long long seed,
                                       unsigned long long artifact_hash,
                                       const unsigned long long next_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES],
                                       unsigned long long summary_word,
+                                      const unsigned long long next_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
+                                      unsigned long long next_window_meta,
+                                      unsigned long long next_state_image_digest,
                                       int8_t *context_bytes,
-                               int32_t context_capacity,
+                                      int32_t context_capacity,
                                       int32_t *context_byte_count) {
   auto *bytes = reinterpret_cast<unsigned char *>(context_bytes);
   uint32_t checksum = 0U;
@@ -329,7 +569,7 @@ inline void fill_decode_context_bytes(unsigned long long seed,
   *context_byte_count = 0;
   if (context_bytes == nullptr || context_capacity <= 0) return;
 
-  stored_count = context_capacity < 64 ? context_capacity : 64;
+  stored_count = context_capacity < MIZU_CUDA_CONTEXT_TOTAL_BYTES ? context_capacity : MIZU_CUDA_CONTEXT_TOTAL_BYTES;
   memset(bytes, 0, static_cast<size_t>(stored_count));
 
   if (stored_count >= 1) bytes[0] = MIZU_CUDA_CONTEXT_MAGIC_0;
@@ -343,6 +583,8 @@ inline void fill_decode_context_bytes(unsigned long long seed,
     bytes[7] = static_cast<unsigned char>((stored_count >> 8) & 0xff);
   }
   write_context_state_block(bytes, stored_count, next_state_lanes, artifact_hash, summary_word);
+  write_context_window_block(bytes, stored_count, next_page_words, next_recent_tokens, next_window_meta,
+                             next_state_image_digest);
 
   checksum = compute_context_checksum(bytes, stored_count);
   if (stored_count > 8) {
@@ -478,9 +720,9 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
     build_prefill_state_block(workspace_seed, static_cast<unsigned long long>(artifact_hash), token_count,
                               modal_byte_count, staged_modal_count, *consumed_token_count, state_lanes,
                               &summary_word);
-    fill_prefill_context_bytes(workspace_seed, static_cast<unsigned long long>(artifact_hash), token_count,
-                               modal_byte_count, staged_modal_count, *consumed_token_count, context_bytes,
-                               context_capacity, context_byte_count);
+    fill_prefill_context_bytes(workspace_seed, static_cast<unsigned long long>(artifact_hash), token_values,
+                               token_count, modal_byte_count, staged_modal_count, *consumed_token_count,
+                               context_bytes, context_capacity, context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes, state_lanes[0] ^ state_lanes[3] ^ summary_word, 3U);
   }
   *status_code = (status == cudaSuccess) ? MIZU_STATUS_OK : MIZU_STATUS_EXECUTION_ERROR;
@@ -547,8 +789,16 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
   int32_t *managed_stop_reason = nullptr;
   unsigned long long current_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES] = {};
   unsigned long long next_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES] = {};
+  unsigned long long current_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  unsigned long long next_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   unsigned long long summary_word = 0ULL;
+  unsigned long long current_window_meta = 0ULL;
+  unsigned long long next_window_meta = 0ULL;
+  unsigned long long current_state_image_digest = 0ULL;
+  unsigned long long next_state_image_digest = 0ULL;
   unsigned long long decode_seed = 0;
+  int32_t current_recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT] = {};
+  int32_t next_recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT] = {};
 
   if (emitted_token_count == nullptr || token_value == nullptr || stop_reason == nullptr ||
       status_code == nullptr) {
@@ -585,9 +835,12 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
   *managed_stop_reason = MIZU_STOP_REASON_NONE;
 
   extract_context_state_block(context_bytes, context_byte_count, current_state_lanes, nullptr, &summary_word);
+  extract_context_window_block(context_bytes, context_byte_count, current_page_words, current_recent_tokens,
+                               &current_window_meta, &current_state_image_digest);
   decode_seed = static_cast<unsigned long long>(payload_hash);
   decode_seed = mix_u64_host(decode_seed ^ current_state_lanes[0] ^ current_state_lanes[1]);
   decode_seed = mix_u64_host(decode_seed ^ current_state_lanes[2] ^ current_state_lanes[3] ^ summary_word);
+  decode_seed = mix_u64_host(decode_seed ^ current_window_meta ^ current_state_image_digest);
 
   mizu_decode_kernel<<<1, 1>>>(static_cast<int64_t>(decode_seed), kv_before, token_budget, managed_emitted_token_count,
                                managed_token_value, managed_stop_reason);
@@ -600,11 +853,16 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
     build_decode_state_block(current_state_lanes, static_cast<unsigned long long>(artifact_hash), kv_before,
                              token_budget, *emitted_token_count, *token_value, *stop_reason, next_state_lanes,
                              &summary_word);
+    build_decode_window_block(current_page_words, current_recent_tokens, current_window_meta,
+                              current_state_image_digest, unpack_state_kv_tokens(next_state_lanes[2]),
+                              *emitted_token_count, *token_value, next_page_words, next_recent_tokens,
+                              &next_window_meta, &next_state_image_digest);
     fill_decode_context_bytes(decode_seed ^ static_cast<unsigned long long>(*token_value),
                               static_cast<unsigned long long>(artifact_hash), next_state_lanes, summary_word,
+                              next_page_words, next_recent_tokens, next_window_meta, next_state_image_digest,
                               updated_context_bytes, updated_context_capacity, updated_context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes,
-                           next_state_lanes[1] ^ next_state_lanes[3] ^ summary_word,
+                           next_state_lanes[1] ^ next_state_lanes[3] ^ next_state_image_digest ^ summary_word,
                            4U);
   }
   *status_code = (status == cudaSuccess) ? MIZU_STATUS_OK : MIZU_STATUS_EXECUTION_ERROR;

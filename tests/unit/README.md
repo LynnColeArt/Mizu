@@ -82,6 +82,10 @@ bodies.
     and modal digests plus explicit KV/decode-step counters
   - validates repeated CUDA decode steps advance those counters and rolling
     decode state predictably
+  - validates the widened CUDA context payload now carries a compact windowed
+    state image with page-like KV metadata and a recent-token ring
+  - validates repeated CUDA decode steps advance that compact windowed state
+    image predictably across decode continuity
   - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload and varies with direct context-buffer identity
   - validates CUDA decode rejects a context produced by a different decode
