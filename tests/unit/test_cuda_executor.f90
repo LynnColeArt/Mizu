@@ -6,7 +6,8 @@ program test_cuda_executor
                                workspace_state, MAX_LIVE_CONTEXT_BYTES
   use mod_cuda_executor, only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
                                extract_cuda_context_state_snapshot, extract_cuda_context_window_snapshot, &
-                               extract_cuda_context_kv_lane_snapshot, extract_cuda_context_kv_layout_snapshot
+                               extract_cuda_context_kv_lane_snapshot, extract_cuda_context_kv_layout_snapshot, &
+                               extract_cuda_context_page_control_snapshot
   use mod_workspace,     only: initialize_workspace, reserve_workspace_bytes, release_workspace_bytes, &
                                reset_workspace
 
@@ -64,6 +65,14 @@ program test_cuda_executor
   integer(i32) :: page_value_lane_counts(4)
   integer(i32) :: page_head_blocks(4)
   integer(i32) :: page_generations(4)
+  integer(i32) :: page_owner_kinds(4)
+  integer(i32) :: page_usable_capacities(4)
+  integer(i32) :: page_committed_tokens(4)
+  integer(i32) :: page_free_slots(4)
+  integer(i32) :: page_epochs(4)
+  integer(i32) :: page_recycle_epochs(4)
+  integer(i32) :: page_logical_ids(4)
+  integer(i32) :: page_flags(4)
   integer(i32) :: recent_tokens(4)
   integer(i32) :: current_page_index
   integer(i32) :: valid_page_count
@@ -73,6 +82,10 @@ program test_cuda_executor
   integer(i8)  :: modal_bytes_a(6)
   integer(i8)  :: modal_bytes_b(6)
   logical      :: snapshot_valid
+  integer(i32), parameter :: PAGE_FLAG_RESIDENT = 1_i32
+  integer(i32), parameter :: PAGE_FLAG_FULL = 2_i32
+  integer(i32), parameter :: PAGE_FLAG_DECODE_OWNED = 4_i32
+  integer(i32), parameter :: PAGE_FLAG_RECYCLED = 8_i32
   character(len=*), parameter :: cache_root = "/tmp/mizu_test_cuda_executor"
   character(len=*), parameter :: projector_path = "artifacts/cuda/cuda/projector/test.mm"
   character(len=*), parameter :: prefill_path = "artifacts/cuda/cuda/plans/prefill/test.plan"
@@ -184,6 +197,21 @@ program test_cuda_executor
   call expect_equal_i32("cuda prefill layout should keep a single value lane per row", page_value_lane_counts(1), 1_i32)
   call expect_equal_i32("cuda prefill layout should seed the first page head block", page_head_blocks(1), 0_i32)
   call expect_equal_i32("cuda prefill layout should start the first page generation at zero", page_generations(1), 0_i32)
+  call extract_cuda_context_page_control_snapshot(context_bytes_a, context_byte_count_a, page_owner_kinds, &
+    page_usable_capacities, page_committed_tokens, page_free_slots, page_epochs, page_recycle_epochs, &
+    page_logical_ids, page_flags, snapshot_valid)
+  call expect_true("cuda prefill page control snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill page control should mark the first page as prefill-owned", &
+    page_owner_kinds(1), 1_i32)
+  call expect_equal_i32("cuda prefill page control should record page capacity", page_usable_capacities(1), 8_i32)
+  call expect_equal_i32("cuda prefill page control should record committed tokens", page_committed_tokens(1), 7_i32)
+  call expect_equal_i32("cuda prefill page control should record one free slot", page_free_slots(1), 1_i32)
+  call expect_equal_i32("cuda prefill page control should seed the first page epoch", page_epochs(1), 1_i32)
+  call expect_equal_i32("cuda prefill page control should start recycle epoch at zero", page_recycle_epochs(1), 0_i32)
+  call expect_equal_i32("cuda prefill page control should seed the first logical page id", page_logical_ids(1), 1_i32)
+  call expect_equal_i32("cuda prefill page control should mark the page as resident", page_flags(1), PAGE_FLAG_RESIDENT)
+  call expect_equal_i32("cuda prefill page control should leave the full flag clear", &
+    iand(page_flags(1), PAGE_FLAG_FULL), 0_i32)
   prefill_token_digest_a = token_digest
   prefill_modal_digest_a = modal_digest
   prefill_rolling_state_a = rolling_state_digest
@@ -251,6 +279,14 @@ program test_cuda_executor
     page_key_rows(1), 7_i32)
   call expect_equal_i32("cuda prefill layout for the second tensor set should keep the first page generation at zero", &
     page_generations(1), 0_i32)
+  call extract_cuda_context_page_control_snapshot(context_bytes_b, context_byte_count_b, page_owner_kinds, &
+    page_usable_capacities, page_committed_tokens, page_free_slots, page_epochs, page_recycle_epochs, &
+    page_logical_ids, page_flags, snapshot_valid)
+  call expect_true("cuda prefill page control snapshot for the second tensor set should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill page control for the second tensor set should preserve owner kind", &
+    page_owner_kinds(1), 1_i32)
+  call expect_equal_i32("cuda prefill page control for the second tensor set should preserve logical page id", &
+    page_logical_ids(1), 1_i32)
 
   workspace_view = 0_c_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value, stop_reason, &
@@ -323,6 +359,26 @@ program test_cuda_executor
   call expect_equal_i32("cuda decode layout should derive the decode page head block from kv anchor", &
     page_head_blocks(2), 5_i32)
   call expect_equal_i32("cuda decode layout should start the decode page generation at one", page_generations(2), 1_i32)
+  call extract_cuda_context_page_control_snapshot(updated_context_bytes, updated_context_byte_count, page_owner_kinds, &
+    page_usable_capacities, page_committed_tokens, page_free_slots, page_epochs, page_recycle_epochs, &
+    page_logical_ids, page_flags, snapshot_valid)
+  call expect_true("cuda decode page control snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda decode page control should preserve the prefill owner kind", page_owner_kinds(1), 1_i32)
+  call expect_equal_i32("cuda decode page control should mark the new page as decode-owned", page_owner_kinds(2), 2_i32)
+  call expect_equal_i32("cuda decode page control should record full page capacity on the decode page", &
+    page_usable_capacities(2), 8_i32)
+  call expect_equal_i32("cuda decode page control should record one committed token on the decode page", &
+    page_committed_tokens(2), 1_i32)
+  call expect_equal_i32("cuda decode page control should leave seven free slots on the decode page", &
+    page_free_slots(2), 7_i32)
+  call expect_equal_i32("cuda decode page control should assign a second page epoch", page_epochs(2), 2_i32)
+  call expect_equal_i32("cuda decode page control should keep the decode page recycle epoch cold", &
+    page_recycle_epochs(2), 0_i32)
+  call expect_equal_i32("cuda decode page control should assign a second logical page id", page_logical_ids(2), 2_i32)
+  call expect_equal_i32("cuda decode page control should mark the decode page as resident and decode-owned", &
+    page_flags(2), PAGE_FLAG_RESIDENT + PAGE_FLAG_DECODE_OWNED)
+  call expect_equal_i32("cuda decode page control should keep the recycle flag clear", &
+    iand(page_flags(2), PAGE_FLAG_RECYCLED), 0_i32)
   decode_rolling_state_1 = rolling_state_digest
   decode_page_digest_1 = page_lane_digests(2)
   prefill_state_image_digest_a = state_image_digest
@@ -381,6 +437,22 @@ program test_cuda_executor
   call expect_equal_i32("second cuda decode layout should keep the decode page head block stable", &
     page_head_blocks(2), 5_i32)
   call expect_equal_i32("second cuda decode layout should advance the decode page generation", page_generations(2), 2_i32)
+  call extract_cuda_context_page_control_snapshot(updated_context_bytes, updated_context_byte_count, page_owner_kinds, &
+    page_usable_capacities, page_committed_tokens, page_free_slots, page_epochs, page_recycle_epochs, &
+    page_logical_ids, page_flags, snapshot_valid)
+  call expect_true("second cuda decode page control snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("second cuda decode page control should keep the decode page owner kind", &
+    page_owner_kinds(2), 2_i32)
+  call expect_equal_i32("second cuda decode page control should grow committed tokens on the decode page", &
+    page_committed_tokens(2), 2_i32)
+  call expect_equal_i32("second cuda decode page control should shrink free slots on the decode page", &
+    page_free_slots(2), 6_i32)
+  call expect_equal_i32("second cuda decode page control should keep the decode page epoch stable", &
+    page_epochs(2), 2_i32)
+  call expect_equal_i32("second cuda decode page control should keep the logical page id stable", &
+    page_logical_ids(2), 2_i32)
+  call expect_equal_i32("second cuda decode page control should keep the decode flags stable", &
+    page_flags(2), PAGE_FLAG_RESIDENT + PAGE_FLAG_DECODE_OWNED)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
 

@@ -29,13 +29,19 @@ constexpr int32_t MIZU_CUDA_CONTEXT_VALUE_PAYLOAD_OFFSET = 256;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_DIGEST_OFFSET = 384;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_LAYOUT_OFFSET = 416;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_LAYOUT_STRIDE = 24;
-constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 512;
+constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET = 512;
+constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE = 32;
+constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 640;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_COUNT = 4;
 constexpr int32_t MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT = 4;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CAPACITY = 8;
 constexpr int32_t MIZU_CUDA_CONTEXT_SLOT_COUNT = MIZU_CUDA_CONTEXT_PAGE_COUNT * MIZU_CUDA_CONTEXT_PAGE_CAPACITY;
 constexpr uint32_t MIZU_CUDA_CONTEXT_CHECKSUM_OFFSET = 2166136261U;
 constexpr uint32_t MIZU_CUDA_CONTEXT_CHECKSUM_PRIME = 16777619U;
+constexpr int32_t MIZU_CUDA_PAGE_FLAG_RESIDENT = 1;
+constexpr int32_t MIZU_CUDA_PAGE_FLAG_FULL = 2;
+constexpr int32_t MIZU_CUDA_PAGE_FLAG_DECODE_OWNED = 4;
+constexpr int32_t MIZU_CUDA_PAGE_FLAG_RECYCLED = 8;
 
 int32_t page_slot_base_index(int32_t page_index);
 int32_t unpack_summary_auxiliary_u16(unsigned long long summary_word);
@@ -200,6 +206,14 @@ inline unsigned long long digest_window_state(const unsigned long long page_word
                                               const int32_t page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                               const int32_t page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                               const int32_t page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                              const int32_t page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                               unsigned long long extra_seed) {
   unsigned long long digest = mix_u64_host(extra_seed ^ 0xD1E57A7E12345678ULL);
   for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
@@ -210,6 +224,14 @@ inline unsigned long long digest_window_state(const unsigned long long page_word
                           (static_cast<unsigned long long>(static_cast<uint32_t>(page_value_lane_counts[index])) << 32) ^
                           (static_cast<unsigned long long>(static_cast<uint32_t>(page_head_blocks[index])) << 40) ^
                           (static_cast<unsigned long long>(static_cast<uint32_t>(page_generations[index])) << 48) ^
+                          mix_u64_host(static_cast<unsigned long long>(static_cast<uint32_t>(page_owner_kinds[index])) ^
+                                       (static_cast<unsigned long long>(static_cast<uint32_t>(page_usable_capacities[index])) << 8) ^
+                                       (static_cast<unsigned long long>(static_cast<uint32_t>(page_committed_tokens[index])) << 16) ^
+                                       (static_cast<unsigned long long>(static_cast<uint32_t>(page_free_slots[index])) << 24) ^
+                                       (static_cast<unsigned long long>(static_cast<uint32_t>(page_epochs[index])) << 32) ^
+                                       (static_cast<unsigned long long>(static_cast<uint32_t>(page_recycle_epochs[index])) << 40) ^
+                                       (static_cast<unsigned long long>(static_cast<uint32_t>(page_logical_ids[index])) << 48) ^
+                                       (static_cast<unsigned long long>(static_cast<uint32_t>(page_flags[index])) << 56)) ^
                           static_cast<unsigned long long>(index));
   }
   for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT; ++index) {
@@ -256,6 +278,63 @@ inline void populate_page_tensor_layout(unsigned long long page_word,
   *value_lane_counts = 1;
   *head_block = page_anchor / MIZU_CUDA_CONTEXT_PAGE_CAPACITY;
   *page_generation = generation > 0 ? generation : 0;
+}
+
+inline int32_t pack_page_control_flags(int32_t owner_kind,
+                                       int32_t committed_tokens,
+                                       int32_t usable_capacity,
+                                       int32_t recycle_epoch) {
+  int32_t flags = 0;
+
+  if (committed_tokens > 0 && usable_capacity > 0) flags |= MIZU_CUDA_PAGE_FLAG_RESIDENT;
+  if (usable_capacity > 0 && committed_tokens >= usable_capacity) flags |= MIZU_CUDA_PAGE_FLAG_FULL;
+  if (owner_kind == 2) flags |= MIZU_CUDA_PAGE_FLAG_DECODE_OWNED;
+  if (recycle_epoch > 0) flags |= MIZU_CUDA_PAGE_FLAG_RECYCLED;
+  return flags;
+}
+
+inline void populate_page_control(unsigned long long page_word,
+                                  int32_t owner_kind,
+                                  int32_t page_epoch,
+                                  int32_t recycle_epoch,
+                                  int32_t logical_page_id,
+                                  int32_t *page_owner_kind,
+                                  int32_t *usable_capacity,
+                                  int32_t *committed_tokens,
+                                  int32_t *free_slots,
+                                  int32_t *resolved_page_epoch,
+                                  int32_t *resolved_recycle_epoch,
+                                  int32_t *resolved_logical_page_id,
+                                  int32_t *page_flags) {
+  if (page_owner_kind == nullptr || usable_capacity == nullptr || committed_tokens == nullptr ||
+      free_slots == nullptr || resolved_page_epoch == nullptr || resolved_recycle_epoch == nullptr ||
+      resolved_logical_page_id == nullptr || page_flags == nullptr) {
+    return;
+  }
+
+  const int32_t page_fill = unpack_summary_auxiliary_u16(page_word);
+  const int32_t resolved_owner_kind = owner_kind > 0 ? owner_kind : unpack_summary_control_b_u16(page_word);
+  if (page_fill <= 0) {
+    *page_owner_kind = 0;
+    *usable_capacity = 0;
+    *committed_tokens = 0;
+    *free_slots = 0;
+    *resolved_page_epoch = 0;
+    *resolved_recycle_epoch = 0;
+    *resolved_logical_page_id = 0;
+    *page_flags = 0;
+    return;
+  }
+
+  *page_owner_kind = resolved_owner_kind;
+  *usable_capacity = MIZU_CUDA_CONTEXT_PAGE_CAPACITY;
+  *committed_tokens = page_fill;
+  *free_slots = MIZU_CUDA_CONTEXT_PAGE_CAPACITY - page_fill;
+  *resolved_page_epoch = page_epoch > 0 ? page_epoch : 1;
+  *resolved_recycle_epoch = recycle_epoch > 0 ? recycle_epoch : 0;
+  *resolved_logical_page_id = logical_page_id > 0 ? logical_page_id : 1;
+  *page_flags = pack_page_control_flags(*page_owner_kind, *committed_tokens, *usable_capacity,
+                                        *resolved_recycle_epoch);
 }
 
 inline void build_prefill_state_block(unsigned long long seed,
@@ -356,6 +435,14 @@ inline void build_prefill_window_block(unsigned long long seed,
                                        int32_t page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                        int32_t page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                        int32_t page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       int32_t page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                        unsigned long long *window_meta,
                                        unsigned long long *state_image_digest) {
   int32_t valid_page_count = 0;
@@ -382,6 +469,14 @@ inline void build_prefill_window_block(unsigned long long seed,
     page_value_lane_counts[index] = 0;
     page_head_blocks[index] = 0;
     page_generations[index] = 0;
+    page_owner_kinds[index] = 0;
+    page_usable_capacities[index] = 0;
+    page_committed_tokens[index] = 0;
+    page_free_slots[index] = 0;
+    page_epochs[index] = 0;
+    page_recycle_epochs[index] = 0;
+    page_logical_ids[index] = 0;
+    page_flags[index] = 0;
   }
 
   for (int32_t page_index = 0; page_index < MIZU_CUDA_CONTEXT_PAGE_COUNT && remaining_tokens > 0; ++page_index) {
@@ -407,6 +502,10 @@ inline void build_prefill_window_block(unsigned long long seed,
     populate_page_tensor_layout(page_words[page_index], 0, &page_key_rows[page_index],
       &page_key_lane_counts[page_index], &page_value_rows[page_index], &page_value_lane_counts[page_index],
       &page_head_blocks[page_index], &page_generations[page_index]);
+    populate_page_control(page_words[page_index], page_kind, page_index + 1, 0, page_index + 1,
+      &page_owner_kinds[page_index], &page_usable_capacities[page_index], &page_committed_tokens[page_index],
+      &page_free_slots[page_index], &page_epochs[page_index], &page_recycle_epochs[page_index],
+      &page_logical_ids[page_index], &page_flags[page_index]);
     page_anchor += page_token_count;
     remaining_tokens -= page_token_count;
     valid_page_count = page_index + 1;
@@ -428,7 +527,9 @@ inline void build_prefill_window_block(unsigned long long seed,
   if (state_image_digest != nullptr) {
     *state_image_digest = digest_window_state(page_words, recent_tokens, key_slot_lanes, value_slot_lanes,
       page_lane_digests, page_key_rows, page_key_lane_counts, page_value_rows, page_value_lane_counts,
-      page_head_blocks, page_generations, seed ^ static_cast<unsigned long long>(kv_token_count));
+      page_head_blocks, page_generations, page_owner_kinds, page_usable_capacities, page_committed_tokens,
+      page_free_slots, page_epochs, page_recycle_epochs, page_logical_ids, page_flags,
+      seed ^ static_cast<unsigned long long>(kv_token_count));
   }
 }
 
@@ -445,6 +546,14 @@ inline void extract_context_window_block(const int8_t *context_bytes,
                                          int32_t page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                          int32_t page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                          int32_t page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                         int32_t page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                          unsigned long long *window_meta,
                                          unsigned long long *state_image_digest) {
   for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
@@ -476,6 +585,22 @@ inline void extract_context_window_block(const int8_t *context_bytes,
       MIZU_CUDA_CONTEXT_PAGE_LAYOUT_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_LAYOUT_STRIDE) + 16);
     page_generations[index] = read_context_i32(context_bytes, context_byte_count,
       MIZU_CUDA_CONTEXT_PAGE_LAYOUT_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_LAYOUT_STRIDE) + 20);
+    page_owner_kinds[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE));
+    page_usable_capacities[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 4);
+    page_committed_tokens[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 8);
+    page_free_slots[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 12);
+    page_epochs[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 16);
+    page_recycle_epochs[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 20);
+    page_logical_ids[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 24);
+    page_flags[index] = read_context_i32(context_bytes, context_byte_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 28);
   }
   if (window_meta != nullptr) {
     *window_meta = read_context_u64(context_bytes, context_byte_count, MIZU_CUDA_CONTEXT_WINDOW_META_OFFSET);
@@ -499,6 +624,14 @@ inline void write_context_window_block(unsigned char *bytes,
                                        const int32_t page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                        const int32_t page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                        const int32_t page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                       const int32_t page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                        unsigned long long window_meta,
                                        unsigned long long state_image_digest) {
   for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
@@ -525,6 +658,29 @@ inline void write_context_window_block(unsigned char *bytes,
       MIZU_CUDA_CONTEXT_PAGE_LAYOUT_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_LAYOUT_STRIDE) + 16, page_head_blocks[index]);
     write_context_i32(bytes, stored_count,
       MIZU_CUDA_CONTEXT_PAGE_LAYOUT_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_LAYOUT_STRIDE) + 20, page_generations[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE), page_owner_kinds[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 4,
+      page_usable_capacities[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 8,
+      page_committed_tokens[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 12,
+      page_free_slots[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 16,
+      page_epochs[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 20,
+      page_recycle_epochs[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 24,
+      page_logical_ids[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 28,
+      page_flags[index]);
   }
   write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_WINDOW_META_OFFSET, window_meta);
   write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_STATE_IMAGE_DIGEST_OFFSET, state_image_digest);
@@ -541,6 +697,14 @@ inline void build_decode_window_block(const unsigned long long current_page_word
                                       const int32_t current_page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       const int32_t current_page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       const int32_t current_page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t current_page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       unsigned long long current_window_meta,
                                       unsigned long long current_state_image_digest,
                                       int32_t next_decode_generation,
@@ -558,11 +722,23 @@ inline void build_decode_window_block(const unsigned long long current_page_word
                                       int32_t next_page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       int32_t next_page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       int32_t next_page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      int32_t next_page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       unsigned long long *next_window_meta,
                                       unsigned long long *next_state_image_digest) {
   int32_t current_page_index = unpack_summary_leading_u16(current_window_meta);
   int32_t valid_page_count = unpack_summary_auxiliary_u16(current_window_meta);
   int32_t recent_token_count = unpack_summary_control_a_u16(current_window_meta);
+  int32_t max_page_epoch = 0;
+  int32_t max_logical_page_id = 0;
+  bool appended_to_existing_page = false;
+  int32_t target_page_index = current_page_index;
 
   for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT; ++index) {
     next_page_words[index] = current_page_words[index];
@@ -582,6 +758,16 @@ inline void build_decode_window_block(const unsigned long long current_page_word
     next_page_value_lane_counts[index] = current_page_value_lane_counts[index];
     next_page_head_blocks[index] = current_page_head_blocks[index];
     next_page_generations[index] = current_page_generations[index];
+    next_page_owner_kinds[index] = current_page_owner_kinds[index];
+    next_page_usable_capacities[index] = current_page_usable_capacities[index];
+    next_page_committed_tokens[index] = current_page_committed_tokens[index];
+    next_page_free_slots[index] = current_page_free_slots[index];
+    next_page_epochs[index] = current_page_epochs[index];
+    next_page_recycle_epochs[index] = current_page_recycle_epochs[index];
+    next_page_logical_ids[index] = current_page_logical_ids[index];
+    next_page_flags[index] = current_page_flags[index];
+    if (next_page_epochs[index] > max_page_epoch) max_page_epoch = next_page_epochs[index];
+    if (next_page_logical_ids[index] > max_logical_page_id) max_logical_page_id = next_page_logical_ids[index];
   }
 
   if (valid_page_count < 0) valid_page_count = 0;
@@ -594,11 +780,10 @@ inline void build_decode_window_block(const unsigned long long current_page_word
   if (current_page_index >= MIZU_CUDA_CONTEXT_PAGE_COUNT) {
     current_page_index = MIZU_CUDA_CONTEXT_PAGE_COUNT - 1;
   }
+  target_page_index = current_page_index;
 
   if (emitted_token_count > 0) {
     const int64_t new_page_anchor = next_kv_tokens - emitted_token_count;
-    bool appended_to_existing_page = false;
-    int32_t target_page_index = current_page_index;
 
     if (valid_page_count > 0) {
       const unsigned long long current_page_word = next_page_words[current_page_index];
@@ -623,6 +808,9 @@ inline void build_decode_window_block(const unsigned long long current_page_word
         current_page_index = valid_page_count;
         valid_page_count += 1;
       } else {
+        const int32_t recycled_reuse_epoch =
+          (next_page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] > 0 ?
+            next_page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] + 1 : 1);
         for (int32_t index = 0; index < MIZU_CUDA_CONTEXT_PAGE_COUNT - 1; ++index) {
           const unsigned long long shifted_page_word = next_page_words[index + 1];
           next_page_words[index] = pack_kv_page_word(unpack_summary_leading_u16(shifted_page_word),
@@ -640,6 +828,14 @@ inline void build_decode_window_block(const unsigned long long current_page_word
           next_page_value_lane_counts[index] = next_page_value_lane_counts[index + 1];
           next_page_head_blocks[index] = next_page_head_blocks[index + 1];
           next_page_generations[index] = next_page_generations[index + 1];
+          next_page_owner_kinds[index] = next_page_owner_kinds[index + 1];
+          next_page_usable_capacities[index] = next_page_usable_capacities[index + 1];
+          next_page_committed_tokens[index] = next_page_committed_tokens[index + 1];
+          next_page_free_slots[index] = next_page_free_slots[index + 1];
+          next_page_epochs[index] = next_page_epochs[index + 1];
+          next_page_recycle_epochs[index] = next_page_recycle_epochs[index + 1];
+          next_page_logical_ids[index] = next_page_logical_ids[index + 1];
+          next_page_flags[index] = next_page_flags[index + 1];
         }
         next_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0ULL;
         const int32_t last_slot_base = page_slot_base_index(MIZU_CUDA_CONTEXT_PAGE_COUNT - 1);
@@ -654,6 +850,14 @@ inline void build_decode_window_block(const unsigned long long current_page_word
         next_page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
         next_page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
         next_page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
+        next_page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
+        next_page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
+        next_page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
+        next_page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
+        next_page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
+        next_page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = recycled_reuse_epoch;
+        next_page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
+        next_page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT - 1] = 0;
         current_page_index = MIZU_CUDA_CONTEXT_PAGE_COUNT - 1;
       }
       next_page_words[current_page_index] = pack_kv_page_word(new_page_anchor, emitted_token_count,
@@ -683,14 +887,36 @@ inline void build_decode_window_block(const unsigned long long current_page_word
     next_page_lane_digests[index] = digest_page_lane_state(next_page_words[index], next_key_slot_lanes,
       next_value_slot_lanes, index);
   }
-  populate_page_tensor_layout(next_page_words[current_page_index], next_decode_generation,
-    &next_page_key_rows[current_page_index], &next_page_key_lane_counts[current_page_index],
-    &next_page_value_rows[current_page_index], &next_page_value_lane_counts[current_page_index],
-    &next_page_head_blocks[current_page_index], &next_page_generations[current_page_index]);
+  if (emitted_token_count > 0) {
+    populate_page_tensor_layout(next_page_words[target_page_index], next_decode_generation,
+      &next_page_key_rows[target_page_index], &next_page_key_lane_counts[target_page_index],
+      &next_page_value_rows[target_page_index], &next_page_value_lane_counts[target_page_index],
+      &next_page_head_blocks[target_page_index], &next_page_generations[target_page_index]);
+    if (appended_to_existing_page && next_page_owner_kinds[target_page_index] != 2) {
+      max_page_epoch += 1;
+      next_page_epochs[target_page_index] = max_page_epoch;
+    }
+    if (!appended_to_existing_page) {
+      max_page_epoch += 1;
+      next_page_epochs[target_page_index] = max_page_epoch;
+    }
+    if (next_page_logical_ids[target_page_index] <= 0) {
+      max_logical_page_id += 1;
+      next_page_logical_ids[target_page_index] = max_logical_page_id;
+    }
+    populate_page_control(next_page_words[target_page_index], 2, next_page_epochs[target_page_index],
+      next_page_recycle_epochs[target_page_index], next_page_logical_ids[target_page_index],
+      &next_page_owner_kinds[target_page_index], &next_page_usable_capacities[target_page_index],
+      &next_page_committed_tokens[target_page_index], &next_page_free_slots[target_page_index],
+      &next_page_epochs[target_page_index], &next_page_recycle_epochs[target_page_index],
+      &next_page_logical_ids[target_page_index], &next_page_flags[target_page_index]);
+  }
   if (next_state_image_digest != nullptr) {
     *next_state_image_digest = digest_window_state(next_page_words, next_recent_tokens, next_key_slot_lanes,
       next_value_slot_lanes, next_page_lane_digests, next_page_key_rows, next_page_key_lane_counts,
       next_page_value_rows, next_page_value_lane_counts, next_page_head_blocks, next_page_generations,
+      next_page_owner_kinds, next_page_usable_capacities, next_page_committed_tokens, next_page_free_slots,
+      next_page_epochs, next_page_recycle_epochs, next_page_logical_ids, next_page_flags,
       current_state_image_digest ^ static_cast<unsigned long long>(next_kv_tokens) ^
       static_cast<unsigned long long>(static_cast<uint32_t>(token_value)));
   }
@@ -808,6 +1034,14 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   int32_t page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   unsigned long long window_meta = 0ULL;
   unsigned long long state_image_digest = 0ULL;
   int32_t stored_count = 0;
@@ -835,12 +1069,15 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   build_prefill_window_block(seed, token_values, token_count, consumed_token_count, page_words, recent_tokens,
                              key_slot_lanes, value_slot_lanes, page_lane_digests, page_key_rows,
                              page_key_lane_counts, page_value_rows, page_value_lane_counts, page_head_blocks,
-                             page_generations, &window_meta, &state_image_digest);
+                             page_generations, page_owner_kinds, page_usable_capacities, page_committed_tokens,
+                             page_free_slots, page_epochs, page_recycle_epochs, page_logical_ids, page_flags,
+                             &window_meta, &state_image_digest);
   write_context_state_block(bytes, stored_count, state_lanes, artifact_hash, summary_word);
   write_context_window_block(bytes, stored_count, page_words, recent_tokens, key_slot_lanes, value_slot_lanes,
                              page_lane_digests, page_key_rows, page_key_lane_counts, page_value_rows,
-                             page_value_lane_counts, page_head_blocks, page_generations, window_meta,
-                             state_image_digest);
+                             page_value_lane_counts, page_head_blocks, page_generations, page_owner_kinds,
+                             page_usable_capacities, page_committed_tokens, page_free_slots, page_epochs,
+                             page_recycle_epochs, page_logical_ids, page_flags, window_meta, state_image_digest);
 
   checksum = compute_context_checksum(bytes, stored_count);
   if (stored_count > 8) {
@@ -865,6 +1102,14 @@ inline void fill_decode_context_bytes(unsigned long long seed,
                                       const int32_t next_page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       const int32_t next_page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       const int32_t next_page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT],
+                                      const int32_t next_page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       unsigned long long next_window_meta,
                                       unsigned long long next_state_image_digest,
                                       int8_t *context_bytes,
@@ -897,8 +1142,10 @@ inline void fill_decode_context_bytes(unsigned long long seed,
   write_context_window_block(bytes, stored_count, next_page_words, next_recent_tokens, next_key_slot_lanes,
                              next_value_slot_lanes, next_page_lane_digests, next_page_key_rows,
                              next_page_key_lane_counts, next_page_value_rows, next_page_value_lane_counts,
-                             next_page_head_blocks, next_page_generations, next_window_meta,
-                             next_state_image_digest);
+                             next_page_head_blocks, next_page_generations, next_page_owner_kinds,
+                             next_page_usable_capacities, next_page_committed_tokens, next_page_free_slots,
+                             next_page_epochs, next_page_recycle_epochs, next_page_logical_ids, next_page_flags,
+                             next_window_meta, next_state_image_digest);
 
   checksum = compute_context_checksum(bytes, stored_count);
   if (stored_count > 8) {
@@ -1125,12 +1372,28 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
   int32_t current_page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t current_page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t current_page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t current_page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t current_page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t current_page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t current_page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t current_page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t current_page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t current_page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t current_page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t next_page_key_rows[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t next_page_key_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t next_page_value_rows[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t next_page_value_lane_counts[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t next_page_head_blocks[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
   int32_t next_page_generations[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t next_page_owner_kinds[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t next_page_usable_capacities[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t next_page_committed_tokens[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t next_page_free_slots[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t next_page_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t next_page_recycle_epochs[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t next_page_logical_ids[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
+  int32_t next_page_flags[MIZU_CUDA_CONTEXT_PAGE_COUNT] = {};
 
   if (emitted_token_count == nullptr || token_value == nullptr || stop_reason == nullptr ||
       status_code == nullptr) {
@@ -1171,6 +1434,9 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
                                current_key_slot_lanes, current_value_slot_lanes, current_page_lane_digests,
                                current_page_key_rows, current_page_key_lane_counts, current_page_value_rows,
                                current_page_value_lane_counts, current_page_head_blocks, current_page_generations,
+                               current_page_owner_kinds, current_page_usable_capacities,
+                               current_page_committed_tokens, current_page_free_slots, current_page_epochs,
+                               current_page_recycle_epochs, current_page_logical_ids, current_page_flags,
                                &current_window_meta, &current_state_image_digest);
   decode_seed = static_cast<unsigned long long>(payload_hash);
   decode_seed = mix_u64_host(decode_seed ^ current_state_lanes[0] ^ current_state_lanes[1]);
@@ -1191,21 +1457,29 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
     build_decode_window_block(current_page_words, current_recent_tokens, current_key_slot_lanes,
                               current_value_slot_lanes, current_page_lane_digests, current_page_key_rows,
                               current_page_key_lane_counts, current_page_value_rows, current_page_value_lane_counts,
-                              current_page_head_blocks, current_page_generations, current_window_meta,
-                              current_state_image_digest, static_cast<int32_t>(unpack_state_decode_steps(next_state_lanes[2])),
+                              current_page_head_blocks, current_page_generations, current_page_owner_kinds,
+                              current_page_usable_capacities, current_page_committed_tokens, current_page_free_slots,
+                              current_page_epochs, current_page_recycle_epochs, current_page_logical_ids,
+                              current_page_flags, current_window_meta, current_state_image_digest,
+                              static_cast<int32_t>(unpack_state_decode_steps(next_state_lanes[2])),
                               unpack_state_kv_tokens(next_state_lanes[2]), *emitted_token_count, *token_value,
                               next_page_words, next_recent_tokens, next_key_slot_lanes, next_value_slot_lanes,
                               next_page_lane_digests, next_page_key_rows, next_page_key_lane_counts,
                               next_page_value_rows, next_page_value_lane_counts, next_page_head_blocks,
-                              next_page_generations,
+                              next_page_generations, next_page_owner_kinds, next_page_usable_capacities,
+                              next_page_committed_tokens, next_page_free_slots, next_page_epochs,
+                              next_page_recycle_epochs, next_page_logical_ids, next_page_flags,
                               &next_window_meta, &next_state_image_digest);
     fill_decode_context_bytes(decode_seed ^ static_cast<unsigned long long>(*token_value),
                               static_cast<unsigned long long>(artifact_hash), next_state_lanes, summary_word,
                               next_page_words, next_recent_tokens, next_key_slot_lanes, next_value_slot_lanes,
                               next_page_lane_digests, next_page_key_rows, next_page_key_lane_counts,
                               next_page_value_rows, next_page_value_lane_counts, next_page_head_blocks,
-                              next_page_generations, next_window_meta, next_state_image_digest,
-                              updated_context_bytes, updated_context_capacity, updated_context_byte_count);
+                              next_page_generations, next_page_owner_kinds, next_page_usable_capacities,
+                              next_page_committed_tokens, next_page_free_slots, next_page_epochs,
+                              next_page_recycle_epochs, next_page_logical_ids, next_page_flags,
+                              next_window_meta, next_state_image_digest, updated_context_bytes,
+                              updated_context_capacity, updated_context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes,
                            next_state_lanes[1] ^ next_state_lanes[3] ^ next_state_image_digest ^ summary_word,
                            4U);

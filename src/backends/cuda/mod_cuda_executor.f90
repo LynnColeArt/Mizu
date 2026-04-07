@@ -17,6 +17,7 @@ module mod_cuda_executor
   public :: extract_cuda_context_window_snapshot
   public :: extract_cuda_context_kv_lane_snapshot
   public :: extract_cuda_context_kv_layout_snapshot
+  public :: extract_cuda_context_page_control_snapshot
   public :: extract_cuda_context_slot_snapshot
 
 contains
@@ -608,6 +609,75 @@ contains
     end do
     snapshot_valid = .true.
   end subroutine extract_cuda_context_kv_layout_snapshot
+
+  pure subroutine extract_cuda_context_page_control_snapshot(context_bytes, context_byte_count, page_owner_kinds, &
+                                                             page_usable_capacities, page_committed_tokens, &
+                                                             page_free_slots, page_epochs, page_recycle_epochs, &
+                                                             page_logical_ids, page_flags, snapshot_valid)
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i32), intent(out) :: page_owner_kinds(:)
+    integer(i32), intent(out) :: page_usable_capacities(:)
+    integer(i32), intent(out) :: page_committed_tokens(:)
+    integer(i32), intent(out) :: page_free_slots(:)
+    integer(i32), intent(out) :: page_epochs(:)
+    integer(i32), intent(out) :: page_recycle_epochs(:)
+    integer(i32), intent(out) :: page_logical_ids(:)
+    integer(i32), intent(out) :: page_flags(:)
+    logical, intent(out)      :: snapshot_valid
+    integer(i32)              :: page_index
+    integer(i32)              :: page_limit
+    integer(i32)              :: control_offset
+
+    page_owner_kinds = 0_i32
+    page_usable_capacities = 0_i32
+    page_committed_tokens = 0_i32
+    page_free_slots = 0_i32
+    page_epochs = 0_i32
+    page_recycle_epochs = 0_i32
+    page_logical_ids = 0_i32
+    page_flags = 0_i32
+    snapshot_valid = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (context_byte_count < 640_i32) return
+
+    page_limit = min(4_i32, int(size(page_owner_kinds), kind=i32))
+    page_limit = min(page_limit, int(size(page_usable_capacities), kind=i32))
+    page_limit = min(page_limit, int(size(page_committed_tokens), kind=i32))
+    page_limit = min(page_limit, int(size(page_free_slots), kind=i32))
+    page_limit = min(page_limit, int(size(page_epochs), kind=i32))
+    page_limit = min(page_limit, int(size(page_recycle_epochs), kind=i32))
+    page_limit = min(page_limit, int(size(page_logical_ids), kind=i32))
+    page_limit = min(page_limit, int(size(page_flags), kind=i32))
+    do page_index = 1_i32, page_limit
+      control_offset = 513_i32 + ((page_index - 1_i32) * 32_i32)
+      page_owner_kinds(page_index) = int(decode_context_u32le(context_bytes(control_offset), &
+        context_bytes(control_offset + 1_i32), context_bytes(control_offset + 2_i32), &
+        context_bytes(control_offset + 3_i32)), kind=i32)
+      page_usable_capacities(page_index) = int(decode_context_u32le(context_bytes(control_offset + 4_i32), &
+        context_bytes(control_offset + 5_i32), context_bytes(control_offset + 6_i32), &
+        context_bytes(control_offset + 7_i32)), kind=i32)
+      page_committed_tokens(page_index) = int(decode_context_u32le(context_bytes(control_offset + 8_i32), &
+        context_bytes(control_offset + 9_i32), context_bytes(control_offset + 10_i32), &
+        context_bytes(control_offset + 11_i32)), kind=i32)
+      page_free_slots(page_index) = int(decode_context_u32le(context_bytes(control_offset + 12_i32), &
+        context_bytes(control_offset + 13_i32), context_bytes(control_offset + 14_i32), &
+        context_bytes(control_offset + 15_i32)), kind=i32)
+      page_epochs(page_index) = int(decode_context_u32le(context_bytes(control_offset + 16_i32), &
+        context_bytes(control_offset + 17_i32), context_bytes(control_offset + 18_i32), &
+        context_bytes(control_offset + 19_i32)), kind=i32)
+      page_recycle_epochs(page_index) = int(decode_context_u32le(context_bytes(control_offset + 20_i32), &
+        context_bytes(control_offset + 21_i32), context_bytes(control_offset + 22_i32), &
+        context_bytes(control_offset + 23_i32)), kind=i32)
+      page_logical_ids(page_index) = int(decode_context_u32le(context_bytes(control_offset + 24_i32), &
+        context_bytes(control_offset + 25_i32), context_bytes(control_offset + 26_i32), &
+        context_bytes(control_offset + 27_i32)), kind=i32)
+      page_flags(page_index) = int(decode_context_u32le(context_bytes(control_offset + 28_i32), &
+        context_bytes(control_offset + 29_i32), context_bytes(control_offset + 30_i32), &
+        context_bytes(control_offset + 31_i32)), kind=i32)
+    end do
+    snapshot_valid = .true.
+  end subroutine extract_cuda_context_page_control_snapshot
 
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1
