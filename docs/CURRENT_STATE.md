@@ -2,6 +2,14 @@
 
 Last updated: 2026-04-07
 
+## Latest Checkpoint
+
+- current head: `8535536` (`Use explicit CUDA state lanes in live contexts`)
+- previous checkpoint: `c83e59d` (`Bind CUDA context state to producer lineage`)
+- immediate next target: make the structured CUDA state payload look more like
+  a backend-owned decode/KV record instead of a compact surrogate
+  representation
+
 ## What Exists
 
 ### Core Contracts
