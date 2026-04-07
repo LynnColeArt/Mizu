@@ -2,8 +2,10 @@ program test_cuda_executor
   use iso_c_binding,     only: c_associated, c_f_pointer
   use mod_kinds,         only: c_i8, i8, i32, i64
   use mod_status,        only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_STATE
-  use mod_types,         only: MIZU_STOP_REASON_NONE, workspace_state, MAX_LIVE_CONTEXT_BYTES
-  use mod_cuda_executor, only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
+  use mod_types,         only: MIZU_STOP_REASON_NONE, MIZU_STAGE_PREFILL, MIZU_STAGE_DECODE, &
+                               workspace_state, MAX_LIVE_CONTEXT_BYTES
+  use mod_cuda_executor, only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
+                               extract_cuda_context_state_snapshot
   use mod_workspace,     only: initialize_workspace, reserve_workspace_bytes, release_workspace_bytes, &
                                reset_workspace
 
@@ -21,6 +23,7 @@ program test_cuda_executor
   integer(i64) :: consumed_token_count
   integer(i64) :: emitted_token_count
   integer(i32) :: token_value
+  integer(i32) :: token_value_step_2
   integer(i32) :: token_value_with_other_context
   integer(i32) :: context_byte_count_a
   integer(i32) :: context_byte_count_b
@@ -28,11 +31,27 @@ program test_cuda_executor
   integer(i32) :: updated_context_byte_count
   integer(i32) :: stop_reason
   integer(i32) :: status_code
+  integer(i32) :: producer_stage
+  integer(i32) :: summary_control_a
+  integer(i32) :: summary_control_b
   integer      :: shell_status
+  integer(i64) :: artifact_hash
+  integer(i64) :: token_digest
+  integer(i64) :: modal_digest
+  integer(i64) :: kv_token_count
+  integer(i64) :: decode_step_count
+  integer(i64) :: rolling_state_digest
+  integer(i64) :: summary_primary_count
+  integer(i64) :: summary_secondary_count
+  integer(i64) :: prefill_token_digest_a
+  integer(i64) :: prefill_modal_digest_a
+  integer(i64) :: prefill_rolling_state_a
+  integer(i64) :: decode_rolling_state_1
   integer(i32) :: token_values_a(7)
   integer(i32) :: token_values_b(7)
   integer(i8)  :: modal_bytes_a(6)
   integer(i8)  :: modal_bytes_b(6)
+  logical      :: snapshot_valid
   character(len=*), parameter :: cache_root = "/tmp/mizu_test_cuda_executor"
   character(len=*), parameter :: projector_path = "artifacts/cuda/cuda/projector/test.mm"
   character(len=*), parameter :: prefill_path = "artifacts/cuda/cuda/plans/prefill/test.plan"
@@ -97,6 +116,21 @@ program test_cuda_executor
   call expect_equal_i32("cuda prefill context should start with magic Z", int(context_bytes_a(2), kind=i32), iachar("Z"))
   call expect_equal_i32("cuda prefill context should declare version 1", int(context_bytes_a(5), kind=i32), 1_i32)
   call expect_equal_i32("cuda prefill context should declare prefill kind", int(context_bytes_a(6), kind=i32), 1_i32)
+  call extract_cuda_context_state_snapshot(context_bytes_a, context_byte_count_a, producer_stage, artifact_hash, &
+    token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, summary_primary_count, &
+    summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda prefill context snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill snapshot should report prefill stage", producer_stage, MIZU_STAGE_PREFILL)
+  call expect_true("cuda prefill snapshot should retain artifact lineage", artifact_hash /= 0_i64)
+  call expect_equal_i64("cuda prefill snapshot should seed kv tokens from consumed tokens", kv_token_count, 7_i64)
+  call expect_equal_i64("cuda prefill snapshot should start decode step count at zero", decode_step_count, 0_i64)
+  call expect_equal_i64("cuda prefill summary should report kv tokens", summary_primary_count, 7_i64)
+  call expect_equal_i64("cuda prefill summary should report modal byte count", summary_secondary_count, 6_i64)
+  call expect_equal_i32("cuda prefill summary should report staged modal count", summary_control_a, 1_i32)
+  call expect_equal_i32("cuda prefill summary should clear the trailing control slot", summary_control_b, 0_i32)
+  prefill_token_digest_a = token_digest
+  prefill_modal_digest_a = modal_digest
+  prefill_rolling_state_a = rolling_state_digest
   prefill_scratch_a = workspace_view(1:16)
 
   workspace_view = 0_c_i8
@@ -112,6 +146,21 @@ program test_cuda_executor
     any(prefill_scratch_a /= prefill_scratch_b))
   call expect_true("cuda prefill should produce different context buffers for different tensors", &
     any(context_bytes_a /= context_bytes_b))
+  call extract_cuda_context_state_snapshot(context_bytes_b, context_byte_count_b, producer_stage, artifact_hash, &
+    token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, summary_primary_count, &
+    summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda prefill snapshot for the second tensor set should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill snapshot for the second tensor set should report prefill stage", &
+    producer_stage, MIZU_STAGE_PREFILL)
+  call expect_equal_i64("cuda prefill snapshot for the second tensor set should seed kv tokens", kv_token_count, 7_i64)
+  call expect_equal_i64("cuda prefill snapshot for the second tensor set should start decode steps at zero", &
+    decode_step_count, 0_i64)
+  call expect_true("cuda prefill token digest should change when staged tokens change", &
+    token_digest /= prefill_token_digest_a)
+  call expect_true("cuda prefill modal digest should change when modal bytes change", &
+    modal_digest /= prefill_modal_digest_a)
+  call expect_true("cuda prefill rolling state should change when staged tensors change", &
+    rolling_state_digest /= prefill_rolling_state_a)
 
   workspace_view = 0_c_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value, stop_reason, &
@@ -127,6 +176,41 @@ program test_cuda_executor
     MAX_LIVE_CONTEXT_BYTES)
   call expect_equal_i32("cuda decode context should keep magic M", int(updated_context_bytes(1), kind=i32), iachar("M"))
   call expect_equal_i32("cuda decode context should declare decode kind", int(updated_context_bytes(6), kind=i32), 2_i32)
+  call extract_cuda_context_state_snapshot(updated_context_bytes, updated_context_byte_count, producer_stage, &
+    artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
+    summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda decode context snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda decode snapshot should report decode stage", producer_stage, MIZU_STAGE_DECODE)
+  call expect_equal_i64("cuda decode snapshot should advance kv count from the decode input", kv_token_count, 43_i64)
+  call expect_equal_i64("cuda decode snapshot should advance decode steps", decode_step_count, 1_i64)
+  call expect_equal_i64("cuda decode summary should report kv tokens after decode", summary_primary_count, 43_i64)
+  call expect_equal_i64("cuda decode summary should report decode step count", summary_secondary_count, 1_i64)
+  call expect_equal_i32("cuda decode summary should retain the emitted token id", summary_control_a, token_value)
+  call expect_equal_i32("cuda decode summary should retain the stop reason", summary_control_b, stop_reason)
+  call expect_equal_i64("cuda decode should retain the prefill modal digest", modal_digest, prefill_modal_digest_a)
+  call expect_true("cuda decode should advance the token digest beyond prefill state", token_digest /= prefill_token_digest_a)
+  decode_rolling_state_1 = rolling_state_digest
+  decode_context_bytes = updated_context_bytes
+  decode_context_byte_count = updated_context_byte_count
+
+  call execute_cuda_decode(cache_root, decode_path, 43_i64, 1_i64, emitted_token_count, token_value_step_2, &
+    stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
+    decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
+  call expect_equal_i32("second cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i64("second cuda decode should emit one token", emitted_token_count, 1_i64)
+  call expect_true("second cuda decode should generate a positive token id", token_value_step_2 > 0_i32)
+  call extract_cuda_context_state_snapshot(updated_context_bytes, updated_context_byte_count, producer_stage, &
+    artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
+    summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("second cuda decode context snapshot should be readable", snapshot_valid)
+  call expect_equal_i64("second cuda decode snapshot should keep advancing kv count", kv_token_count, 44_i64)
+  call expect_equal_i64("second cuda decode snapshot should increment decode steps", decode_step_count, 2_i64)
+  call expect_equal_i64("second cuda decode summary should report kv tokens after decode", summary_primary_count, &
+    44_i64)
+  call expect_equal_i64("second cuda decode summary should report decode step count", summary_secondary_count, 2_i64)
+  call expect_equal_i32("second cuda decode summary should retain the emitted token id", summary_control_a, &
+    token_value_step_2)
+  call expect_true("second cuda decode should advance rolling state", rolling_state_digest /= decode_rolling_state_1)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
 

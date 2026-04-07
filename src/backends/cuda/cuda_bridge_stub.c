@@ -68,6 +68,24 @@ static uint64_t pack_context_summary(int64_t leading_count,
     return summary;
 }
 
+static uint64_t clamp_state_count32(int64_t count) {
+    if (count <= 0) return UINT64_C(0);
+    if (count > 0xffffffffLL) return UINT64_C(0xffffffff);
+    return (uint64_t)count;
+}
+
+static uint64_t pack_state_counters(int64_t kv_token_count, int64_t decode_step_count) {
+    return clamp_state_count32(kv_token_count) | (clamp_state_count32(decode_step_count) << 32);
+}
+
+static int64_t unpack_state_kv_tokens(uint64_t counters_word) {
+    return (int64_t)(counters_word & UINT64_C(0xffffffff));
+}
+
+static int64_t unpack_state_decode_steps(uint64_t counters_word) {
+    return (int64_t)((counters_word >> 32) & UINT64_C(0xffffffff));
+}
+
 static void write_context_u64(uint8_t *bytes, int32_t stored_count, int32_t offset, uint64_t value) {
     size_t copy_bytes;
 
@@ -97,16 +115,18 @@ static void build_prefill_state_block(uint64_t seed,
                                       int64_t consumed_token_count,
                                       uint64_t state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES],
                                       uint64_t *summary_word) {
-    state_lanes[0] = mix_u64(seed ^ artifact_hash ^ (uint64_t)token_count);
+    int64_t kv_token_count;
+
+    kv_token_count = consumed_token_count > 0 ? consumed_token_count : (token_count > 0 ? token_count : 0);
+    state_lanes[0] = mix_u64(seed ^ artifact_hash ^ (uint64_t)token_count ^ UINT64_C(0x54F4C0DA12345678));
     state_lanes[1] = mix_u64(seed ^ ((uint64_t)modal_byte_count << 1) ^
-                             ((uint64_t)(uint32_t)staged_modal_count << 33));
-    state_lanes[2] = mix_u64(state_lanes[0] ^ ((uint64_t)consumed_token_count << 1) ^ artifact_hash);
-    state_lanes[3] = mix_u64(state_lanes[1] ^ state_lanes[2] ^ UINT64_C(0xC0DA5EED5EED1234));
+                             ((uint64_t)(uint32_t)staged_modal_count << 33) ^
+                             UINT64_C(0x1D1A7E5EABCDEF01));
+    state_lanes[2] = pack_state_counters(kv_token_count, 0);
+    state_lanes[3] = mix_u64(state_lanes[0] ^ state_lanes[1] ^ state_lanes[2] ^ artifact_hash ^
+                             UINT64_C(0xC0DA5EED5EED1234));
     if (summary_word != NULL) {
-        *summary_word = pack_context_summary(token_count, modal_byte_count, staged_modal_count,
-                                             (int32_t)(consumed_token_count > 2147483647LL ? 2147483647LL :
-                                                       (consumed_token_count < -2147483647LL - 1LL ?
-                                                        -2147483647LL - 1LL : consumed_token_count)));
+        *summary_word = pack_context_summary(kv_token_count, modal_byte_count, staged_modal_count, 0);
     }
 }
 
@@ -119,16 +139,28 @@ static void build_decode_state_block(const uint64_t current_state_lanes[MIZU_CUD
                                      int32_t stop_reason,
                                      uint64_t next_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES],
                                      uint64_t *summary_word) {
-    next_state_lanes[0] = mix_u64(current_state_lanes[0] ^ (uint64_t)kv_before ^ artifact_hash);
-    next_state_lanes[1] = mix_u64(current_state_lanes[1] ^ (uint64_t)token_budget ^
+    int64_t current_kv_tokens;
+    int64_t current_decode_steps;
+    int64_t effective_kv_before;
+    int64_t next_kv_tokens;
+    int64_t next_decode_steps;
+
+    current_kv_tokens = unpack_state_kv_tokens(current_state_lanes[2]);
+    current_decode_steps = unpack_state_decode_steps(current_state_lanes[2]);
+    effective_kv_before = kv_before > current_kv_tokens ? kv_before : current_kv_tokens;
+    next_kv_tokens = effective_kv_before + (emitted_token_count > 0 ? emitted_token_count : 0);
+    next_decode_steps = current_decode_steps + (emitted_token_count > 0 ? 1 : 0);
+
+    next_state_lanes[0] = mix_u64(current_state_lanes[0] ^ artifact_hash ^ (uint64_t)next_kv_tokens ^
                                   ((uint64_t)(uint32_t)token_value << 32));
-    next_state_lanes[2] = mix_u64(current_state_lanes[2] ^ (uint64_t)emitted_token_count ^
-                                  ((uint64_t)(uint32_t)stop_reason << 40));
+    next_state_lanes[1] = current_state_lanes[1];
+    next_state_lanes[2] = pack_state_counters(next_kv_tokens, next_decode_steps);
     next_state_lanes[3] = mix_u64(current_state_lanes[3] ^ next_state_lanes[0] ^ next_state_lanes[1] ^
-                                  next_state_lanes[2] ^ UINT64_C(0x1EAFCAFE5EED4321));
+                                  next_state_lanes[2] ^ (uint64_t)token_budget ^
+                                  ((uint64_t)(uint32_t)stop_reason << 48) ^
+                                  UINT64_C(0x1EAFCAFE5EED4321));
     if (summary_word != NULL) {
-        *summary_word = pack_context_summary(kv_before + emitted_token_count, emitted_token_count, token_value,
-                                             stop_reason);
+        *summary_word = pack_context_summary(next_kv_tokens, next_decode_steps, token_value, stop_reason);
     }
 }
 

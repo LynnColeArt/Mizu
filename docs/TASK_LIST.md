@@ -240,6 +240,7 @@ These are the highest-leverage next tasks.
 - [x] Add versioned checksum validation for CUDA live-context payloads
 - [x] Bind CUDA live-context payloads to producer route and artifact lineage
 - [x] Replace opaque CUDA context hashing with explicit state-lane payloads
+- [x] Give CUDA live-context payloads explicit KV/decode-step semantics
 
 ### 5.3 CUDA Validation
 

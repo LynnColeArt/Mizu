@@ -13,6 +13,7 @@ module mod_cuda_executor
   private
   public :: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode
   public :: cuda_context_bytes_are_valid, extract_cuda_context_lineage
+  public :: extract_cuda_context_state_snapshot
 
 contains
 
@@ -333,6 +334,78 @@ contains
       context_bytes(53), context_bytes(54), context_bytes(55), context_bytes(56))
     lineage_known = (producer_stage /= MIZU_STAGE_NONE .and. artifact_hash /= 0_i64)
   end subroutine extract_cuda_context_lineage
+
+  pure subroutine extract_cuda_context_state_snapshot(context_bytes, context_byte_count, producer_stage, artifact_hash, &
+                                                      token_digest, modal_digest, kv_token_count, decode_step_count, &
+                                                      rolling_state_digest, summary_primary_count, &
+                                                      summary_secondary_count, summary_control_a, &
+                                                      summary_control_b, snapshot_valid)
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i32), intent(out) :: producer_stage
+    integer(i64), intent(out) :: artifact_hash
+    integer(i64), intent(out) :: token_digest
+    integer(i64), intent(out) :: modal_digest
+    integer(i64), intent(out) :: kv_token_count
+    integer(i64), intent(out) :: decode_step_count
+    integer(i64), intent(out) :: rolling_state_digest
+    integer(i64), intent(out) :: summary_primary_count
+    integer(i64), intent(out) :: summary_secondary_count
+    integer(i32), intent(out) :: summary_control_a
+    integer(i32), intent(out) :: summary_control_b
+    logical, intent(out)      :: snapshot_valid
+    integer(i64), parameter   :: MASK_16 = int(z'FFFF', kind=i64)
+    integer(i64), parameter   :: MASK_32 = int(z'FFFFFFFF', kind=i64)
+    integer(i32)              :: producer_kind
+    integer(i64)              :: counter_word
+    integer(i64)              :: summary_word
+
+    producer_stage = MIZU_STAGE_NONE
+    artifact_hash = 0_i64
+    token_digest = 0_i64
+    modal_digest = 0_i64
+    kv_token_count = 0_i64
+    decode_step_count = 0_i64
+    rolling_state_digest = 0_i64
+    summary_primary_count = 0_i64
+    summary_secondary_count = 0_i64
+    summary_control_a = 0_i32
+    summary_control_b = 0_i32
+    snapshot_valid = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (context_byte_count < 64_i32) return
+
+    producer_kind = int(context_bytes(6), kind=i32)
+    select case (producer_kind)
+    case (1_i32)
+      producer_stage = MIZU_STAGE_PREFILL
+    case (2_i32)
+      producer_stage = MIZU_STAGE_DECODE
+    case default
+      producer_stage = MIZU_STAGE_NONE
+    end select
+
+    token_digest = decode_context_u64le(context_bytes(17), context_bytes(18), context_bytes(19), context_bytes(20), &
+      context_bytes(21), context_bytes(22), context_bytes(23), context_bytes(24))
+    modal_digest = decode_context_u64le(context_bytes(25), context_bytes(26), context_bytes(27), context_bytes(28), &
+      context_bytes(29), context_bytes(30), context_bytes(31), context_bytes(32))
+    counter_word = decode_context_u64le(context_bytes(33), context_bytes(34), context_bytes(35), context_bytes(36), &
+      context_bytes(37), context_bytes(38), context_bytes(39), context_bytes(40))
+    rolling_state_digest = decode_context_u64le(context_bytes(41), context_bytes(42), context_bytes(43), &
+      context_bytes(44), context_bytes(45), context_bytes(46), context_bytes(47), context_bytes(48))
+    artifact_hash = decode_context_u64le(context_bytes(49), context_bytes(50), context_bytes(51), context_bytes(52), &
+      context_bytes(53), context_bytes(54), context_bytes(55), context_bytes(56))
+    summary_word = decode_context_u64le(context_bytes(57), context_bytes(58), context_bytes(59), context_bytes(60), &
+      context_bytes(61), context_bytes(62), context_bytes(63), context_bytes(64))
+
+    kv_token_count = iand(counter_word, MASK_32)
+    decode_step_count = iand(shiftr(counter_word, 32), MASK_32)
+    summary_primary_count = iand(summary_word, MASK_16)
+    summary_secondary_count = iand(shiftr(summary_word, 16), MASK_16)
+    summary_control_a = int(iand(shiftr(summary_word, 32), MASK_16), kind=i32)
+    summary_control_b = int(iand(shiftr(summary_word, 48), MASK_16), kind=i32)
+    snapshot_valid = .true.
+  end subroutine extract_cuda_context_state_snapshot
 
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1

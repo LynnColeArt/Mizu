@@ -78,6 +78,10 @@ bodies.
     header
   - validates CUDA prefill and decode now fully populate the fixed-size CUDA
     context payload instead of leaving a partial scratch record
+  - validates the fixed-size CUDA context payload now carries semantic token
+    and modal digests plus explicit KV/decode-step counters
+  - validates repeated CUDA decode steps advance those counters and rolling
+    decode state predictably
   - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload and varies with direct context-buffer identity
   - validates CUDA decode rejects a context produced by a different decode
