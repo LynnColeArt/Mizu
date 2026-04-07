@@ -16,6 +16,7 @@ module mod_cuda_executor
   public :: extract_cuda_context_state_snapshot
   public :: extract_cuda_context_window_snapshot
   public :: extract_cuda_context_kv_lane_snapshot
+  public :: extract_cuda_context_kv_layout_snapshot
   public :: extract_cuda_context_slot_snapshot
 
 contains
@@ -550,6 +551,63 @@ contains
     end do
     snapshot_valid = .true.
   end subroutine extract_cuda_context_kv_lane_snapshot
+
+  pure subroutine extract_cuda_context_kv_layout_snapshot(context_bytes, context_byte_count, page_key_rows, &
+                                                          page_key_lane_counts, page_value_rows, &
+                                                          page_value_lane_counts, page_head_blocks, &
+                                                          page_generations, snapshot_valid)
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i32), intent(out) :: page_key_rows(:)
+    integer(i32), intent(out) :: page_key_lane_counts(:)
+    integer(i32), intent(out) :: page_value_rows(:)
+    integer(i32), intent(out) :: page_value_lane_counts(:)
+    integer(i32), intent(out) :: page_head_blocks(:)
+    integer(i32), intent(out) :: page_generations(:)
+    logical, intent(out)      :: snapshot_valid
+    integer(i32)              :: page_index
+    integer(i32)              :: page_limit
+    integer(i32)              :: layout_offset
+
+    page_key_rows = 0_i32
+    page_key_lane_counts = 0_i32
+    page_value_rows = 0_i32
+    page_value_lane_counts = 0_i32
+    page_head_blocks = 0_i32
+    page_generations = 0_i32
+    snapshot_valid = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (context_byte_count < 512_i32) return
+
+    page_limit = min(4_i32, int(size(page_key_rows), kind=i32))
+    page_limit = min(page_limit, int(size(page_key_lane_counts), kind=i32))
+    page_limit = min(page_limit, int(size(page_value_rows), kind=i32))
+    page_limit = min(page_limit, int(size(page_value_lane_counts), kind=i32))
+    page_limit = min(page_limit, int(size(page_head_blocks), kind=i32))
+    page_limit = min(page_limit, int(size(page_generations), kind=i32))
+    do page_index = 1_i32, page_limit
+      layout_offset = 417_i32 + ((page_index - 1_i32) * 24_i32)
+      page_key_rows(page_index) = int(decode_context_u32le(context_bytes(layout_offset), &
+        context_bytes(layout_offset + 1_i32), context_bytes(layout_offset + 2_i32), &
+        context_bytes(layout_offset + 3_i32)), kind=i32)
+      page_key_lane_counts(page_index) = int(decode_context_u32le(context_bytes(layout_offset + 4_i32), &
+        context_bytes(layout_offset + 5_i32), context_bytes(layout_offset + 6_i32), &
+        context_bytes(layout_offset + 7_i32)), kind=i32)
+      page_value_rows(page_index) = int(decode_context_u32le(context_bytes(layout_offset + 8_i32), &
+        context_bytes(layout_offset + 9_i32), context_bytes(layout_offset + 10_i32), &
+        context_bytes(layout_offset + 11_i32)), kind=i32)
+      page_value_lane_counts(page_index) = int(decode_context_u32le(context_bytes(layout_offset + 12_i32), &
+        context_bytes(layout_offset + 13_i32), context_bytes(layout_offset + 14_i32), &
+        context_bytes(layout_offset + 15_i32)), kind=i32)
+      page_head_blocks(page_index) = int(decode_context_u32le(context_bytes(layout_offset + 16_i32), &
+        context_bytes(layout_offset + 17_i32), context_bytes(layout_offset + 18_i32), &
+        context_bytes(layout_offset + 19_i32)), kind=i32)
+      page_generations(page_index) = int(decode_context_u32le(context_bytes(layout_offset + 20_i32), &
+        context_bytes(layout_offset + 21_i32), context_bytes(layout_offset + 22_i32), &
+        context_bytes(layout_offset + 23_i32)), kind=i32)
+    end do
+    snapshot_valid = .true.
+  end subroutine extract_cuda_context_kv_layout_snapshot
 
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1

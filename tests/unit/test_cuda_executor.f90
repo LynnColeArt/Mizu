@@ -6,7 +6,7 @@ program test_cuda_executor
                                workspace_state, MAX_LIVE_CONTEXT_BYTES
   use mod_cuda_executor, only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
                                extract_cuda_context_state_snapshot, extract_cuda_context_window_snapshot, &
-                               extract_cuda_context_kv_lane_snapshot
+                               extract_cuda_context_kv_lane_snapshot, extract_cuda_context_kv_layout_snapshot
   use mod_workspace,     only: initialize_workspace, reserve_workspace_bytes, release_workspace_bytes, &
                                reset_workspace
 
@@ -58,6 +58,12 @@ program test_cuda_executor
   integer(i32) :: page_kinds(4)
   integer(i32) :: page_key_lanes(8, 4)
   integer(i32) :: page_value_lanes(8, 4)
+  integer(i32) :: page_key_rows(4)
+  integer(i32) :: page_key_lane_counts(4)
+  integer(i32) :: page_value_rows(4)
+  integer(i32) :: page_value_lane_counts(4)
+  integer(i32) :: page_head_blocks(4)
+  integer(i32) :: page_generations(4)
   integer(i32) :: recent_tokens(4)
   integer(i32) :: current_page_index
   integer(i32) :: valid_page_count
@@ -168,6 +174,16 @@ program test_cuda_executor
   call expect_equal_i32("cuda prefill kv lane image should leave the trailing value lane empty", &
     page_value_lanes(8, 1), 0_i32)
   call expect_true("cuda prefill kv lane image should seed a nonzero page digest", page_lane_digests(1) /= 0_i64)
+  call extract_cuda_context_kv_layout_snapshot(context_bytes_a, context_byte_count_a, page_key_rows, &
+    page_key_lane_counts, page_value_rows, page_value_lane_counts, page_head_blocks, page_generations, &
+    snapshot_valid)
+  call expect_true("cuda prefill kv layout snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill layout should seed the first page key row count", page_key_rows(1), 7_i32)
+  call expect_equal_i32("cuda prefill layout should seed the first page value row count", page_value_rows(1), 7_i32)
+  call expect_equal_i32("cuda prefill layout should keep a single key lane per row", page_key_lane_counts(1), 1_i32)
+  call expect_equal_i32("cuda prefill layout should keep a single value lane per row", page_value_lane_counts(1), 1_i32)
+  call expect_equal_i32("cuda prefill layout should seed the first page head block", page_head_blocks(1), 0_i32)
+  call expect_equal_i32("cuda prefill layout should start the first page generation at zero", page_generations(1), 0_i32)
   prefill_token_digest_a = token_digest
   prefill_modal_digest_a = modal_digest
   prefill_rolling_state_a = rolling_state_digest
@@ -227,6 +243,14 @@ program test_cuda_executor
   call expect_true("cuda prefill value lane image should change with tensor content", page_value_lanes(1, 1) /= 0_i32)
   call expect_true("cuda prefill page digest should change with tensor content", page_lane_digests(1) /= &
     prefill_page_digest_a)
+  call extract_cuda_context_kv_layout_snapshot(context_bytes_b, context_byte_count_b, page_key_rows, &
+    page_key_lane_counts, page_value_rows, page_value_lane_counts, page_head_blocks, page_generations, &
+    snapshot_valid)
+  call expect_true("cuda prefill kv layout snapshot for the second tensor set should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill layout for the second tensor set should keep the first page key row count", &
+    page_key_rows(1), 7_i32)
+  call expect_equal_i32("cuda prefill layout for the second tensor set should keep the first page generation at zero", &
+    page_generations(1), 0_i32)
 
   workspace_view = 0_c_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value, stop_reason, &
@@ -286,6 +310,19 @@ program test_cuda_executor
   call expect_equal_i64("cuda decode should preserve the prefill page digest for the untouched page", &
     page_lane_digests(1), prefill_page_digest_a)
   call expect_true("cuda decode should seed a nonzero digest for the decode-owned page", page_lane_digests(2) /= 0_i64)
+  call extract_cuda_context_kv_layout_snapshot(updated_context_bytes, updated_context_byte_count, page_key_rows, &
+    page_key_lane_counts, page_value_rows, page_value_lane_counts, page_head_blocks, page_generations, &
+    snapshot_valid)
+  call expect_true("cuda decode kv layout snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda decode layout should preserve the prefill page row count", page_key_rows(1), 7_i32)
+  call expect_equal_i32("cuda decode layout should preserve the prefill page generation", page_generations(1), 0_i32)
+  call expect_equal_i32("cuda decode layout should seed one key row on the decode page", page_key_rows(2), 1_i32)
+  call expect_equal_i32("cuda decode layout should seed one value row on the decode page", page_value_rows(2), 1_i32)
+  call expect_equal_i32("cuda decode layout should seed one key lane on the decode page", page_key_lane_counts(2), 1_i32)
+  call expect_equal_i32("cuda decode layout should seed one value lane on the decode page", page_value_lane_counts(2), 1_i32)
+  call expect_equal_i32("cuda decode layout should derive the decode page head block from kv anchor", &
+    page_head_blocks(2), 5_i32)
+  call expect_equal_i32("cuda decode layout should start the decode page generation at one", page_generations(2), 1_i32)
   decode_rolling_state_1 = rolling_state_digest
   decode_page_digest_1 = page_lane_digests(2)
   prefill_state_image_digest_a = state_image_digest
@@ -335,6 +372,15 @@ program test_cuda_executor
   call expect_true("second cuda decode should seed a second decode value lane", page_value_lanes(2, 2) /= 0_i32)
   call expect_true("second cuda decode should advance the decode page digest", page_lane_digests(2) /= &
     decode_page_digest_1)
+  call extract_cuda_context_kv_layout_snapshot(updated_context_bytes, updated_context_byte_count, page_key_rows, &
+    page_key_lane_counts, page_value_rows, page_value_lane_counts, page_head_blocks, page_generations, &
+    snapshot_valid)
+  call expect_true("second cuda decode kv layout snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("second cuda decode layout should grow the decode page key row count", page_key_rows(2), 2_i32)
+  call expect_equal_i32("second cuda decode layout should grow the decode page value row count", page_value_rows(2), 2_i32)
+  call expect_equal_i32("second cuda decode layout should keep the decode page head block stable", &
+    page_head_blocks(2), 5_i32)
+  call expect_equal_i32("second cuda decode layout should advance the decode page generation", page_generations(2), 2_i32)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
 
