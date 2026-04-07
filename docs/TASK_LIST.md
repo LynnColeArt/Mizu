@@ -252,6 +252,8 @@ These are the highest-leverage next tasks.
 
 ### 5.3 CUDA Validation
 
+- [x] Validate compact page-table rotation and recycled-slot marking under
+  decode window overflow
 - [ ] Validate one target multimodal flow on CUDA
 - [ ] Compare API-level parity against Apple
 - [ ] Add reference-output checks where feasible

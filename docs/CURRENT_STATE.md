@@ -125,6 +125,9 @@ In short:
 - the runtime can now read those page-control records back through a third
   Fortran-side extractor, which makes compact decode state inspectable as a
   small page table rather than just a lane image plus shape metadata
+- the CUDA executor tests now drive the compact page table through window
+  overflow, which validates logical page rotation and recycled-slot marking
+  instead of only cold page allocation and append behavior
 
 ### Self-Optimization
 
