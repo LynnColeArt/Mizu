@@ -26,6 +26,9 @@ program test_cuda_executor
   integer(i64) :: emitted_token_count
   integer(i32) :: token_value
   integer(i32) :: token_value_step_2
+  integer(i32) :: token_value_page_3
+  integer(i32) :: token_value_page_4
+  integer(i32) :: token_value_page_5
   integer(i32) :: token_value_with_other_context
   integer(i32) :: context_byte_count_a
   integer(i32) :: context_byte_count_b
@@ -453,6 +456,67 @@ program test_cuda_executor
     page_logical_ids(2), 2_i32)
   call expect_equal_i32("second cuda decode page control should keep the decode flags stable", &
     page_flags(2), PAGE_FLAG_RESIDENT + PAGE_FLAG_DECODE_OWNED)
+  decode_context_bytes = updated_context_bytes
+  decode_context_byte_count = updated_context_byte_count
+
+  call execute_cuda_decode(cache_root, decode_path, 64_i64, 1_i64, emitted_token_count, token_value_page_3, &
+    stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
+    decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
+  call expect_equal_i32("third cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i64("third cuda decode should emit one token", emitted_token_count, 1_i64)
+  decode_context_bytes = updated_context_bytes
+  decode_context_byte_count = updated_context_byte_count
+
+  call execute_cuda_decode(cache_root, decode_path, 96_i64, 1_i64, emitted_token_count, token_value_page_4, &
+    stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
+    decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
+  call expect_equal_i32("fourth cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i64("fourth cuda decode should emit one token", emitted_token_count, 1_i64)
+  decode_context_bytes = updated_context_bytes
+  decode_context_byte_count = updated_context_byte_count
+
+  call execute_cuda_decode(cache_root, decode_path, 128_i64, 1_i64, emitted_token_count, token_value_page_5, &
+    stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
+    decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
+  call expect_equal_i32("fifth cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i64("fifth cuda decode should emit one token", emitted_token_count, 1_i64)
+  call extract_cuda_context_window_snapshot(updated_context_bytes, updated_context_byte_count, page_anchors, &
+    page_token_counts, page_kinds, current_page_index, valid_page_count, recent_tokens, recent_token_count, &
+    state_image_digest, snapshot_valid)
+  call expect_true("overflowed cuda decode window snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("overflowed cuda decode window should keep four resident pages", valid_page_count, 4_i32)
+  call expect_equal_i32("overflowed cuda decode window should point at the recycled last page", current_page_index, 3_i32)
+  call expect_equal_i64("overflowed cuda decode window should drop the original prefill page", page_anchors(1), 42_i64)
+  call expect_equal_i64("overflowed cuda decode window should retain the second logical page anchor", page_anchors(2), 64_i64)
+  call expect_equal_i64("overflowed cuda decode window should retain the third logical page anchor", page_anchors(3), 96_i64)
+  call expect_equal_i64("overflowed cuda decode window should anchor the recycled page at the newest kv jump", &
+    page_anchors(4), 128_i64)
+  call expect_equal_i32("overflowed cuda decode window should keep the latest four emitted tokens in the ring", &
+    recent_tokens(1), token_value_step_2)
+  call expect_equal_i32("overflowed cuda decode window should end with the newest emitted token", &
+    recent_tokens(4), token_value_page_5)
+  call extract_cuda_context_page_control_snapshot(updated_context_bytes, updated_context_byte_count, page_owner_kinds, &
+    page_usable_capacities, page_committed_tokens, page_free_slots, page_epochs, page_recycle_epochs, &
+    page_logical_ids, page_flags, snapshot_valid)
+  call expect_true("overflowed cuda decode page control snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("overflowed cuda decode should preserve the second logical page id in the first slot", &
+    page_logical_ids(1), 2_i32)
+  call expect_equal_i32("overflowed cuda decode should preserve the third logical page id in the second slot", &
+    page_logical_ids(2), 3_i32)
+  call expect_equal_i32("overflowed cuda decode should preserve the fourth logical page id in the third slot", &
+    page_logical_ids(3), 4_i32)
+  call expect_equal_i32("overflowed cuda decode should assign a fifth logical page id to the recycled slot", &
+    page_logical_ids(4), 5_i32)
+  call expect_equal_i32("overflowed cuda decode should preserve the old two-token decode page fill", &
+    page_committed_tokens(1), 2_i32)
+  call expect_equal_i32("overflowed cuda decode should seed the recycled page with one token", &
+    page_committed_tokens(4), 1_i32)
+  call expect_equal_i32("overflowed cuda decode should advance the recycled page epoch", page_epochs(4), 5_i32)
+  call expect_equal_i32("overflowed cuda decode should mark the recycled physical slot", &
+    page_recycle_epochs(4), 1_i32)
+  call expect_equal_i32("overflowed cuda decode should keep the recycled page decode-owned", page_owner_kinds(4), 2_i32)
+  call expect_equal_i32("overflowed cuda decode should set the recycled page flags", page_flags(4), &
+    PAGE_FLAG_RESIDENT + PAGE_FLAG_DECODE_OWNED + PAGE_FLAG_RECYCLED)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
 
