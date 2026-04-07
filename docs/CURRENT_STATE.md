@@ -31,9 +31,9 @@ Last updated: 2026-04-07
 - parked CUDA sessions now offload that resident context buffer after the
   checkpoint is safely materialized, and `resume` restores it before the
   session becomes live again
-- CUDA live-context payloads now include a small versioned header, and both
-  `resume` and CUDA decode validate that header before treating restored bytes
-  as usable backend state
+- CUDA live-context payloads now include a small versioned, checksummed
+  header, and both `resume` and CUDA decode validate header plus payload
+  integrity before treating restored bytes as usable backend state
 
 ### Self-Optimization
 

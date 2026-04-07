@@ -256,6 +256,9 @@ contains
     integer(i32), parameter :: VERSION_1 = 1_i32
     integer(i32), parameter :: KIND_PREFILL = 1_i32
     integer(i32), parameter :: KIND_DECODE = 2_i32
+    integer(i32)            :: stored_count
+    integer(i64)            :: expected_checksum
+    integer(i64)            :: actual_checksum
 
     is_valid = .false.
     if (context_byte_count < HEADER_SIZE) return
@@ -267,8 +270,64 @@ contains
     if (int(context_bytes(5), kind=i32) /= VERSION_1) return
     if (int(context_bytes(6), kind=i32) /= KIND_PREFILL .and. &
         int(context_bytes(6), kind=i32) /= KIND_DECODE) return
-    if (int(context_bytes(7), kind=i32) /= min(context_byte_count, 255_i32)) return
+    stored_count = decode_context_u16le(context_bytes(7), context_bytes(8))
+    if (stored_count /= context_byte_count) return
+    expected_checksum = decode_context_u32le(context_bytes(9), context_bytes(10), context_bytes(11), &
+      context_bytes(12))
+    actual_checksum = compute_context_checksum32(context_bytes, stored_count)
+    if (actual_checksum /= expected_checksum) return
     is_valid = .true.
   end function cuda_context_bytes_are_valid
+
+  pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
+    integer(i8), intent(in) :: byte_1
+    integer(i8), intent(in) :: byte_2
+
+    value_u16 = context_byte_to_u32(byte_1) + shiftl(context_byte_to_u32(byte_2), 8)
+  end function decode_context_u16le
+
+  pure integer(i64) function decode_context_u32le(byte_1, byte_2, byte_3, byte_4) result(value_u32)
+    integer(i8), intent(in) :: byte_1
+    integer(i8), intent(in) :: byte_2
+    integer(i8), intent(in) :: byte_3
+    integer(i8), intent(in) :: byte_4
+
+    value_u32 = int(context_byte_to_u32(byte_1), kind=i64)
+    value_u32 = value_u32 + shiftl(int(context_byte_to_u32(byte_2), kind=i64), 8)
+    value_u32 = value_u32 + shiftl(int(context_byte_to_u32(byte_3), kind=i64), 16)
+    value_u32 = value_u32 + shiftl(int(context_byte_to_u32(byte_4), kind=i64), 24)
+  end function decode_context_u32le
+
+  pure integer(i64) function compute_context_checksum32(context_bytes, stored_count) result(checksum_value)
+    integer(i8), intent(in) :: context_bytes(:)
+    integer(i32), intent(in) :: stored_count
+    integer(i64), parameter :: OFFSET_BASIS = int(z'811C9DC5', kind=i64)
+    integer(i64), parameter :: FNV_PRIME = int(z'01000193', kind=i64)
+    integer(i64), parameter :: MASK_32 = int(z'FFFFFFFF', kind=i64)
+    integer(i32)            :: byte_index
+
+    checksum_value = OFFSET_BASIS
+    if (stored_count <= 16_i32) then
+      checksum_value = ieor(checksum_value, int(max(0_i32, stored_count), kind=i64))
+      checksum_value = iand(checksum_value * FNV_PRIME, MASK_32)
+      if (checksum_value == 0_i64) checksum_value = 1_i64
+      return
+    end if
+
+    do byte_index = 17_i32, stored_count
+      checksum_value = ieor(checksum_value, int(context_byte_to_u32(context_bytes(byte_index)), kind=i64))
+      checksum_value = iand(checksum_value * FNV_PRIME, MASK_32)
+    end do
+    checksum_value = ieor(checksum_value, int(stored_count, kind=i64))
+    checksum_value = iand(checksum_value * FNV_PRIME, MASK_32)
+    if (checksum_value == 0_i64) checksum_value = 1_i64
+  end function compute_context_checksum32
+
+  pure integer(i32) function context_byte_to_u32(byte_value) result(unsigned_value)
+    integer(i8), intent(in) :: byte_value
+
+    unsigned_value = int(byte_value, kind=i32)
+    if (unsigned_value < 0_i32) unsigned_value = unsigned_value + 256_i32
+  end function context_byte_to_u32
 
 end module mod_cuda_executor

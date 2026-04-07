@@ -17,6 +17,8 @@ constexpr unsigned char MIZU_CUDA_CONTEXT_VERSION = 1U;
 constexpr unsigned char MIZU_CUDA_CONTEXT_KIND_PREFILL = 1U;
 constexpr unsigned char MIZU_CUDA_CONTEXT_KIND_DECODE = 2U;
 constexpr int32_t MIZU_CUDA_CONTEXT_HEADER_SIZE = 16;
+constexpr uint32_t MIZU_CUDA_CONTEXT_CHECKSUM_OFFSET = 2166136261U;
+constexpr uint32_t MIZU_CUDA_CONTEXT_CHECKSUM_PRIME = 16777619U;
 
 __device__ __forceinline__ unsigned long long mix_u64(unsigned long long value) {
   value += 0x9e3779b97f4a7c15ULL;
@@ -30,6 +32,23 @@ inline unsigned long long mix_u64_host(unsigned long long value) {
   value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
   value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
   return value ^ (value >> 31);
+}
+
+inline uint32_t compute_context_checksum(const unsigned char *bytes, int32_t stored_count) {
+  uint32_t checksum = MIZU_CUDA_CONTEXT_CHECKSUM_OFFSET;
+  if (bytes == nullptr || stored_count <= MIZU_CUDA_CONTEXT_HEADER_SIZE) {
+    checksum ^= static_cast<uint32_t>(stored_count > 0 ? stored_count : 0);
+    checksum *= MIZU_CUDA_CONTEXT_CHECKSUM_PRIME;
+    return checksum == 0U ? 1U : checksum;
+  }
+
+  for (int32_t index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
+    checksum ^= static_cast<uint32_t>(bytes[index]);
+    checksum *= MIZU_CUDA_CONTEXT_CHECKSUM_PRIME;
+  }
+  checksum ^= static_cast<uint32_t>(stored_count);
+  checksum *= MIZU_CUDA_CONTEXT_CHECKSUM_PRIME;
+  return checksum == 0U ? 1U : checksum;
 }
 
 __global__ void mizu_prefill_kernel(int64_t staged_tokens,
@@ -128,6 +147,7 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
                                        int32_t context_capacity,
                                        int32_t *context_byte_count) {
   auto *bytes = reinterpret_cast<unsigned char *>(context_bytes);
+  uint32_t checksum = 0U;
   unsigned long long seed_copy = seed;
   int32_t stored_count = 0;
 
@@ -147,10 +167,7 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
   if (stored_count >= 6) bytes[5] = MIZU_CUDA_CONTEXT_KIND_PREFILL;
   if (stored_count >= 8) {
     bytes[6] = static_cast<unsigned char>(stored_count & 0xff);
-    bytes[7] = 0U;
-  }
-  if (stored_count > 8) {
-    memcpy(bytes + 8, &seed, static_cast<size_t>(stored_count - 8 < 8 ? stored_count - 8 : 8));
+    bytes[7] = static_cast<unsigned char>((stored_count >> 8) & 0xff);
   }
   if (stored_count > 16) {
     memcpy(bytes + 16, &token_count, static_cast<size_t>(stored_count - 16 < 8 ? stored_count - 16 : 8));
@@ -175,6 +192,11 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
     bytes[index] ^= static_cast<unsigned char>(seed_copy & 0xffULL);
   }
 
+  checksum = compute_context_checksum(bytes, stored_count);
+  if (stored_count > 8) {
+    memcpy(bytes + 8, &checksum, static_cast<size_t>(stored_count - 8 < 4 ? stored_count - 8 : 4));
+  }
+
   *context_byte_count = stored_count;
 }
 
@@ -187,6 +209,7 @@ inline void fill_decode_context_bytes(unsigned long long seed,
                                int32_t context_capacity,
                                       int32_t *context_byte_count) {
   auto *bytes = reinterpret_cast<unsigned char *>(context_bytes);
+  uint32_t checksum = 0U;
   int32_t stored_count = 0;
   unsigned long long seed_copy = seed;
 
@@ -206,10 +229,7 @@ inline void fill_decode_context_bytes(unsigned long long seed,
   if (stored_count >= 6) bytes[5] = MIZU_CUDA_CONTEXT_KIND_DECODE;
   if (stored_count >= 8) {
     bytes[6] = static_cast<unsigned char>(stored_count & 0xff);
-    bytes[7] = 0U;
-  }
-  if (stored_count > 8) {
-    memcpy(bytes + 8, &seed, static_cast<size_t>(stored_count - 8 < 8 ? stored_count - 8 : 8));
+    bytes[7] = static_cast<unsigned char>((stored_count >> 8) & 0xff);
   }
   if (stored_count > 16) {
     memcpy(bytes + 16, &kv_after, static_cast<size_t>(stored_count - 16 < 8 ? stored_count - 16 : 8));
@@ -232,6 +252,11 @@ inline void fill_decode_context_bytes(unsigned long long seed,
                              (static_cast<unsigned long long>(stop_reason) << 25) ^
                              static_cast<unsigned long long>(index));
     bytes[index] ^= static_cast<unsigned char>(seed_copy & 0xffULL);
+  }
+
+  checksum = compute_context_checksum(bytes, stored_count);
+  if (stored_count > 8) {
+    memcpy(bytes + 8, &checksum, static_cast<size_t>(stored_count - 8 < 4 ? stored_count - 8 : 4));
   }
 
   *context_byte_count = stored_count;

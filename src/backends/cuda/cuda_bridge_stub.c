@@ -13,12 +13,34 @@
 #define MIZU_CUDA_CONTEXT_KIND_PREFILL UINT8_C(1)
 #define MIZU_CUDA_CONTEXT_KIND_DECODE UINT8_C(2)
 #define MIZU_CUDA_CONTEXT_HEADER_SIZE INT32_C(16)
+#define MIZU_CUDA_CONTEXT_CHECKSUM_OFFSET UINT32_C(2166136261)
+#define MIZU_CUDA_CONTEXT_CHECKSUM_PRIME UINT32_C(16777619)
 
 static uint64_t mix_u64(uint64_t value) {
     value += UINT64_C(0x9e3779b97f4a7c15);
     value = (value ^ (value >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
     value = (value ^ (value >> 27)) * UINT64_C(0x94d049bb133111eb);
     return value ^ (value >> 31);
+}
+
+static uint32_t compute_context_checksum(const uint8_t *bytes, int32_t stored_count) {
+    uint32_t checksum;
+    int32_t index;
+
+    checksum = MIZU_CUDA_CONTEXT_CHECKSUM_OFFSET;
+    if (bytes == NULL || stored_count <= MIZU_CUDA_CONTEXT_HEADER_SIZE) {
+        checksum ^= (uint32_t)(stored_count > 0 ? stored_count : 0);
+        checksum *= MIZU_CUDA_CONTEXT_CHECKSUM_PRIME;
+        return checksum == 0U ? 1U : checksum;
+    }
+
+    for (index = MIZU_CUDA_CONTEXT_HEADER_SIZE; index < stored_count; ++index) {
+        checksum ^= (uint32_t)bytes[index];
+        checksum *= MIZU_CUDA_CONTEXT_CHECKSUM_PRIME;
+    }
+    checksum ^= (uint32_t)stored_count;
+    checksum *= MIZU_CUDA_CONTEXT_CHECKSUM_PRIME;
+    return checksum == 0U ? 1U : checksum;
 }
 
 static void copy_name(const char *source_name, char *device_name, size_t device_name_capacity) {
@@ -58,6 +80,7 @@ static void fill_prefill_context_bytes(uint64_t seed,
                                        int32_t context_capacity,
                                        int32_t *context_byte_count) {
     uint8_t *bytes;
+    uint32_t checksum;
     uint64_t seed_copy;
     int32_t stored_count;
     int32_t index;
@@ -79,10 +102,7 @@ static void fill_prefill_context_bytes(uint64_t seed,
     if (stored_count >= 6) bytes[5] = MIZU_CUDA_CONTEXT_KIND_PREFILL;
     if (stored_count >= 8) {
         bytes[6] = (uint8_t)(stored_count & UINT8_C(0xff));
-        bytes[7] = UINT8_C(0);
-    }
-    if (stored_count > 8) {
-        memcpy(bytes + 8, &seed, (size_t)(stored_count - 8 < 8 ? stored_count - 8 : 8));
+        bytes[7] = (uint8_t)((stored_count >> 8) & UINT8_C(0xff));
     }
     if (stored_count > 16) {
         memcpy(bytes + 16, &token_count, (size_t)(stored_count - 16 < 8 ? stored_count - 16 : 8));
@@ -108,6 +128,11 @@ static void fill_prefill_context_bytes(uint64_t seed,
         bytes[index] ^= (uint8_t)(seed_copy & UINT64_C(0xff));
     }
 
+    checksum = compute_context_checksum(bytes, stored_count);
+    if (stored_count > 8) {
+        memcpy(bytes + 8, &checksum, (size_t)(stored_count - 8 < 4 ? stored_count - 8 : 4));
+    }
+
     *context_byte_count = stored_count;
 }
 
@@ -119,7 +144,8 @@ static void fill_decode_context_bytes(uint64_t seed,
                                       int8_t *context_bytes,
                                int32_t context_capacity,
                                       int32_t *context_byte_count) {
-    uint8_t *bytes;
+  uint8_t *bytes;
+    uint32_t checksum;
     uint64_t seed_copy;
     int32_t index;
     int32_t stored_count;
@@ -141,10 +167,7 @@ static void fill_decode_context_bytes(uint64_t seed,
     if (stored_count >= 6) bytes[5] = MIZU_CUDA_CONTEXT_KIND_DECODE;
     if (stored_count >= 8) {
         bytes[6] = (uint8_t)(stored_count & UINT8_C(0xff));
-        bytes[7] = UINT8_C(0);
-    }
-    if (stored_count > 8) {
-        memcpy(bytes + 8, &seed, (size_t)(stored_count - 8 < 8 ? stored_count - 8 : 8));
+        bytes[7] = (uint8_t)((stored_count >> 8) & UINT8_C(0xff));
     }
     if (stored_count > 16) {
         memcpy(bytes + 16, &kv_after, (size_t)(stored_count - 16 < 8 ? stored_count - 16 : 8));
@@ -168,6 +191,11 @@ static void fill_decode_context_bytes(uint64_t seed,
                             ((uint64_t)(uint32_t)stop_reason << 25) ^
                             (uint64_t)(uint32_t)index);
         bytes[index] ^= (uint8_t)(seed_copy & UINT64_C(0xff));
+    }
+
+    checksum = compute_context_checksum(bytes, stored_count);
+    if (stored_count > 8) {
+        memcpy(bytes + 8, &checksum, (size_t)(stored_count - 8 < 4 ? stored_count - 8 : 4));
     }
 
     *context_byte_count = stored_count;

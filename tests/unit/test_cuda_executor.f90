@@ -127,11 +127,11 @@ program test_cuda_executor
   call expect_true("cuda decode should reflect direct context buffer identity", &
     token_value_with_other_context /= token_value)
 
-  context_bytes_b(1) = 0_i8
+  context_bytes_b(20) = context_bytes_b(20) + 1_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value_with_other_context, &
     stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, context_bytes_b, &
     context_byte_count_b, updated_context_bytes, updated_context_byte_count)
-  call expect_equal_i32("cuda decode should reject an invalid context header", status_code, MIZU_STATUS_INVALID_STATE)
+  call expect_equal_i32("cuda decode should reject a corrupted context payload", status_code, MIZU_STATUS_INVALID_STATE)
 
   call release_workspace_bytes(workspace)
   call reset_workspace(workspace)

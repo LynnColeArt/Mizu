@@ -74,10 +74,11 @@ bodies.
     and modal tensor contents change, even when the plan shape stays the same
   - validates CUDA prefill emits a persisted context byte buffer and CUDA
     decode consumes that buffer directly
-  - validates those context buffers now carry a versioned CUDA header
+  - validates those context buffers now carry a versioned, checksummed CUDA
+    header
   - validates CUDA decode execution produces a deterministic token from a
     materialized decode payload and varies with direct context-buffer identity
-  - validates CUDA decode rejects a corrupted context header instead of
+  - validates CUDA decode rejects a corrupted context payload instead of
     consuming invalid restored state
   - validates the CUDA bridge receives and stamps the runtime workspace scratch
     buffer during projector, prefill, and decode

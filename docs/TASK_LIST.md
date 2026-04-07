@@ -237,7 +237,7 @@ These are the highest-leverage next tasks.
 - [x] Implement CUDA workspace handoff
 - [x] Materialize a parked-session checkpoint artifact for CUDA sessions
 - [x] Offload parked CUDA context buffers after checkpoint materialization
-- [x] Add versioned validation for CUDA live-context payloads
+- [x] Add versioned checksum validation for CUDA live-context payloads
 
 ### 5.3 CUDA Validation
 
