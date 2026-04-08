@@ -1,0 +1,5 @@
+token_embeddings|embedding_table|bf16|row_major|weights/token_embeddings.bin|152064x3584
+decoder_blocks|decoder_stack|bf16|packed|weights/decoder_blocks.bin|3584x3584
+final_norm|normalization|f32|vector|weights/final_norm.bin|3584
+lm_head|token_projection|bf16|row_major|weights/lm_head.bin|3584x152064
+vision_projector|multimodal_projector|f16|packed|projector/vision_projector.bin|1280x3584

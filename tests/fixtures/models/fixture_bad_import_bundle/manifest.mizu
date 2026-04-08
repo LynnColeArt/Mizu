@@ -1,0 +1,2 @@
+family = gemma
+model_features = multimodal,projector

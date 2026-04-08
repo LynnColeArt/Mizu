@@ -1,0 +1,5 @@
+layout_version = 1
+source_model_id = gemma4-21b-imported
+tensor_inventory = missing.tsv
+modality_inventory = modalities.tsv
+projector_inventory = projector.mizu

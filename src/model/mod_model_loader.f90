@@ -18,6 +18,7 @@ module mod_model_loader
                                 initialize_model_manifest, validate_model_manifest, &
                                 manifest_tensor_count, manifest_modality_count, &
                                 hash_text64
+  use mod_model_import_layout, only: load_import_layout_into_manifest
 
   implicit none
 
@@ -36,6 +37,7 @@ contains
     character(len=MAX_PATH_LEN) :: manifest_path
     character(len=MAX_PATH_LEN) :: identity_text
     logical :: has_manifest
+    logical :: used_import_layout
 
     call initialize_model_manifest(manifest)
 
@@ -52,6 +54,9 @@ contains
     else
       status_code = build_builtin_target_manifest(model_root, manifest)
     end if
+    if (status_code /= MIZU_STATUS_OK) return
+
+    status_code = load_import_layout_into_manifest(model_root, manifest, used_import_layout)
     if (status_code /= MIZU_STATUS_OK) return
 
     if (manifest%provenance%source_family == MIZU_MODEL_FAMILY_UNKNOWN) then

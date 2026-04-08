@@ -55,7 +55,7 @@ module mod_types
   public :: MIZU_CACHE_FLAG_PLAN_HIT, MIZU_CACHE_FLAG_SESSION_HIT
   public :: MIZU_CACHE_FLAG_MM_HIT, MIZU_CACHE_FLAG_WINNER_REUSED
   public :: SOURCE_FORMAT_UNKNOWN, SOURCE_FORMAT_MIZU_MANIFEST
-  public :: SOURCE_FORMAT_BUILTIN_TARGET
+  public :: SOURCE_FORMAT_BUILTIN_TARGET, SOURCE_FORMAT_MIZU_IMPORT_BUNDLE
   public :: runtime_handle, model_handle, session_handle, workspace_handle
   public :: backend_descriptor, tensor_descriptor, projector_descriptor
   public :: runtime_config, model_open_config, session_config
@@ -172,9 +172,10 @@ module mod_types
   integer(i64), parameter :: MIZU_CACHE_FLAG_MM_HIT        = shiftl(1_i64, 3)
   integer(i64), parameter :: MIZU_CACHE_FLAG_WINNER_REUSED = shiftl(1_i64, 4)
 
-  integer(i32), parameter :: SOURCE_FORMAT_UNKNOWN        = 0_i32
-  integer(i32), parameter :: SOURCE_FORMAT_MIZU_MANIFEST  = 1_i32
-  integer(i32), parameter :: SOURCE_FORMAT_BUILTIN_TARGET = 2_i32
+  integer(i32), parameter :: SOURCE_FORMAT_UNKNOWN            = 0_i32
+  integer(i32), parameter :: SOURCE_FORMAT_MIZU_MANIFEST      = 1_i32
+  integer(i32), parameter :: SOURCE_FORMAT_BUILTIN_TARGET     = 2_i32
+  integer(i32), parameter :: SOURCE_FORMAT_MIZU_IMPORT_BUNDLE = 3_i32
 
   integer(i32), parameter :: MAX_RUNTIME_BACKENDS = 2_i32
   integer(i32), parameter :: MAX_RECENT_OUTPUT_TOKENS = 8_i32

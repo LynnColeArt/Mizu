@@ -1,10 +1,10 @@
 program test_model_manifest_loader
   use mod_kinds,          only: i32
-  use mod_status,         only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_ARGUMENT
+  use mod_status,         only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_ARGUMENT, MIZU_STATUS_IO_ERROR
   use mod_types,          only: MIZU_MODEL_FAMILY_QWEN3_5, MIZU_MODEL_FAMILY_GEMMA4, &
                                 MIZU_MODEL_FEATURE_NONE, MIZU_MODEL_FEATURE_MULTIMODAL, &
                                 MIZU_MODEL_FEATURE_PROJECTOR, SOURCE_FORMAT_MIZU_MANIFEST, &
-                                SOURCE_FORMAT_BUILTIN_TARGET
+                                SOURCE_FORMAT_BUILTIN_TARGET, SOURCE_FORMAT_MIZU_IMPORT_BUNDLE
   use mod_model_manifest, only: model_manifest, manifest_tensor_count, &
                                 manifest_modality_count
   use mod_model_loader,   only: load_model_manifest_from_root
@@ -34,6 +34,23 @@ program test_model_manifest_loader
 
   status_code = load_model_manifest_from_root("tests/fixtures/models/fixture_bad_manifest", manifest)
   call expect_equal_i32("bad manifest status", status_code, MIZU_STATUS_INVALID_ARGUMENT)
+
+  call expect_manifest_success("tests/fixtures/models/fixture_import_bundle_tiny", &
+    MIZU_MODEL_FAMILY_QWEN3_5, SOURCE_FORMAT_MIZU_IMPORT_BUNDLE, .true., .true.)
+
+  status_code = load_model_manifest_from_root("tests/fixtures/models/fixture_import_bundle_tiny", manifest)
+  call expect_equal_i32("import bundle tensor count", manifest_tensor_count(manifest), 5_i32)
+  call expect_equal_i32("import bundle modality count", manifest_modality_count(manifest), 1_i32)
+  call expect_equal_logical("import bundle should preserve projector presence", manifest%projector%is_present, .true.)
+  call expect_equal_text("import bundle should carry tensor source path", &
+    trim(manifest%tensors(1)%source_path), "weights/token_embeddings.bin")
+  call expect_equal_text("import bundle should carry projector artifact path", &
+    trim(manifest%projector%artifact_path), "projector/vision_projector.bin")
+  call expect_equal_text("import bundle should carry imported source model id", &
+    trim(manifest%provenance%source_model_id), "qwen-3.5-9b-imported")
+
+  status_code = load_model_manifest_from_root("tests/fixtures/models/fixture_bad_import_bundle", manifest)
+  call expect_equal_i32("bad import bundle status", status_code, MIZU_STATUS_IO_ERROR)
 
   call expect_manifest_success("tests/fixtures/models/qwen_builtin_target", &
     MIZU_MODEL_FAMILY_QWEN3_5, SOURCE_FORMAT_BUILTIN_TARGET, .true., .true.)
@@ -96,5 +113,16 @@ contains
       error stop 1
     end if
   end subroutine expect_equal_logical
+
+  subroutine expect_equal_text(label, actual, expected)
+    character(len=*), intent(in) :: label
+    character(len=*), intent(in) :: actual
+    character(len=*), intent(in) :: expected
+
+    if (trim(actual) /= trim(expected)) then
+      write(*, "(A,1X,A,1X,A,1X,A)") trim(label), trim(actual), "/=", trim(expected)
+      error stop 1
+    end if
+  end subroutine expect_equal_text
 
 end program test_model_manifest_loader

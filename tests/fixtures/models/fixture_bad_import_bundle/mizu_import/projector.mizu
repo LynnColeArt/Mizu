@@ -1,0 +1,8 @@
+present = true
+slot = image
+placeholder_count = 1
+input_modality_kind = image
+input_dtype = u8
+embedding_dtype = bf16
+revision_identity = 900001
+artifact_path = projector/missing_projector.bin

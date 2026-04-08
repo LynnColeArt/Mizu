@@ -55,6 +55,7 @@ module mod_model_manifest
     character(len=MAX_NAME_LEN) :: tensor_name = ""
     character(len=MAX_NAME_LEN) :: tensor_role = ""
     character(len=MAX_NAME_LEN) :: layout_name = ""
+    character(len=MAX_PATH_LEN) :: source_path = ""
   end type tensor_manifest
 
   type :: projector_manifest
@@ -65,6 +66,7 @@ module mod_model_manifest
     integer(i32)                     :: embedding_dtype    = MIZU_DTYPE_UNKNOWN
     integer(i64)                     :: revision_identity  = 0_i64
     character(len=MAX_SLOT_NAME_LEN) :: slot_name          = ""
+    character(len=MAX_PATH_LEN)      :: artifact_path      = ""
   end type projector_manifest
 
   type :: model_manifest

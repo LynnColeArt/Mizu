@@ -26,6 +26,7 @@ COMMON_F90 := \
 
 MODEL_F90 := \
 	src/model/mod_model_manifest.f90 \
+	src/model/mod_model_import_layout.f90 \
 	src/model/mod_model_loader.f90
 
 CACHE_F90 := \
@@ -137,6 +138,7 @@ $(TEST_DIR)/test_model_manifest_loader: $(TEST_DIR)
 		src/common/mod_status.f90 \
 		src/common/mod_types.f90 \
 		src/model/mod_model_manifest.f90 \
+		src/model/mod_model_import_layout.f90 \
 		src/model/mod_model_loader.f90 \
 		tests/unit/test_model_manifest_loader.f90
 
@@ -147,6 +149,7 @@ $(TEST_DIR)/test_cache_keys: $(TEST_DIR)
 		src/common/mod_status.f90 \
 		src/common/mod_types.f90 \
 		src/model/mod_model_manifest.f90 \
+		src/model/mod_model_import_layout.f90 \
 		src/model/mod_model_loader.f90 \
 		src/cache/mod_cache_keys.f90 \
 		tests/unit/test_cache_keys.f90
