@@ -1865,7 +1865,9 @@ contains
     model%import_inventory_hash = 0_i64
     model%import_tensor_bytes = 0_i64
     model%import_weight_pack_bytes = 0_i64
+    model%import_weight_pack_hash = 0_i64
     model%import_projector_bytes = 0_i64
+    model%import_weight_pack_count = 0_i32
     model%import_preview_count = 0_i32
     model%import_projector_artifact_path = ""
     model%import_tensor_names = ""
@@ -1922,12 +1924,48 @@ contains
       end if
     end if
 
-    model%import_weight_pack_bytes = max(0_i64, model%import_tensor_bytes - model%import_projector_bytes)
+    call recompute_import_weight_pack_summary(model)
 
     if (model%import_inventory_hash == 0_i64) then
       model%import_inventory_hash = hash_text64(trim(model%source_model_id) // ":import_bundle")
     end if
   end subroutine copy_model_import_snapshot
+
+  subroutine recompute_import_weight_pack_summary(model)
+    type(model_state), intent(inout)    :: model
+    character(len=MAX_PATH_LEN + 2 * MAX_NAME_LEN + 96) :: pack_entry
+    integer(i32)                        :: tensor_index
+    integer(i64)                        :: tensor_bytes
+    integer(i64)                        :: pack_offset
+
+    model%import_weight_pack_bytes = 0_i64
+    model%import_weight_pack_hash = 0_i64
+    model%import_weight_pack_count = 0_i32
+    if (.not. allocated(model%import_tensors)) return
+
+    pack_offset = 0_i64
+    do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
+      if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
+
+      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
+        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      if (tensor_bytes <= 0_i64) cycle
+
+      model%import_weight_pack_count = model%import_weight_pack_count + 1_i32
+      pack_entry = ""
+      write(pack_entry, '(A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+        trim(model%import_tensors(tensor_index)%tensor_name), trim(model%import_tensors(tensor_index)%tensor_role), &
+        trim(model%import_tensors(tensor_index)%source_path), pack_offset, tensor_bytes, &
+        trim(model%import_tensors(tensor_index)%layout_name)
+      model%import_weight_pack_hash = ieor(model%import_weight_pack_hash, hash_text64(trim(pack_entry)))
+      pack_offset = align_import_bytes(pack_offset + tensor_bytes)
+    end do
+
+    model%import_weight_pack_bytes = pack_offset
+    if (model%import_weight_pack_count > 0_i32 .and. model%import_weight_pack_hash == 0_i64) then
+      model%import_weight_pack_hash = hash_text64(trim(model%source_model_id) // ":weight_pack")
+    end if
+  end subroutine recompute_import_weight_pack_summary
 
   subroutine append_import_lineage_payload(payload_text, payload_bytes, stage_kind, model)
     character(len=*), intent(inout) :: payload_text
@@ -1958,6 +1996,14 @@ contains
     write(field_text, '(";weight_pack_bytes=",I0)') model%import_weight_pack_bytes
     call append_payload_fragment(payload_text, trim(field_text))
 
+    field_text = ""
+    write(field_text, '(";weight_pack_hash=",Z16.16)') model%import_weight_pack_hash
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";weight_pack_count=",I0)') model%import_weight_pack_count
+    call append_payload_fragment(payload_text, trim(field_text))
+
     if (len_trim(model%import_projector_artifact_path) > 0) then
       field_text = ""
       write(field_text, '(";projector_artifact=",A)') trim(model%import_projector_artifact_path)
@@ -1970,6 +2016,9 @@ contains
 
     if (stage_kind == MIZU_STAGE_MODEL_LOAD) then
       call append_import_weight_pack_payload(payload_text, model)
+    else if (stage_kind == MIZU_STAGE_PROJECTOR .or. stage_kind == MIZU_STAGE_PREFILL .or. &
+             stage_kind == MIZU_STAGE_DECODE) then
+      call append_import_weight_pack_dependency_payload(payload_text, model)
     end if
 
     if (stage_kind == MIZU_STAGE_MODEL_LOAD .or. stage_kind == MIZU_STAGE_PROJECTOR) then
@@ -2036,7 +2085,35 @@ contains
     field_text = ""
     write(field_text, '(";pack_total_bytes=",I0)') pack_total_bytes
     call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_hash=",Z16.16)') model%import_weight_pack_hash
+    call append_payload_fragment(payload_text, trim(field_text))
   end subroutine append_import_weight_pack_payload
+
+  subroutine append_import_weight_pack_dependency_payload(payload_text, model)
+    character(len=*), intent(inout) :: payload_text
+    type(model_state), intent(in)   :: model
+    character(len=96)               :: field_text
+
+    if (model%import_weight_pack_hash == 0_i64) return
+
+    field_text = ""
+    write(field_text, '(";pack_dependency=cuda_import_weight_pack_v1")')
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_ref_hash=",Z16.16)') model%import_weight_pack_hash
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_ref_count=",I0)') model%import_weight_pack_count
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_ref_bytes=",I0)') model%import_weight_pack_bytes
+    call append_payload_fragment(payload_text, trim(field_text))
+  end subroutine append_import_weight_pack_dependency_payload
 
   pure logical function import_tensor_belongs_to_projector(import_tensor, model) result(is_projector_tensor)
     type(import_tensor_state), intent(in) :: import_tensor
@@ -2169,6 +2246,7 @@ contains
     call build_weight_cache_key(manifest, "unbound", "logical", optimization_backend_family, &
       MIZU_EXEC_ROUTE_NONE, optimization_key)
     optimization_key_text = append_allowed_mask_identity(trim(optimization_key%key_text), allowed_backend_mask)
+    optimization_key_text = append_import_pack_identity(trim(optimization_key_text), model)
     call initialize_plan_request(stage_request, MIZU_STAGE_MODEL_LOAD, OP_FAMILY_NONE, &
       manifest%model_family, allowed_backend_mask)
     stage_request%shape_signature = 0_i64
@@ -2179,7 +2257,7 @@ contains
     do candidate_index = 1_i32, candidate_count
       call build_weight_cache_key(manifest, "unbound", "logical", candidate_backend_families(candidate_index), &
         candidate_execution_routes(candidate_index), candidate_key)
-      candidate_key_texts(candidate_index) = trim(candidate_key%key_text)
+      candidate_key_texts(candidate_index) = append_import_pack_identity(trim(candidate_key%key_text), model)
       candidate_plan_ids(candidate_index) = hash_text64(trim(candidate_key_texts(candidate_index)))
     end do
 
@@ -2594,12 +2672,13 @@ contains
       MIZU_EXEC_ROUTE_NONE, MIZU_DTYPE_BF16, 3_i32, shape, optimization_key)
     optimization_key_text = append_allowed_mask_identity(trim(optimization_key%key_text), &
       model%info%allowed_backend_mask)
+    optimization_key_text = append_import_pack_identity(trim(optimization_key_text), model)
 
     do candidate_index = 1_i32, candidate_count
       call build_plan_cache_key(manifest, "unbound", "logical", stage_kind, &
         candidate_backend_families(candidate_index), candidate_execution_routes(candidate_index), &
         MIZU_DTYPE_BF16, 3_i32, shape, candidate_key)
-      candidate_key_text = trim(candidate_key%key_text)
+      candidate_key_text = append_import_pack_identity(trim(candidate_key%key_text), model)
       candidate_plan_ids(candidate_index) = hash_text64(trim(candidate_key_text))
       candidate_key_texts(candidate_index) = trim(candidate_key_text)
     end do
@@ -2723,10 +2802,12 @@ contains
     call build_multimodal_cache_key(manifest, "unbound", trim(slot_name), modality_kind, &
       modality_dtype, max(0_i64, staged_modal_byte_count), key)
     optimization_key_text = append_allowed_mask_identity(trim(key%key_text), model%info%allowed_backend_mask)
+    optimization_key_text = append_import_pack_identity(trim(optimization_key_text), model)
 
     do candidate_index = 1_i32, candidate_count
       candidate_key_texts(candidate_index) = append_route_identity(trim(key%key_text), &
         candidate_backend_families(candidate_index), candidate_execution_routes(candidate_index))
+      candidate_key_texts(candidate_index) = append_import_pack_identity(trim(candidate_key_texts(candidate_index)), model)
       candidate_plan_ids(candidate_index) = hash_text64(trim(candidate_key_texts(candidate_index)))
     end do
 
@@ -2911,6 +2992,23 @@ contains
     write(candidate_key_text, '(A,":candidate_backend=",I0,":candidate_route=",I0)') &
       trim(base_key_text), backend_family, execution_route
   end function append_route_identity
+
+  function append_import_pack_identity(base_key_text, model) result(key_text)
+    character(len=*), intent(in) :: base_key_text
+    type(model_state), intent(in) :: model
+    character(len=MAX_CACHE_KEY_LEN) :: key_text
+
+    key_text = ""
+    if (len_trim(base_key_text) == 0) return
+
+    if (model%import_weight_pack_hash == 0_i64) then
+      key_text = trim(base_key_text)
+      return
+    end if
+
+    write(key_text, '(A,":packhash=",Z16.16,":packbytes=",I0)') trim(base_key_text), &
+      model%import_weight_pack_hash, model%import_weight_pack_bytes
+  end function append_import_pack_identity
 
   function build_stage_artifact_metadata(stage_kind, backend_family, execution_route, candidate_key_text, &
                                          request, cache_root, model) result(metadata)

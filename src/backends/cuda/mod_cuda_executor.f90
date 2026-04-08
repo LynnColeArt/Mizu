@@ -37,8 +37,10 @@ contains
     integer(i64), intent(in), optional :: workspace_bytes
     character(len=1024)          :: payload_text
     integer(i64)                 :: payload_hash
+    integer(i64)                 :: pack_dependency_hash
     integer(i64)                 :: workspace_bytes_local
     logical                      :: loaded_ok
+    logical                      :: has_pack_dependency
     type(c_ptr)                  :: workspace_buffer_local
 
     embedding_count = 0_i64
@@ -58,7 +60,9 @@ contains
       return
     end if
 
+    call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
     payload_hash = combine_positive_hash64(positive_hash64(trim(payload_text)), modal_content_hash)
+    if (has_pack_dependency) payload_hash = combine_positive_hash64(payload_hash, pack_dependency_hash)
     workspace_buffer_local = c_null_ptr
     workspace_bytes_local = 0_i64
     if (present(workspace_buffer)) workspace_buffer_local = workspace_buffer
@@ -89,8 +93,10 @@ contains
     character(len=1024)          :: payload_text
     integer(i64)                 :: artifact_hash
     integer(i64)                 :: payload_hash
+    integer(i64)                 :: pack_dependency_hash
     integer(i64)                 :: workspace_bytes_local
     logical                      :: loaded_ok
+    logical                      :: has_pack_dependency
     type(c_ptr)                  :: workspace_buffer_local
 
     consumed_token_count = 0_i64
@@ -125,6 +131,8 @@ contains
     end if
 
     artifact_hash = positive_hash64(trim(payload_text))
+    call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
+    if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
     payload_hash = artifact_hash
     payload_hash = combine_positive_hash64(payload_hash, token_content_hash)
     payload_hash = combine_positive_hash64(payload_hash, modal_content_hash)
@@ -160,11 +168,13 @@ contains
     character(len=1024)          :: payload_text
     integer(i64)                 :: artifact_hash
     integer(i64)                 :: payload_hash
+    integer(i64)                 :: pack_dependency_hash
     integer(i64)                 :: workspace_bytes_local
     integer(i64)                 :: current_context_artifact_hash
     integer(i32)                 :: current_context_stage
     logical                      :: loaded_ok
     logical                      :: lineage_known
+    logical                      :: has_pack_dependency
     type(c_ptr)                  :: workspace_buffer_local
 
     emitted_token_count = 0_i64
@@ -196,6 +206,8 @@ contains
     end if
 
     artifact_hash = positive_hash64(trim(payload_text))
+    call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
+    if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
     payload_hash = artifact_hash
     call extract_cuda_context_lineage(context_bytes, context_byte_count, current_context_stage, &
       current_context_artifact_hash, lineage_known)
@@ -280,6 +292,69 @@ contains
     hash_value = iand(ieor(mixed_hash, shiftr(mixed_hash, 31)), int(z'7FFFFFFFFFFFFFFF', kind=i64))
     if (hash_value == 0_i64) hash_value = 1_i64
   end function combine_positive_hash64
+
+  subroutine extract_payload_pack_dependency_hash(payload_text, dependency_hash, has_dependency)
+    character(len=*), intent(in) :: payload_text
+    integer(i64), intent(out)    :: dependency_hash
+    logical, intent(out)         :: has_dependency
+    character(len=64)            :: pack_hash_text
+    character(len=64)            :: pack_bytes_text
+    logical                      :: found_hash
+    logical                      :: found_bytes
+
+    dependency_hash = 0_i64
+    has_dependency = .false.
+    pack_hash_text = ""
+    pack_bytes_text = ""
+
+    call extract_payload_field_text(payload_text, "pack_ref_hash=", pack_hash_text, found_hash)
+    if (.not. found_hash) call extract_payload_field_text(payload_text, "weight_pack_hash=", pack_hash_text, found_hash)
+    call extract_payload_field_text(payload_text, "pack_ref_bytes=", pack_bytes_text, found_bytes)
+    if (.not. found_bytes) call extract_payload_field_text(payload_text, "weight_pack_bytes=", pack_bytes_text, found_bytes)
+
+    if (found_hash) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_hash_text)))
+      has_dependency = .true.
+    end if
+    if (found_bytes) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_bytes_text)))
+      has_dependency = .true.
+    end if
+  end subroutine extract_payload_pack_dependency_hash
+
+  subroutine extract_payload_field_text(payload_text, key_text, value_text, found)
+    character(len=*), intent(in)  :: payload_text
+    character(len=*), intent(in)  :: key_text
+    character(len=*), intent(out) :: value_text
+    logical, intent(out)          :: found
+    integer(i32)                  :: start_index
+    integer(i32)                  :: value_start
+    integer(i32)                  :: remaining_len
+    integer(i32)                  :: separator_index
+    integer(i32)                  :: copy_len
+
+    value_text = ""
+    found = .false.
+    if (len_trim(payload_text) == 0 .or. len_trim(key_text) == 0) return
+
+    start_index = index(payload_text, trim(key_text))
+    if (start_index <= 0) return
+
+    value_start = start_index + len_trim(key_text)
+    if (value_start > len_trim(payload_text)) return
+
+    remaining_len = len_trim(payload_text) - value_start + 1_i32
+    separator_index = index(payload_text(value_start:value_start + remaining_len - 1_i32), ";")
+    if (separator_index <= 0) then
+      copy_len = min(len_trim(payload_text) - value_start + 1_i32, len(value_text))
+    else
+      copy_len = min(separator_index - 1_i32, len(value_text))
+    end if
+    if (copy_len <= 0) return
+
+    value_text(1:copy_len) = payload_text(value_start:value_start + copy_len - 1_i32)
+    found = (len_trim(value_text) > 0)
+  end subroutine extract_payload_field_text
 
   pure logical function cuda_context_bytes_are_valid(context_bytes, context_byte_count) result(is_valid)
     integer(i8), intent(in) :: context_bytes(:)

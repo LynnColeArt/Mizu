@@ -362,8 +362,14 @@ int main(void) {
     if (!expect_true("cuda projector artifact should retain imported projector lineage", command_status == 0)) return 1;
     command_status = system("grep -R \"projector_bytes=9175040\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
     if (!expect_true("cuda projector artifact should retain exact imported projector byte estimates", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_dependency=cuda_import_weight_pack_v1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
+    if (!expect_true("cuda projector artifact should depend on the import-driven weight pack", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_ref_count=4\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
+    if (!expect_true("cuda projector artifact should retain the packed tensor count dependency", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill -type f | grep -q .");
     if (!expect_true("cuda prefill artifact file should exist", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_ref_bytes=2205693952\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain the packed tensor byte dependency", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
     if (!expect_true("cuda decode artifact file should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/sessions -type f | grep -q .");
