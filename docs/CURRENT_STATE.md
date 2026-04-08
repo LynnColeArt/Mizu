@@ -4,14 +4,15 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `76ceb61` (`Document CUDA page
-  recycle validation`)
-- current milestone: CUDA live-context payloads now widen to 768 bytes and add
-  an explicit per-page tensor descriptor table for storage offsets, committed
-  byte spans, capacity byte spans, and row strides
-- immediate next target: validate one narrow multimodal CUDA flow end to end,
-  or replace more of the compact key/value lane image with a less synthetic
-  tensor-backed page payload
+- latest published baseline before this slice: `b5deebd` (`Document CUDA
+  tensor descriptor checkpoint`)
+- current milestone: one narrow multimodal CUDA flow is now validated end to
+  end through the public API, including session-state transitions, output
+  readback, `park`/`resume`, and fresh-runtime warm reuse against persisted
+  cache state
+- immediate next target: add reference-output checks where feasible, compare
+  API-level parity against Apple, or replace more of the compact key/value
+  lane image with a less synthetic tensor-backed page payload
 
 ## Roadmap Status
 
@@ -143,6 +144,15 @@ In short:
   fourth Fortran-side extractor, which makes the compact page image inspectable
   as a small tensor-backed page record rather than only a lane image plus page
   metadata
+- the public CUDA contract path now validates one narrow multimodal flow end
+  to end:
+  - open runtime, model, and session
+  - attach staged tokens and one modal payload
+  - run projector, prefill, and decode through the public API
+  - read back output tokens through `mizu_session_read_output`
+  - park and resume session state through a persisted checkpoint artifact
+  - reopen a fresh runtime and confirm warm cache reuse plus token
+    reproducibility for the same multimodal staged context
 
 ### Self-Optimization
 
@@ -310,15 +320,19 @@ In short:
   not real backend checksums over device-resident tensor tiles
 - the new page-layout records are still synthetic descriptors, not real tensor
   strides, allocator metadata, or backend-owned page tables
+- the end-to-end multimodal CUDA contract coverage proves lifecycle and cache
+  reuse behavior, but it still validates placeholder execution paths rather
+  than true model outputs
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing
 
 ## Most Useful Next Steps
 
-1. Build the Apple capability and planner layer.
-2. Materialize route-specific Apple pack and plan payloads behind the existing
-   metadata records.
+1. Add reference-output checks for the current narrow CUDA flow wherever the
+   placeholder path is deterministic enough to make that honest.
+2. Compare API-level parity against the Apple planner and capability layer so
+   CUDA bring-up does not drift away from the primary target contract.
 3. Replace the compact CUDA key/value lane image and synthetic page-layout
    records with a more realistic tensor-backed page record or backend-owned
    KV-state payload.

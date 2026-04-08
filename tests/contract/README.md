@@ -23,11 +23,17 @@ These suites cover the `API-C*` portion of
   - verifies route-specific CUDA formats are persisted
   - verifies CUDA stub artifact payload files are materialized under `cache_root`
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
+  - verifies session-state transitions across staging, prefill, decode,
+    `park`, and `resume`
+  - verifies decode output can be read back through
+    `mizu_session_read_output`
   - verifies CUDA `park` and `resume` materialize a persisted session
     checkpoint artifact under `cache_root`
   - verifies parked CUDA sessions can resume after their active context has
     been offloaded behind that checkpoint
   - verifies resumed CUDA sessions only accept checkpoint state that still
     matches the stored route and producer lineage expectations
+  - verifies a fresh runtime can replay the same narrow multimodal CUDA flow
+    with warm cache reuse and reproduce the same decode token
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

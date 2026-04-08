@@ -74,6 +74,9 @@ Current implementation status:
   explicit per-page tensor descriptor table for storage offsets, committed
   byte spans, capacity byte spans, and row strides, so the compact page image
   now looks more like a tiny tensor-backed page record than a pure summary
+- one narrow multimodal CUDA flow is now validated end to end through the
+  public API, including session-state transitions, output readback,
+  `park`/`resume`, and fresh-runtime warm reuse against persisted cache state
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
@@ -81,7 +84,8 @@ Current implementation status:
   executables
 - `make test` now succeeds from a clean tree without relying on stray Fortran
   module files
-- Apple and CUDA execution backends are not implemented yet
+- no real Apple execution backend exists yet, and CUDA execution is still
+  placeholder/scaffold-level rather than real transformer math
 
 Build and test:
 

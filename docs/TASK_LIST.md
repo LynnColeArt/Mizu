@@ -256,7 +256,7 @@ These are the highest-leverage next tasks.
 
 - [x] Validate compact page-table rotation and recycled-slot marking under
   decode window overflow
-- [ ] Validate one target multimodal flow on CUDA
+- [x] Validate one target multimodal flow on CUDA
 - [ ] Compare API-level parity against Apple
 - [ ] Add reference-output checks where feasible
 
