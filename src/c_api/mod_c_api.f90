@@ -34,7 +34,8 @@ module mod_c_api
                            MIZU_CACHE_FLAG_PLAN_HIT, MIZU_CACHE_FLAG_SESSION_HIT, &
                            MIZU_CACHE_FLAG_MM_HIT, MIZU_CACHE_FLAG_WINNER_REUSED, &
                            MIZU_MODALITY_KIND_IMAGE, &
-                           MIZU_DTYPE_U8, MIZU_DTYPE_BF16, runtime_handle, model_handle, &
+                           MIZU_DTYPE_U8, MIZU_DTYPE_BF16, &
+                           SOURCE_FORMAT_MIZU_IMPORT_BUNDLE, runtime_handle, model_handle, &
                            session_handle, runtime_config, model_open_config, session_config, &
                            model_info, session_info, execution_report, runtime_state, &
                            model_state, session_state, MAX_RECENT_OUTPUT_TOKENS, MAX_LIVE_CONTEXT_BYTES
@@ -436,11 +437,13 @@ contains
     model_registry(slot_id)%tensor_count = manifest_tensor_count(manifest)
     model_registry(slot_id)%modality_count = manifest_modality_count(manifest)
     model_registry(slot_id)%source_model_id = manifest%provenance%source_model_id
+    call copy_model_import_snapshot(manifest, model_registry(slot_id))
     runtime_cache => runtime_cache_registry(runtime%handle%value)
     optimization_store => runtime_optimization_registry(runtime%handle%value)
     load_elapsed_us = elapsed_since_us(stage_started_us)
     load_cache_flags = resolve_weight_cache_flags(runtime, runtime_cache, optimization_store, &
-      manifest, info%allowed_backend_mask, load_elapsed_us, model_plan_id, selection_mode, &
+      manifest, model_registry(slot_id), info%allowed_backend_mask, load_elapsed_us, &
+      model_plan_id, selection_mode, &
       report_backend_family, report_route)
     model_registry(slot_id)%last_report = make_stage_report(MIZU_STAGE_MODEL_LOAD, report_backend_family, &
       report_route, MIZU_FALLBACK_REASON_NONE, selection_mode, &
@@ -1848,14 +1851,126 @@ contains
     end if
   end subroutine populate_manifest_identity
 
+  subroutine copy_model_import_snapshot(manifest, model)
+    type(model_manifest), intent(in)    :: manifest
+    type(model_state), intent(inout)    :: model
+    character(len=MAX_PATH_LEN + 2 * MAX_NAME_LEN + 48) :: lineage_entry
+    integer(i32)                        :: tensor_index
+    integer(i32)                        :: preview_index
+    integer(i64)                        :: entry_hash
+
+    model%has_import_bundle = (manifest%provenance%source_format == SOURCE_FORMAT_MIZU_IMPORT_BUNDLE)
+    model%import_inventory_hash = 0_i64
+    model%import_preview_count = 0_i32
+    model%import_projector_artifact_path = ""
+    model%import_tensor_names = ""
+    model%import_tensor_roles = ""
+    model%import_tensor_paths = ""
+
+    if (.not. model%has_import_bundle) return
+
+    if (allocated(manifest%tensors)) then
+      preview_index = 0_i32
+      do tensor_index = 1_i32, int(size(manifest%tensors), kind=i32)
+        lineage_entry = ""
+        write(lineage_entry, '(A,"|",A,"|",A)') trim(manifest%tensors(tensor_index)%tensor_name), &
+          trim(manifest%tensors(tensor_index)%tensor_role), trim(manifest%tensors(tensor_index)%source_path)
+        entry_hash = hash_text64(trim(lineage_entry))
+        model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
+
+        if (preview_index >= int(size(model%import_tensor_paths), kind=i32)) cycle
+        if (len_trim(manifest%tensors(tensor_index)%source_path) == 0) cycle
+
+        preview_index = preview_index + 1_i32
+        model%import_tensor_names(preview_index) = trim(manifest%tensors(tensor_index)%tensor_name)
+        model%import_tensor_roles(preview_index) = trim(manifest%tensors(tensor_index)%tensor_role)
+        model%import_tensor_paths(preview_index) = trim(manifest%tensors(tensor_index)%source_path)
+      end do
+      model%import_preview_count = preview_index
+    end if
+
+    if (manifest%projector%is_present .and. len_trim(manifest%projector%artifact_path) > 0) then
+      model%import_projector_artifact_path = trim(manifest%projector%artifact_path)
+      entry_hash = hash_text64(trim(manifest%projector%artifact_path))
+      model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
+    end if
+
+    if (model%import_inventory_hash == 0_i64) then
+      model%import_inventory_hash = hash_text64(trim(model%source_model_id) // ":import_bundle")
+    end if
+  end subroutine copy_model_import_snapshot
+
+  subroutine append_import_lineage_payload(payload_text, payload_bytes, stage_kind, model)
+    character(len=*), intent(inout) :: payload_text
+    integer(i64), intent(out)       :: payload_bytes
+    integer(i32), intent(in)        :: stage_kind
+    type(model_state), intent(in)   :: model
+    character(len=MAX_PATH_LEN + 64) :: field_text
+    integer(i32)                     :: preview_index
+
+    if (.not. model%has_import_bundle) then
+      payload_bytes = int(len_trim(payload_text) + 1, kind=i64)
+      return
+    end if
+
+    field_text = ""
+    write(field_text, '(";source_id=",A)') trim(model%source_model_id)
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";import_hash=",Z16.16)') model%import_inventory_hash
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    if (len_trim(model%import_projector_artifact_path) > 0) then
+      field_text = ""
+      write(field_text, '(";projector_artifact=",A)') trim(model%import_projector_artifact_path)
+      call append_payload_fragment(payload_text, trim(field_text))
+    end if
+
+    if (stage_kind == MIZU_STAGE_MODEL_LOAD .or. stage_kind == MIZU_STAGE_PROJECTOR) then
+      do preview_index = 1_i32, model%import_preview_count
+        field_text = ""
+        write(field_text, '(";tensor",I0,"=",A,"|",A,"|",A)') preview_index, &
+          trim(model%import_tensor_names(preview_index)), trim(model%import_tensor_roles(preview_index)), &
+          trim(model%import_tensor_paths(preview_index))
+        call append_payload_fragment(payload_text, trim(field_text))
+      end do
+    end if
+
+    if (model%tensor_count > model%import_preview_count) then
+      field_text = ""
+      write(field_text, '(";tensor_preview=",I0,"/",I0)') model%import_preview_count, model%tensor_count
+      call append_payload_fragment(payload_text, trim(field_text))
+    end if
+
+    payload_bytes = int(len_trim(payload_text) + 1, kind=i64)
+  end subroutine append_import_lineage_payload
+
+  subroutine append_payload_fragment(payload_text, fragment)
+    character(len=*), intent(inout) :: payload_text
+    character(len=*), intent(in)    :: fragment
+    integer(i32)                    :: start_index
+    integer(i32)                    :: write_count
+
+    if (len_trim(fragment) == 0) return
+
+    start_index = len_trim(payload_text) + 1_i32
+    if (start_index > len(payload_text)) return
+
+    write_count = min(len_trim(fragment), len(payload_text) - start_index + 1_i32)
+    if (write_count <= 0_i32) return
+    payload_text(start_index:start_index + write_count - 1_i32) = fragment(1:write_count)
+  end subroutine append_payload_fragment
+
   integer(i64) function resolve_weight_cache_flags(runtime, runtime_cache, optimization_store, manifest, &
-                                                   allowed_backend_mask, elapsed_us, plan_id, &
+                                                   model, allowed_backend_mask, elapsed_us, plan_id, &
                                                    selection_mode, backend_family, execution_route) &
       result(cache_flags)
     type(runtime_state), intent(in)                  :: runtime
     type(runtime_cache_bundle), intent(inout)        :: runtime_cache
     type(runtime_optimization_store), intent(inout)  :: optimization_store
     type(model_manifest), intent(in)                 :: manifest
+    type(model_state), intent(in)                    :: model
     integer(i64), intent(in)                         :: allowed_backend_mask
     integer(i64), intent(in)                         :: elapsed_us
     integer(i64), intent(out)                        :: plan_id
@@ -1906,7 +2021,7 @@ contains
     call touch_weight_cache_key(runtime_cache, trim(candidate_key_text), was_hit)
     call record_weight_artifact_metadata(runtime_cache, trim(candidate_key_text), &
       build_stage_artifact_metadata(MIZU_STAGE_MODEL_LOAD, backend_family, execution_route, &
-        trim(candidate_key_text), stage_request, runtime%config%cache_root))
+        trim(candidate_key_text), stage_request, runtime%config%cache_root, model))
     reused_winner = (selection_mode == MIZU_SELECTION_MODE_REUSE)
     call record_execution_sample(optimization_store, trim(optimization_key_text), plan_id, elapsed_us, &
       trim(candidate_key_text))
@@ -2325,7 +2440,7 @@ contains
       candidate_backend_families, candidate_execution_routes, candidate_plan_ids, candidate_key_texts, &
       candidate_key_text, plan_id, selection_mode, backend_family, execution_route)
     artifact_metadata = build_stage_artifact_metadata(stage_kind, backend_family, execution_route, &
-      trim(candidate_key_text), stage_request, runtime%config%cache_root)
+      trim(candidate_key_text), stage_request, runtime%config%cache_root, model)
   end subroutine prepare_plan_stage_candidate
 
   subroutine finalize_plan_stage_cache(runtime_cache, optimization_store, optimization_key_text, &
@@ -2451,7 +2566,7 @@ contains
       candidate_backend_families, candidate_execution_routes, candidate_plan_ids, candidate_key_texts, &
       candidate_key_text, plan_id, selection_mode, backend_family, execution_route)
     artifact_metadata = build_stage_artifact_metadata(MIZU_STAGE_PROJECTOR, backend_family, execution_route, &
-      trim(candidate_key_text), stage_request, runtime%config%cache_root)
+      trim(candidate_key_text), stage_request, runtime%config%cache_root, model)
     placeholder_count = max(1_i32, stage_request%projector%placeholder_count)
   end subroutine prepare_projector_stage_candidate
 
@@ -2630,18 +2745,19 @@ contains
   end function append_route_identity
 
   function build_stage_artifact_metadata(stage_kind, backend_family, execution_route, candidate_key_text, &
-                                         request, cache_root) result(metadata)
+                                         request, cache_root, model) result(metadata)
     integer(i32), intent(in)      :: stage_kind
     integer(i32), intent(in)      :: backend_family
     integer(i32), intent(in)      :: execution_route
     character(len=*), intent(in)  :: candidate_key_text
     type(plan_request), intent(in), optional :: request
     character(len=*), intent(in), optional   :: cache_root
+    type(model_state), intent(in), optional  :: model
     type(artifact_metadata_record) :: metadata
     type(planner_result)           :: planning_result
     type(plan_request)             :: planning_request
     character(len=MAX_NAME_LEN)    :: fingerprint_token
-    character(len=max(APPLE_ARTIFACT_PAYLOAD_LEN, CUDA_ARTIFACT_PAYLOAD_LEN)) :: payload_text
+    character(len=max(APPLE_ARTIFACT_PAYLOAD_LEN, CUDA_ARTIFACT_PAYLOAD_LEN) + 2048) :: payload_text
     integer(i64)                   :: payload_bytes
     integer(i32)                   :: status_code
 
@@ -2681,6 +2797,7 @@ contains
       metadata%workspace_bytes = max(0_i64, planning_result%chosen_plan%workspace_bytes)
       call build_apple_artifact_payload_text(planning_request, planning_result%chosen_plan, trim(candidate_key_text), &
         payload_text, payload_bytes)
+      if (present(model)) call append_import_lineage_payload(payload_text, payload_bytes, stage_kind, model)
       if (present(cache_root)) then
         call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
       end if
@@ -2694,6 +2811,7 @@ contains
       metadata%workspace_bytes = max(0_i64, planning_result%chosen_plan%workspace_bytes)
       call build_cuda_artifact_payload_text(planning_request, planning_result%chosen_plan, trim(candidate_key_text), &
         payload_text, payload_bytes)
+      if (present(model)) call append_import_lineage_payload(payload_text, payload_bytes, stage_kind, model)
       if (present(cache_root)) then
         call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
       end if

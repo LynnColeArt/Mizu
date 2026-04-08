@@ -86,10 +86,10 @@ all: test
 test: unit-tests contract-tests
 
 unit-tests: $(UNIT_BINS)
-	@for test_bin in $(UNIT_BINS); do $$test_bin; done
+	@set -e; for test_bin in $(UNIT_BINS); do $$test_bin; done
 
 contract-tests: contract-smokes $(CONTRACT_BINS)
-	@for test_bin in $(CONTRACT_BINS); do $$test_bin; done
+	@set -e; for test_bin in $(CONTRACT_BINS); do $$test_bin; done
 
 contract-smokes: $(CONTRACT_SMOKES)
 

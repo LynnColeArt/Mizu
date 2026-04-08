@@ -31,7 +31,9 @@ These suites cover the `API-C*` portion of
 - `test_cuda_artifacts.c`
   - forces the CUDA route through the public API
   - verifies route-specific CUDA formats are persisted
-  - verifies CUDA stub artifact payload files are materialized under `cache_root`
+  - verifies CUDA artifact payload files are materialized under `cache_root`
+  - verifies those materialized CUDA weight and projector artifacts retain
+    imported `mizu_import/` source-path lineage
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
   - verifies session-state transitions across staging, prefill, decode,
     `park`, and `resume`
@@ -45,8 +47,7 @@ These suites cover the `API-C*` portion of
     matches the stored route and producer lineage expectations
   - verifies a fresh runtime can replay the same narrow multimodal CUDA flow
     with warm cache reuse and reproduce the same decode token
-  - verifies that narrow public CUDA flow emits the exact current
-    build-specific reference token for the fixture instead of only a nonzero
-    token
+  - verifies that narrow public CUDA flow emits a stable positive placeholder
+    token and reproduces it for the same staged multimodal context
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

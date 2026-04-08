@@ -178,6 +178,7 @@ module mod_types
   integer(i32), parameter :: SOURCE_FORMAT_MIZU_IMPORT_BUNDLE = 3_i32
 
   integer(i32), parameter :: MAX_RUNTIME_BACKENDS = 2_i32
+  integer(i32), parameter :: MAX_MODEL_IMPORT_PREVIEW = 6_i32
   integer(i32), parameter :: MAX_RECENT_OUTPUT_TOKENS = 8_i32
   integer(i32), parameter :: MAX_LIVE_CONTEXT_BYTES = 768_i32
 
@@ -342,6 +343,13 @@ module mod_types
     integer(i32)                      :: tensor_count        = 0_i32
     integer(i32)                      :: modality_count      = 0_i32
     character(len=MAX_NAME_LEN)       :: source_model_id     = ""
+    logical                           :: has_import_bundle   = .false.
+    integer(i64)                      :: import_inventory_hash = 0_i64
+    integer(i32)                      :: import_preview_count = 0_i32
+    character(len=MAX_PATH_LEN)       :: import_projector_artifact_path = ""
+    character(len=MAX_NAME_LEN)       :: import_tensor_names(MAX_MODEL_IMPORT_PREVIEW) = ""
+    character(len=MAX_NAME_LEN)       :: import_tensor_roles(MAX_MODEL_IMPORT_PREVIEW) = ""
+    character(len=MAX_PATH_LEN)       :: import_tensor_paths(MAX_MODEL_IMPORT_PREVIEW) = ""
     integer(i32)                      :: live_session_count  = 0_i32
     logical                           :: is_open             = .false.
   end type model_state

@@ -62,6 +62,13 @@ contains
     model%tensor_count       = 0_i32
     model%modality_count     = 0_i32
     model%source_model_id    = ""
+    model%has_import_bundle  = .false.
+    model%import_inventory_hash = 0_i64
+    model%import_preview_count = 0_i32
+    model%import_projector_artifact_path = ""
+    model%import_tensor_names = ""
+    model%import_tensor_roles = ""
+    model%import_tensor_paths = ""
     model%live_session_count = 0_i32
     model%is_open            = .true.
   end subroutine initialize_model_state
@@ -78,6 +85,13 @@ contains
     model%tensor_count       = 0_i32
     model%modality_count     = 0_i32
     model%source_model_id    = ""
+    model%has_import_bundle  = .false.
+    model%import_inventory_hash = 0_i64
+    model%import_preview_count = 0_i32
+    model%import_projector_artifact_path = ""
+    model%import_tensor_names = ""
+    model%import_tensor_roles = ""
+    model%import_tensor_paths = ""
     model%live_session_count = 0_i32
     model%is_open            = .false.
   end subroutine reset_model_state
