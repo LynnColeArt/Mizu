@@ -73,6 +73,7 @@ CONTRACT_SMOKES := \
 	$(TEST_DIR)/test_header_cpp_smoke.o
 
 CONTRACT_BINS := \
+	$(TEST_DIR)/test_backend_availability \
 	$(TEST_DIR)/test_opaque_handles \
 	$(TEST_DIR)/test_cuda_artifacts \
 	$(TEST_DIR)/test_stage_reports
@@ -266,6 +267,25 @@ $(TEST_DIR)/test_header_cpp_smoke.o: tests/contract/test_header_cpp_smoke.cpp | 
 
 $(TEST_DIR)/test_opaque_handles: $(TEST_DIR)
 	$(CC) $(CFLAGS) -Iinclude tests/contract/test_opaque_handles.c -o $@
+
+$(TEST_DIR)/test_backend_availability.o: tests/contract/test_backend_availability.c | $(TEST_DIR)
+	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
+
+$(TEST_DIR)/test_backend_availability: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $(RUNTIME_F90) $(BACKEND_F90) \
+	$(CAPI_F90) $(TEST_DIR)/test_backend_availability.o $(CUDA_BRIDGE_OBJ) $(APPLE_BRIDGE_OBJ)
+	mkdir -p $(TEST_DIR)/backend_availability_mods
+	$(FC) $(FFLAGS) -J $(TEST_DIR)/backend_availability_mods -I $(TEST_DIR)/backend_availability_mods -o $@ \
+		$(COMMON_F90) \
+		$(MODEL_F90) \
+		$(CACHE_F90) \
+		$(RUNTIME_F90) \
+		$(BACKEND_F90) \
+		$(CAPI_F90) \
+		$(TEST_DIR)/test_backend_availability.o \
+		$(APPLE_BRIDGE_OBJ) \
+		$(CUDA_BRIDGE_OBJ) \
+		$(APPLE_BRIDGE_LINK_LIBS) \
+		$(CUDA_BRIDGE_LINK_LIBS)
 
 $(TEST_DIR)/test_cuda_artifacts.o: tests/contract/test_cuda_artifacts.c | $(TEST_DIR)
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@

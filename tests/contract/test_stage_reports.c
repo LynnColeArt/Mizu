@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -119,6 +121,16 @@ int main(void) {
     memset(persist_prefill_reports_reuse, 0, sizeof(persist_prefill_reports_reuse));
     memset(persist_decode_reports, 0, sizeof(persist_decode_reports));
     memset(persist_decode_reports_reuse, 0, sizeof(persist_decode_reports_reuse));
+
+    if (setenv("MIZU_FORCE_APPLE_ANE_AVAILABLE", "1", 1) != 0) {
+        fprintf(stderr, "failed to set MIZU_FORCE_APPLE_ANE_AVAILABLE\n");
+        return 1;
+    }
+    if (setenv("MIZU_FORCE_APPLE_METAL_AVAILABLE", "1", 1) != 0) {
+        fprintf(stderr, "failed to set MIZU_FORCE_APPLE_METAL_AVAILABLE\n");
+        unsetenv("MIZU_FORCE_APPLE_ANE_AVAILABLE");
+        return 1;
+    }
 
     runtime_config.struct_size = sizeof(runtime_config);
     runtime_config.abi_version = mizu_get_abi_version();
@@ -520,6 +532,8 @@ int main(void) {
     command_status = system("rm -rf /tmp/mizu_stage_report_persist");
     if (!expect_true("persist root cleanup should succeed", command_status == 0)) return 1;
 
+    unsetenv("MIZU_FORCE_APPLE_ANE_AVAILABLE");
+    unsetenv("MIZU_FORCE_APPLE_METAL_AVAILABLE");
     puts("test_stage_reports: PASS");
     return 0;
 }

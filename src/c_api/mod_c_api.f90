@@ -415,9 +415,13 @@ contains
     call copy_c_string_ptr_to_fortran(c_config%model_root_z, config%model_root)
 
     stage_started_us = monotonic_timestamp_us()
-    status_code = build_model_info(config, manifest, info)
+    status_code = build_model_info(config, runtime%detected_backend_mask, manifest, info)
     if (status_code /= MIZU_STATUS_OK) then
-      call set_runtime_error(runtime, status_code, "model manifest load failed")
+      if (status_code == MIZU_STATUS_NO_VALID_PLAN) then
+        call set_runtime_error(runtime, status_code, "no requested backend is available on this runtime")
+      else
+        call set_runtime_error(runtime, status_code, "model manifest load failed")
+      end if
       mizu_model_open = int(status_code, kind=c_int32_t)
       return
     end if
@@ -1729,10 +1733,12 @@ contains
       slot_id <= int(size(session_used), kind=i64) .and. session_used(slot_id)
   end function is_session_slot_valid
 
-  integer(i32) function build_model_info(config, manifest, info) result(status_code)
+  integer(i32) function build_model_info(config, available_backend_mask, manifest, info) result(status_code)
     type(model_open_config), intent(in) :: config
+    integer(i64), intent(in)            :: available_backend_mask
     type(model_manifest), intent(out)   :: manifest
     type(model_info), intent(out)       :: info
+    integer(i64)                        :: effective_backend_mask
 
     info = model_info()
 
@@ -1744,8 +1750,14 @@ contains
     status_code = load_model_manifest_from_root(config%model_root, manifest)
     if (status_code /= MIZU_STATUS_OK) return
 
+    effective_backend_mask = iand(config%allowed_backend_mask, available_backend_mask)
+    if (effective_backend_mask == MIZU_BACKEND_MASK_NONE) then
+      status_code = MIZU_STATUS_NO_VALID_PLAN
+      return
+    end if
+
     call populate_model_info_from_manifest(manifest, info)
-    info%allowed_backend_mask = config%allowed_backend_mask
+    info%allowed_backend_mask = effective_backend_mask
     status_code = MIZU_STATUS_OK
   end function build_model_info
 
