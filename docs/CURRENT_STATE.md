@@ -27,8 +27,12 @@ Last updated: 2026-04-08
   packed offsets, and byte spans for the tensors each stage declares it uses,
   and those usage records now feed plan identity plus CUDA placeholder
   execution identity
+- CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
+  the live CUDA context payload, so backend-owned session state carries the
+  selected imported tensor profile instead of hiding it only inside artifact
+  text and cache identity
 - immediate next target: map real Qwen and Gemma assets into this bundle shape
-  and use that imported inventory in a more structural CUDA execution path
+  and use that imported inventory in a less-synthetic CUDA execution path
 
 ## Roadmap Status
 
@@ -250,6 +254,9 @@ In short:
   imported pack dependency lineage, and prefill/decode now also retain
   stage-specific `pack_use_*` usage records that name the exact imported
   tensors selected from the packed layout
+- CUDA live-context payloads now also retain an explicit pack-usage snapshot
+  with usage hash, byte total, and first/last packed tensor spans, so session
+  state carries selected imported tensor profile data directly
 - CUDA placeholder projector and prefill execution now incorporate staged-input
   content hashes instead of relying on counts alone
 - CUDA prefill now also receives copied staged token buffers and modal byte

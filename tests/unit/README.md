@@ -123,6 +123,9 @@ bodies.
     layout records for row counts, lane counts, head blocks, and generations
   - validates repeated CUDA decode steps preserve layout for untouched pages and
     advance generation only on the decode-owned page
+  - validates CUDA prefill and decode now stamp an explicit imported
+    pack-usage snapshot into live context state, including usage hash, byte
+    total, and first/last packed tensor spans
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub

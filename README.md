@@ -117,6 +117,10 @@ Current implementation status:
   `pack_use_*` records that name the exact imported tensors selected from the
   packed layout, and CUDA execution now reads those usage summaries back into
   its placeholder execution identity
+- CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
+  the live CUDA context payload, so backend-owned session state carries the
+  selected imported tensor profile instead of hiding it only inside payload
+  strings and cache keys
 - the narrow public CUDA flow now checks stable positive placeholder output plus
   warm-path reproducibility for the same multimodal staged context, while the
   unit suite still pins exact deterministic executor outputs per bridge variant
