@@ -39,7 +39,8 @@ module mod_c_api
                            SOURCE_FORMAT_MIZU_IMPORT_BUNDLE, runtime_handle, model_handle, &
                            session_handle, runtime_config, model_open_config, session_config, &
                            model_info, session_info, execution_report, runtime_state, &
-                           model_state, session_state, MAX_RECENT_OUTPUT_TOKENS, MAX_LIVE_CONTEXT_BYTES
+                           model_state, session_state, import_tensor_state, &
+                           MAX_RECENT_OUTPUT_TOKENS, MAX_LIVE_CONTEXT_BYTES
   use mod_runtime,   only: initialize_runtime_state, reset_runtime_state, &
                            initialize_model_state, reset_model_state, register_model, &
                            unregister_model, register_session, unregister_session, &
@@ -1863,18 +1864,30 @@ contains
     model%has_import_bundle = (manifest%provenance%source_format == SOURCE_FORMAT_MIZU_IMPORT_BUNDLE)
     model%import_inventory_hash = 0_i64
     model%import_tensor_bytes = 0_i64
+    model%import_weight_pack_bytes = 0_i64
     model%import_projector_bytes = 0_i64
     model%import_preview_count = 0_i32
     model%import_projector_artifact_path = ""
     model%import_tensor_names = ""
     model%import_tensor_roles = ""
     model%import_tensor_paths = ""
+    if (allocated(model%import_tensors)) deallocate(model%import_tensors)
 
     if (.not. model%has_import_bundle) return
 
     if (allocated(manifest%tensors)) then
+      allocate(model%import_tensors(size(manifest%tensors)))
+      model%import_tensors = import_tensor_state()
       preview_index = 0_i32
       do tensor_index = 1_i32, int(size(manifest%tensors), kind=i32)
+        model%import_tensors(tensor_index)%dtype = manifest%tensors(tensor_index)%dtype
+        model%import_tensors(tensor_index)%rank = manifest%tensors(tensor_index)%rank
+        model%import_tensors(tensor_index)%shape = manifest%tensors(tensor_index)%shape
+        model%import_tensors(tensor_index)%tensor_name = manifest%tensors(tensor_index)%tensor_name
+        model%import_tensors(tensor_index)%tensor_role = manifest%tensors(tensor_index)%tensor_role
+        model%import_tensors(tensor_index)%layout_name = manifest%tensors(tensor_index)%layout_name
+        model%import_tensors(tensor_index)%source_path = manifest%tensors(tensor_index)%source_path
+
         lineage_entry = ""
         write(lineage_entry, '(A,"|",A,"|",A)') trim(manifest%tensors(tensor_index)%tensor_name), &
           trim(manifest%tensors(tensor_index)%tensor_role), trim(manifest%tensors(tensor_index)%source_path)
@@ -1899,15 +1912,17 @@ contains
       model%import_projector_artifact_path = trim(manifest%projector%artifact_path)
       entry_hash = hash_text64(trim(manifest%projector%artifact_path))
       model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
-      if (allocated(manifest%tensors)) then
-        do tensor_index = 1_i32, int(size(manifest%tensors), kind=i32)
-          if (trim(manifest%tensors(tensor_index)%source_path) /= trim(manifest%projector%artifact_path)) cycle
+      if (allocated(model%import_tensors)) then
+        do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
+          if (trim(model%import_tensors(tensor_index)%source_path) /= trim(manifest%projector%artifact_path)) cycle
           model%import_projector_bytes = model%import_projector_bytes + estimate_manifest_tensor_bytes( &
-            manifest%tensors(tensor_index)%dtype, manifest%tensors(tensor_index)%rank, &
-            manifest%tensors(tensor_index)%shape)
+            model%import_tensors(tensor_index)%dtype, model%import_tensors(tensor_index)%rank, &
+            model%import_tensors(tensor_index)%shape)
         end do
       end if
     end if
+
+    model%import_weight_pack_bytes = max(0_i64, model%import_tensor_bytes - model%import_projector_bytes)
 
     if (model%import_inventory_hash == 0_i64) then
       model%import_inventory_hash = hash_text64(trim(model%source_model_id) // ":import_bundle")
@@ -1939,6 +1954,10 @@ contains
     write(field_text, '(";tensor_bytes=",I0)') model%import_tensor_bytes
     call append_payload_fragment(payload_text, trim(field_text))
 
+    field_text = ""
+    write(field_text, '(";weight_pack_bytes=",I0)') model%import_weight_pack_bytes
+    call append_payload_fragment(payload_text, trim(field_text))
+
     if (len_trim(model%import_projector_artifact_path) > 0) then
       field_text = ""
       write(field_text, '(";projector_artifact=",A)') trim(model%import_projector_artifact_path)
@@ -1947,6 +1966,10 @@ contains
       field_text = ""
       write(field_text, '(";projector_bytes=",I0)') model%import_projector_bytes
       call append_payload_fragment(payload_text, trim(field_text))
+    end if
+
+    if (stage_kind == MIZU_STAGE_MODEL_LOAD) then
+      call append_import_weight_pack_payload(payload_text, model)
     end if
 
     if (stage_kind == MIZU_STAGE_MODEL_LOAD .or. stage_kind == MIZU_STAGE_PROJECTOR) then
@@ -1967,6 +1990,63 @@ contains
 
     payload_bytes = int(len_trim(payload_text) + 1, kind=i64)
   end subroutine append_import_lineage_payload
+
+  subroutine append_import_weight_pack_payload(payload_text, model)
+    character(len=*), intent(inout) :: payload_text
+    type(model_state), intent(in)   :: model
+    character(len=MAX_PATH_LEN + 160) :: field_text
+    integer(i32)                      :: tensor_index
+    integer(i32)                      :: pack_index
+    integer(i64)                      :: tensor_bytes
+    integer(i64)                      :: pack_offset
+    integer(i64)                      :: pack_total_bytes
+
+    if (.not. allocated(model%import_tensors)) return
+
+    pack_index = 0_i32
+    pack_offset = 0_i64
+
+    field_text = ""
+    write(field_text, '(";pack_kind=cuda_import_weight_pack_v1")')
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
+      if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
+
+      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
+        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      if (tensor_bytes <= 0_i64) cycle
+
+      pack_index = pack_index + 1_i32
+      field_text = ""
+      write(field_text, '(";pack",I0,"=",A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+        pack_index, trim(model%import_tensors(tensor_index)%tensor_name), &
+        trim(model%import_tensors(tensor_index)%tensor_role), trim(model%import_tensors(tensor_index)%source_path), &
+        pack_offset, tensor_bytes, trim(model%import_tensors(tensor_index)%layout_name)
+      call append_payload_fragment(payload_text, trim(field_text))
+
+      pack_offset = align_import_bytes(pack_offset + tensor_bytes)
+    end do
+
+    pack_total_bytes = pack_offset
+    field_text = ""
+    write(field_text, '(";pack_count=",I0)') pack_index
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_total_bytes=",I0)') pack_total_bytes
+    call append_payload_fragment(payload_text, trim(field_text))
+  end subroutine append_import_weight_pack_payload
+
+  pure logical function import_tensor_belongs_to_projector(import_tensor, model) result(is_projector_tensor)
+    type(import_tensor_state), intent(in) :: import_tensor
+    type(model_state), intent(in)         :: model
+
+    is_projector_tensor = .false.
+    if (len_trim(model%import_projector_artifact_path) == 0) return
+    if (len_trim(import_tensor%source_path) == 0) return
+    is_projector_tensor = (trim(import_tensor%source_path) == trim(model%import_projector_artifact_path))
+  end function import_tensor_belongs_to_projector
 
   subroutine append_payload_fragment(payload_text, fragment)
     character(len=*), intent(inout) :: payload_text
@@ -2027,7 +2107,11 @@ contains
 
     select case (stage_kind)
     case (MIZU_STAGE_MODEL_LOAD)
-      workspace_bytes = align_import_bytes(model%import_tensor_bytes)
+      if (model%import_weight_pack_bytes > 0_i64) then
+        workspace_bytes = align_import_bytes(model%import_weight_pack_bytes)
+      else
+        workspace_bytes = align_import_bytes(model%import_tensor_bytes)
+      end if
     case (MIZU_STAGE_PROJECTOR)
       workspace_bytes = align_import_bytes(model%import_projector_bytes)
     case default
@@ -2841,8 +2925,9 @@ contains
     type(planner_result)           :: planning_result
     type(plan_request)             :: planning_request
     character(len=MAX_NAME_LEN)    :: fingerprint_token
-    character(len=max(APPLE_ARTIFACT_PAYLOAD_LEN, CUDA_ARTIFACT_PAYLOAD_LEN) + 2048) :: payload_text
+    character(len=:), allocatable  :: payload_text
     integer(i64)                   :: payload_bytes
+    integer(i32)                   :: payload_capacity
     integer(i32)                   :: status_code
 
     metadata = artifact_metadata_record()
@@ -2857,6 +2942,8 @@ contains
     metadata%payload_fingerprint = trim(fingerprint_token)
     metadata%payload_path = build_artifact_payload_path(stage_kind, backend_family, execution_route, &
       trim(fingerprint_token))
+    payload_capacity = max(APPLE_ARTIFACT_PAYLOAD_LEN, CUDA_ARTIFACT_PAYLOAD_LEN) + 65536_i32
+    allocate(character(len=payload_capacity) :: payload_text)
 
     if (.not. present(request)) return
     planning_request = request

@@ -57,7 +57,7 @@ module mod_types
   public :: SOURCE_FORMAT_UNKNOWN, SOURCE_FORMAT_MIZU_MANIFEST
   public :: SOURCE_FORMAT_BUILTIN_TARGET, SOURCE_FORMAT_MIZU_IMPORT_BUNDLE
   public :: runtime_handle, model_handle, session_handle, workspace_handle
-  public :: backend_descriptor, tensor_descriptor, projector_descriptor
+  public :: backend_descriptor, tensor_descriptor, projector_descriptor, import_tensor_state
   public :: runtime_config, model_open_config, session_config
   public :: model_info, session_info, modal_input_descriptor
   public :: decode_options, decode_result, output_buffer
@@ -224,6 +224,16 @@ module mod_types
     character(len=MAX_SLOT_NAME_LEN) :: slot_name           = ""
   end type projector_descriptor
 
+  type :: import_tensor_state
+    integer(i32)                     :: dtype       = MIZU_DTYPE_UNKNOWN
+    integer(i32)                     :: rank        = 0_i32
+    integer(i64)                     :: shape(MAX_TENSOR_RANK) = 0_i64
+    character(len=MAX_NAME_LEN)      :: tensor_name = ""
+    character(len=MAX_NAME_LEN)      :: tensor_role = ""
+    character(len=MAX_NAME_LEN)      :: layout_name = ""
+    character(len=MAX_PATH_LEN)      :: source_path = ""
+  end type import_tensor_state
+
   type :: runtime_config
     integer(i32)                     :: abi_version         = MIZU_ABI_VERSION
     integer(i32)                     :: optimization_mode   = MIZU_OPTIMIZATION_MODE_MEASURE_ONLY
@@ -346,12 +356,14 @@ module mod_types
     logical                           :: has_import_bundle   = .false.
     integer(i64)                      :: import_inventory_hash = 0_i64
     integer(i64)                      :: import_tensor_bytes = 0_i64
+    integer(i64)                      :: import_weight_pack_bytes = 0_i64
     integer(i64)                      :: import_projector_bytes = 0_i64
     integer(i32)                      :: import_preview_count = 0_i32
     character(len=MAX_PATH_LEN)       :: import_projector_artifact_path = ""
     character(len=MAX_NAME_LEN)       :: import_tensor_names(MAX_MODEL_IMPORT_PREVIEW) = ""
     character(len=MAX_NAME_LEN)       :: import_tensor_roles(MAX_MODEL_IMPORT_PREVIEW) = ""
     character(len=MAX_PATH_LEN)       :: import_tensor_paths(MAX_MODEL_IMPORT_PREVIEW) = ""
+    type(import_tensor_state), allocatable :: import_tensors(:)
     integer(i32)                      :: live_session_count  = 0_i32
     logical                           :: is_open             = .false.
   end type model_state

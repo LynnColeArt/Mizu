@@ -344,6 +344,16 @@ int main(void) {
     if (!expect_true("cuda weight artifact should retain imported tensor lineage", command_status == 0)) return 1;
     command_status = system("grep -R \"tensor_bytes=2214868992\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("cuda weight artifact should retain exact imported tensor byte estimates", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_kind=cuda_import_weight_pack_v1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should materialize an import-driven pack record", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_count=4\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should retain the expected packed tensor count", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_total_bytes=2205693952\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should retain the expected packed tensor bytes", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack1=token_embeddings|embedding_table|weights/token_embeddings.bin|offset=0|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should retain the first packed tensor entry", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack4=lm_head|token_projection|weights/lm_head.bin|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should retain the final packed tensor entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector -type f | grep -q .");
     if (!expect_true("cuda projector artifact file should exist", command_status == 0)) return 1;
     command_status = system("grep -R \"stage=2;.*shape0=8\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
