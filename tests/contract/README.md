@@ -11,6 +11,12 @@ These suites cover the `API-C*` portion of
   - header compiles as C++
 - `test_opaque_handles.c`
   - confirms consumers only see opaque handle declarations
+- `test_backend_availability.c`
+  - forces backend-availability overrides through the public API
+  - verifies `mizu_model_open` fails early with `MIZU_STATUS_NO_VALID_PLAN`
+    when the requested backend family is unavailable on the runtime
+  - verifies the runtime surfaces a useful last-error string for that case
+  - verifies forcing Apple availability makes the same model-open request pass
 - `test_stage_reports.c`
   - exercises `prefill`, `decode`, `park`, and `resume` through the public API
     and verifies nonzero report plan IDs, route-honest stage reports, in-process

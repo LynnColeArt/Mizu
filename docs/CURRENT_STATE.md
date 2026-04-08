@@ -34,6 +34,7 @@ Last updated: 2026-04-07
   - planner parity exists for ANE and Metal
   - projector, prefill, and decode run through placeholder Apple execution
   - Apple live contexts use the same park/resume checkpoint path as CUDA
+  - model-open and stage routing now respect detected backend availability
   - hardware validation is still the biggest Apple gap
 - model import and target-asset mapping are still only partially done
 
@@ -61,6 +62,9 @@ In short:
 - manifest loading and validation are implemented
 - target fallback manifests exist for the current Qwen and Gemma targets
 - runtime create now records a detected backend inventory for Apple and CUDA
+- model open now intersects the requested backend mask with that detected
+  runtime inventory and fails early with `MIZU_STATUS_NO_VALID_PLAN` when no
+  requested backend is actually available
 - session staging now retains attached token values and copied modal-byte inputs
   long enough for stage execution, along with stable content hashes
 - live session context identity now survives prefill and advances after decode,
@@ -282,6 +286,7 @@ In short:
 - `test_cache_store`
 - `test_optimization_store`
 - `test_stage_reports`
+- `test_backend_availability`
 - `test_backend_registry`
 - `test_apple_planner`
 - `test_apple_executor`

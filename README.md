@@ -25,6 +25,9 @@ Current implementation status:
   implementation on macOS and a non-Apple stub elsewhere, so the public API
   can execute placeholder ANE and Metal projector, prefill, and decode stages
   instead of only emitting Apple planner metadata
+- requested backend masks are now intersected with the runtime's detected
+  backend inventory at model-open time, so impossible Apple/CUDA routes fail
+  early with `MIZU_STATUS_NO_VALID_PLAN` instead of surviving into execution
 - Apple session contexts now use the same live-context and park/resume
   checkpoint path as CUDA, including backend-neutral offload and restore rules
   for resident execution state
