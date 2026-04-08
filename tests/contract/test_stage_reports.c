@@ -460,9 +460,14 @@ int main(void) {
                      file_contains_substring(persist_artifact_cache_path, "artifacts/apple/ane/weights/"))) return 1;
     if (!expect_true("persisted artifact cache should include Metal prefill plan path",
                      file_contains_substring(persist_artifact_cache_path, "artifacts/apple/metal/plans/prefill/"))) return 1;
-    if (!expect_true("persisted artifact cache should include route-specific format labels",
-                     file_contains_substring(persist_artifact_cache_path, "apple_metal_prefill_plan_v1") ||
-                     file_contains_substring(persist_artifact_cache_path, "apple_ane_prefill_plan_v1"))) return 1;
+    if (!expect_true("persisted artifact cache should include the ANE weight-pack format label",
+                     file_contains_substring(persist_artifact_cache_path, "apple_ane_bf16_weight_pack_v1"))) return 1;
+    if (!expect_true("persisted artifact cache should include the ANE projector format label",
+                     file_contains_substring(persist_artifact_cache_path, "apple_ane_u8_bf16_projector_plan_v1"))) return 1;
+    if (!expect_true("persisted artifact cache should include the ANE prefill format label",
+                     file_contains_substring(persist_artifact_cache_path, "apple_ane_bf16_prefill_plan_v1"))) return 1;
+    if (!expect_true("persisted artifact cache should include the Metal prefill format label",
+                     file_contains_substring(persist_artifact_cache_path, "apple_metal_bf16_prefill_plan_v1"))) return 1;
 
     status = mizu_runtime_create(&persist_runtime_config, &runtime_persist_b);
     if (!expect_status("persist runtime create b", status, MIZU_STATUS_OK)) return 1;

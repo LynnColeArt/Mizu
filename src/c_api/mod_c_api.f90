@@ -66,6 +66,8 @@ module mod_c_api
                                 manifest_tensor_count, manifest_modality_count, &
                                 hash_text64
   use mod_model_loader,   only: load_model_manifest_from_root
+  use mod_apple_planner,  only: APPLE_ARTIFACT_PAYLOAD_LEN, plan_apple_stage, &
+                                build_apple_artifact_payload_text
   use mod_cuda_planner,   only: CUDA_ARTIFACT_PAYLOAD_LEN, plan_cuda_stage, &
                                 build_cuda_artifact_payload_text
   use mod_cuda_executor,  only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
@@ -2517,8 +2519,9 @@ contains
     character(len=*), intent(in), optional   :: cache_root
     type(artifact_metadata_record) :: metadata
     type(planner_result)           :: planning_result
+    type(plan_request)             :: planning_request
     character(len=MAX_NAME_LEN)    :: fingerprint_token
-    character(len=CUDA_ARTIFACT_PAYLOAD_LEN) :: payload_text
+    character(len=max(APPLE_ARTIFACT_PAYLOAD_LEN, CUDA_ARTIFACT_PAYLOAD_LEN)) :: payload_text
     integer(i64)                   :: payload_bytes
     integer(i32)                   :: status_code
 
@@ -2535,20 +2538,46 @@ contains
     metadata%payload_path = build_artifact_payload_path(stage_kind, backend_family, execution_route, &
       trim(fingerprint_token))
 
-    if (backend_family /= MIZU_BACKEND_FAMILY_CUDA .or. execution_route /= MIZU_EXEC_ROUTE_CUDA) return
     if (.not. present(request)) return
+    planning_request = request
 
-    call plan_cuda_stage(request, planning_result, status_code)
-    if (status_code /= MIZU_STATUS_OK) return
-    if (.not. planner_result_is_success(planning_result)) return
+    select case (execution_route)
+    case (MIZU_EXEC_ROUTE_ANE)
+      planning_request%preferred_backend_mask = ior(planning_request%preferred_backend_mask, MIZU_BACKEND_MASK_APPLE_ANE)
+    case (MIZU_EXEC_ROUTE_METAL)
+      planning_request%preferred_backend_mask = ior(planning_request%preferred_backend_mask, MIZU_BACKEND_MASK_APPLE_METAL)
+    case (MIZU_EXEC_ROUTE_CUDA)
+      planning_request%preferred_backend_mask = ior(planning_request%preferred_backend_mask, MIZU_BACKEND_MASK_CUDA)
+    end select
 
-    metadata%artifact_format = trim(planning_result%chosen_plan%pack_format)
-    metadata%workspace_bytes = max(0_i64, planning_result%chosen_plan%workspace_bytes)
-    call build_cuda_artifact_payload_text(request, planning_result%chosen_plan, trim(candidate_key_text), &
-      payload_text, payload_bytes)
-    if (present(cache_root)) then
-      call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
-    end if
+    select case (backend_family)
+    case (MIZU_BACKEND_FAMILY_APPLE)
+      if (execution_route /= MIZU_EXEC_ROUTE_ANE .and. execution_route /= MIZU_EXEC_ROUTE_METAL) return
+      call plan_apple_stage(planning_request, planning_result, status_code)
+      if (status_code /= MIZU_STATUS_OK) return
+      if (.not. planner_result_is_success(planning_result)) return
+
+      metadata%artifact_format = trim(planning_result%chosen_plan%pack_format)
+      metadata%workspace_bytes = max(0_i64, planning_result%chosen_plan%workspace_bytes)
+      call build_apple_artifact_payload_text(planning_request, planning_result%chosen_plan, trim(candidate_key_text), &
+        payload_text, payload_bytes)
+      if (present(cache_root)) then
+        call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
+      end if
+    case (MIZU_BACKEND_FAMILY_CUDA)
+      if (execution_route /= MIZU_EXEC_ROUTE_CUDA) return
+      call plan_cuda_stage(planning_request, planning_result, status_code)
+      if (status_code /= MIZU_STATUS_OK) return
+      if (.not. planner_result_is_success(planning_result)) return
+
+      metadata%artifact_format = trim(planning_result%chosen_plan%pack_format)
+      metadata%workspace_bytes = max(0_i64, planning_result%chosen_plan%workspace_bytes)
+      call build_cuda_artifact_payload_text(planning_request, planning_result%chosen_plan, trim(candidate_key_text), &
+        payload_text, payload_bytes)
+      if (present(cache_root)) then
+        call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
+      end if
+    end select
   end function build_stage_artifact_metadata
 
   function build_artifact_format_label(stage_kind, backend_family, execution_route) result(format_label)

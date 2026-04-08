@@ -40,6 +40,7 @@ BACKEND_F90 := \
 	src/backends/mod_backend_contract.f90 \
 	src/backends/mod_backend_probe_support.f90 \
 	src/backends/apple/mod_apple_capability.f90 \
+	src/backends/apple/mod_apple_planner.f90 \
 	src/backends/cuda/mod_cuda_bridge.f90 \
 	src/backends/cuda/mod_cuda_capability.f90 \
 	src/backends/cuda/mod_cuda_planner.f90 \
@@ -56,6 +57,7 @@ UNIT_BINS := \
 	$(TEST_DIR)/test_backend_registry \
 	$(TEST_DIR)/test_runtime_workspace \
 	$(TEST_DIR)/test_session_staging \
+	$(TEST_DIR)/test_apple_planner \
 	$(TEST_DIR)/test_cuda_planner \
 	$(TEST_DIR)/test_cuda_executor
 
@@ -181,6 +183,16 @@ $(TEST_DIR)/test_session_staging: $(TEST_DIR)
 		src/common/mod_types.f90 \
 		src/runtime/mod_session.f90 \
 		tests/unit/test_session_staging.f90
+
+$(TEST_DIR)/test_apple_planner: $(TEST_DIR)
+	mkdir -p $(TEST_DIR)/apple_planner_mods
+	$(FC) $(FFLAGS) -J $(TEST_DIR)/apple_planner_mods -o $@ \
+		src/common/mod_kinds.f90 \
+		src/common/mod_status.f90 \
+		src/common/mod_types.f90 \
+		src/backends/mod_backend_contract.f90 \
+		src/backends/apple/mod_apple_planner.f90 \
+		tests/unit/test_apple_planner.f90
 
 $(TEST_DIR)/test_cuda_planner: $(TEST_DIR)
 	mkdir -p $(TEST_DIR)/cuda_planner_mods
