@@ -138,6 +138,7 @@ These are the highest-leverage next tasks.
 - [x] Thread CUDA weight-pack dependency into projector and plan cache identity
 - [x] Emit stage-specific CUDA `pack_use_*` records for prefill and decode
 - [x] Persist CUDA pack-usage snapshots in live context state
+- [x] Persist CUDA pack-dispatch snapshots in live context state
 
 ## Phase 3: Runtime Skeleton
 

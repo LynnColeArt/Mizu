@@ -31,6 +31,10 @@ Last updated: 2026-04-08
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact
   text and cache identity
+- that same live CUDA context payload now also carries an explicit
+  pack-dispatch snapshot for the first selected packed tensors, including
+  packed offsets, byte spans, role codes, and layout codes, so bridge-owned
+  session state preserves a small structural view of pack consumption
 - immediate next target: map real Qwen and Gemma assets into this bundle shape
   and use that imported inventory in a less-synthetic CUDA execution path
 
@@ -257,6 +261,10 @@ In short:
 - CUDA live-context payloads now also retain an explicit pack-usage snapshot
   with usage hash, byte total, and first/last packed tensor spans, so session
   state carries selected imported tensor profile data directly
+- CUDA live-context payloads now also retain an explicit pack-dispatch snapshot
+  for up to four selected packed tensors, including packed offsets, byte spans,
+  role codes, and layout codes, and both the real CUDA bridge and the CPU stub
+  now preserve that snapshot through prefill and decode
 - CUDA placeholder projector and prefill execution now incorporate staged-input
   content hashes instead of relying on counts alone
 - CUDA prefill now also receives copied staged token buffers and modal byte

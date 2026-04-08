@@ -121,6 +121,10 @@ Current implementation status:
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside payload
   strings and cache keys
+- that live CUDA context payload now also carries an explicit pack-dispatch
+  snapshot for the first selected packed tensors, including packed offsets,
+  byte spans, role codes, and layout codes that both bridge variants preserve
+  through prefill and decode
 - the narrow public CUDA flow now checks stable positive placeholder output plus
   warm-path reproducibility for the same multimodal staged context, while the
   unit suite still pins exact deterministic executor outputs per bridge variant

@@ -126,6 +126,9 @@ bodies.
   - validates CUDA prefill and decode now stamp an explicit imported
     pack-usage snapshot into live context state, including usage hash, byte
     total, and first/last packed tensor spans
+  - validates CUDA prefill and decode now also stamp an explicit imported
+    pack-dispatch snapshot into live context state for the first selected
+    packed tensors, including offsets, byte spans, role codes, and layout codes
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub
