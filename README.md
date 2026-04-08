@@ -23,6 +23,8 @@ Current implementation status:
 - core Fortran runtime types and lifecycle scaffolding are in place
 - the public C header exists in `include/mizu.h`
 - model manifests, cache keys, and session flow are implemented as scaffolds
+- the loader now recognizes an optional imported `mizu_import/` bundle with
+  validated tensor, modality, and projector inventories
 - route-aware optimization and persisted cache metadata are implemented
 - runtime backend inventory and capability-probe scaffolding exist for Apple and
   CUDA
@@ -124,5 +126,6 @@ Documentation:
 - [Project Plan](./docs/PROJECT_PLAN.md)
 - [Task List](./docs/TASK_LIST.md)
 - [Current State](./docs/CURRENT_STATE.md)
+- [Importer Layout](./docs/IMPORTER_LAYOUT.md)
 - [Placeholder Runtime Status](./docs/PLACEHOLDER_RUNTIME_STATUS.md)
 - [Style Guide](./STYLE_GUIDE.md)

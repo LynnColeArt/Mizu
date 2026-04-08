@@ -1,19 +1,17 @@
 # Mizu Current State
 
-Last updated: 2026-04-07
+Last updated: 2026-04-08
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `bbacddc` (`Document Apple
-  planner parity checkpoint`)
-- current milestone: Apple bridge and execution basics now exist through the
-  public runtime, with route-aware ANE and Metal placeholder execution, a
-  macOS Objective-C bridge seam, a non-Apple stub fallback, and backend-neutral
-  session checkpoint restore for Apple live contexts
-- immediate next target: collect Sam's first hardware-validation pass using
-  `docs/APPLE_VALIDATION_CHECKLIST.md`, then decide whether the next Apple
-  slice is capability/error-reporting polish or the first real
-  Metal/ANE-backed execution payloads
+- current milestone: the loader now understands a first concrete imported
+  asset-bundle shape through `mizu_import/`, with validated tensor, modality,
+  and projector inventories layered on top of the logical root manifest
+- the importer contract is now documented, fixture-backed, and enforced by the
+  loader before the runtime accepts imported assets
+- immediate next target: map real Qwen and Gemma assets into this bundle shape
+  and start consuming imported inventories in the first non-placeholder CUDA
+  execution path
 
 ## Roadmap Status
 
@@ -38,6 +36,8 @@ Last updated: 2026-04-07
   - model-open and stage routing now respect detected backend availability
   - hardware validation is still the biggest Apple gap
 - model import and target-asset mapping are still only partially done
+- the importer/output-layout contract now has a real first shape, but target
+  family tensor mapping is still mostly ahead of us
 
 In short:
 
@@ -62,6 +62,11 @@ In short:
 - session open, close, park, resume, prefill, decode, and output read are wired
 - manifest loading and validation are implemented
 - target fallback manifests exist for the current Qwen and Gemma targets
+- the loader now recognizes an optional `mizu_import/` bundle under model root
+  and can apply imported tensor, modality, and projector inventories on top of
+  the logical manifest
+- imported bundles now validate inventory shape, asset-path safety, and
+  referenced file existence before the runtime accepts them
 - runtime create now records a detected backend inventory for Apple and CUDA
 - model open now intersects the requested backend mask with that detected
   runtime inventory and fails early with `MIZU_STATUS_NO_VALID_PLAN` when no

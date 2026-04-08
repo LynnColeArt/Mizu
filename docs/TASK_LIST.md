@@ -127,10 +127,10 @@ These are the highest-leverage next tasks.
 
 ### 2.4 Import Path
 
-- [ ] Decide where conversion/import tooling lives
-- [ ] Define importer output layout
-- [ ] Define validation rules for imported assets
-- [ ] Define failure reporting for bad manifests
+- [x] Decide where conversion/import tooling lives
+- [x] Define importer output layout
+- [x] Define validation rules for imported assets
+- [x] Define failure reporting for bad manifests
 
 ## Phase 3: Runtime Skeleton
 
