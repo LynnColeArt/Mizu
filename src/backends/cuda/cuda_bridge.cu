@@ -31,11 +31,14 @@ constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_LAYOUT_OFFSET = 416;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_LAYOUT_STRIDE = 24;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET = 512;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE = 32;
-constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 640;
+constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET = 640;
+constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE = 32;
+constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 768;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_COUNT = 4;
 constexpr int32_t MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT = 4;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CAPACITY = 8;
 constexpr int32_t MIZU_CUDA_CONTEXT_SLOT_COUNT = MIZU_CUDA_CONTEXT_PAGE_COUNT * MIZU_CUDA_CONTEXT_PAGE_CAPACITY;
+constexpr int32_t MIZU_CUDA_CONTEXT_TENSOR_ELEMENT_BYTES = 4;
 constexpr uint32_t MIZU_CUDA_CONTEXT_CHECKSUM_OFFSET = 2166136261U;
 constexpr uint32_t MIZU_CUDA_CONTEXT_CHECKSUM_PRIME = 16777619U;
 constexpr int32_t MIZU_CUDA_PAGE_FLAG_RESIDENT = 1;
@@ -335,6 +338,29 @@ inline void populate_page_control(unsigned long long page_word,
   *resolved_logical_page_id = logical_page_id > 0 ? logical_page_id : 1;
   *page_flags = pack_page_control_flags(*page_owner_kind, *committed_tokens, *usable_capacity,
                                         *resolved_recycle_epoch);
+}
+
+inline int32_t compute_page_storage_offset(int32_t payload_base_offset,
+                                           int32_t page_index,
+                                           int32_t committed_rows,
+                                           int32_t lane_count) {
+  if (committed_rows <= 0 || lane_count <= 0) return 0;
+  return payload_base_offset + (page_slot_base_index(page_index) * MIZU_CUDA_CONTEXT_TENSOR_ELEMENT_BYTES);
+}
+
+inline int32_t compute_page_committed_bytes(int32_t committed_rows, int32_t lane_count) {
+  if (committed_rows <= 0 || lane_count <= 0) return 0;
+  return committed_rows * lane_count * MIZU_CUDA_CONTEXT_TENSOR_ELEMENT_BYTES;
+}
+
+inline int32_t compute_page_capacity_bytes(int32_t usable_capacity, int32_t lane_count) {
+  if (usable_capacity <= 0 || lane_count <= 0) return 0;
+  return usable_capacity * lane_count * MIZU_CUDA_CONTEXT_TENSOR_ELEMENT_BYTES;
+}
+
+inline int32_t compute_page_row_stride_bytes(int32_t lane_count) {
+  if (lane_count <= 0) return 0;
+  return lane_count * MIZU_CUDA_CONTEXT_TENSOR_ELEMENT_BYTES;
 }
 
 inline void build_prefill_state_block(unsigned long long seed,
@@ -681,6 +707,32 @@ inline void write_context_window_block(unsigned char *bytes,
     write_context_i32(bytes, stored_count,
       MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE) + 28,
       page_flags[index]);
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE),
+      compute_page_storage_offset(MIZU_CUDA_CONTEXT_KEY_PAYLOAD_OFFSET, index, page_key_rows[index],
+                                  page_key_lane_counts[index]));
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE) + 4,
+      compute_page_committed_bytes(page_key_rows[index], page_key_lane_counts[index]));
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE) + 8,
+      compute_page_capacity_bytes(page_usable_capacities[index], page_key_lane_counts[index]));
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE) + 12,
+      compute_page_row_stride_bytes(page_key_lane_counts[index]));
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE) + 16,
+      compute_page_storage_offset(MIZU_CUDA_CONTEXT_VALUE_PAYLOAD_OFFSET, index, page_value_rows[index],
+                                  page_value_lane_counts[index]));
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE) + 20,
+      compute_page_committed_bytes(page_value_rows[index], page_value_lane_counts[index]));
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE) + 24,
+      compute_page_capacity_bytes(page_usable_capacities[index], page_value_lane_counts[index]));
+    write_context_i32(bytes, stored_count,
+      MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET + (index * MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE) + 28,
+      compute_page_row_stride_bytes(page_value_lane_counts[index]));
   }
   write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_WINDOW_META_OFFSET, window_meta);
   write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_STATE_IMAGE_DIGEST_OFFSET, state_image_digest);

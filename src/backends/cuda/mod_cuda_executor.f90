@@ -18,6 +18,7 @@ module mod_cuda_executor
   public :: extract_cuda_context_kv_lane_snapshot
   public :: extract_cuda_context_kv_layout_snapshot
   public :: extract_cuda_context_page_control_snapshot
+  public :: extract_cuda_context_page_tensor_snapshot
   public :: extract_cuda_context_slot_snapshot
 
 contains
@@ -678,6 +679,77 @@ contains
     end do
     snapshot_valid = .true.
   end subroutine extract_cuda_context_page_control_snapshot
+
+  pure subroutine extract_cuda_context_page_tensor_snapshot(context_bytes, context_byte_count, &
+                                                            page_key_storage_offsets, page_key_committed_bytes, &
+                                                            page_key_capacity_bytes, page_key_row_stride_bytes, &
+                                                            page_value_storage_offsets, page_value_committed_bytes, &
+                                                            page_value_capacity_bytes, page_value_row_stride_bytes, &
+                                                            snapshot_valid)
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i32), intent(out) :: page_key_storage_offsets(:)
+    integer(i32), intent(out) :: page_key_committed_bytes(:)
+    integer(i32), intent(out) :: page_key_capacity_bytes(:)
+    integer(i32), intent(out) :: page_key_row_stride_bytes(:)
+    integer(i32), intent(out) :: page_value_storage_offsets(:)
+    integer(i32), intent(out) :: page_value_committed_bytes(:)
+    integer(i32), intent(out) :: page_value_capacity_bytes(:)
+    integer(i32), intent(out) :: page_value_row_stride_bytes(:)
+    logical, intent(out)      :: snapshot_valid
+    integer(i32)              :: page_index
+    integer(i32)              :: page_limit
+    integer(i32)              :: tensor_offset
+
+    page_key_storage_offsets = 0_i32
+    page_key_committed_bytes = 0_i32
+    page_key_capacity_bytes = 0_i32
+    page_key_row_stride_bytes = 0_i32
+    page_value_storage_offsets = 0_i32
+    page_value_committed_bytes = 0_i32
+    page_value_capacity_bytes = 0_i32
+    page_value_row_stride_bytes = 0_i32
+    snapshot_valid = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (context_byte_count < 768_i32) return
+
+    page_limit = min(4_i32, int(size(page_key_storage_offsets), kind=i32))
+    page_limit = min(page_limit, int(size(page_key_committed_bytes), kind=i32))
+    page_limit = min(page_limit, int(size(page_key_capacity_bytes), kind=i32))
+    page_limit = min(page_limit, int(size(page_key_row_stride_bytes), kind=i32))
+    page_limit = min(page_limit, int(size(page_value_storage_offsets), kind=i32))
+    page_limit = min(page_limit, int(size(page_value_committed_bytes), kind=i32))
+    page_limit = min(page_limit, int(size(page_value_capacity_bytes), kind=i32))
+    page_limit = min(page_limit, int(size(page_value_row_stride_bytes), kind=i32))
+    do page_index = 1_i32, page_limit
+      tensor_offset = 641_i32 + ((page_index - 1_i32) * 32_i32)
+      page_key_storage_offsets(page_index) = int(decode_context_u32le(context_bytes(tensor_offset), &
+        context_bytes(tensor_offset + 1_i32), context_bytes(tensor_offset + 2_i32), &
+        context_bytes(tensor_offset + 3_i32)), kind=i32)
+      page_key_committed_bytes(page_index) = int(decode_context_u32le(context_bytes(tensor_offset + 4_i32), &
+        context_bytes(tensor_offset + 5_i32), context_bytes(tensor_offset + 6_i32), &
+        context_bytes(tensor_offset + 7_i32)), kind=i32)
+      page_key_capacity_bytes(page_index) = int(decode_context_u32le(context_bytes(tensor_offset + 8_i32), &
+        context_bytes(tensor_offset + 9_i32), context_bytes(tensor_offset + 10_i32), &
+        context_bytes(tensor_offset + 11_i32)), kind=i32)
+      page_key_row_stride_bytes(page_index) = int(decode_context_u32le(context_bytes(tensor_offset + 12_i32), &
+        context_bytes(tensor_offset + 13_i32), context_bytes(tensor_offset + 14_i32), &
+        context_bytes(tensor_offset + 15_i32)), kind=i32)
+      page_value_storage_offsets(page_index) = int(decode_context_u32le(context_bytes(tensor_offset + 16_i32), &
+        context_bytes(tensor_offset + 17_i32), context_bytes(tensor_offset + 18_i32), &
+        context_bytes(tensor_offset + 19_i32)), kind=i32)
+      page_value_committed_bytes(page_index) = int(decode_context_u32le(context_bytes(tensor_offset + 20_i32), &
+        context_bytes(tensor_offset + 21_i32), context_bytes(tensor_offset + 22_i32), &
+        context_bytes(tensor_offset + 23_i32)), kind=i32)
+      page_value_capacity_bytes(page_index) = int(decode_context_u32le(context_bytes(tensor_offset + 24_i32), &
+        context_bytes(tensor_offset + 25_i32), context_bytes(tensor_offset + 26_i32), &
+        context_bytes(tensor_offset + 27_i32)), kind=i32)
+      page_value_row_stride_bytes(page_index) = int(decode_context_u32le(context_bytes(tensor_offset + 28_i32), &
+        context_bytes(tensor_offset + 29_i32), context_bytes(tensor_offset + 30_i32), &
+        context_bytes(tensor_offset + 31_i32)), kind=i32)
+    end do
+    snapshot_valid = .true.
+  end subroutine extract_cuda_context_page_tensor_snapshot
 
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1

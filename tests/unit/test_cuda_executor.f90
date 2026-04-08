@@ -7,7 +7,8 @@ program test_cuda_executor
   use mod_cuda_executor, only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
                                extract_cuda_context_state_snapshot, extract_cuda_context_window_snapshot, &
                                extract_cuda_context_kv_lane_snapshot, extract_cuda_context_kv_layout_snapshot, &
-                               extract_cuda_context_page_control_snapshot
+                               extract_cuda_context_page_control_snapshot, &
+                               extract_cuda_context_page_tensor_snapshot
   use mod_workspace,     only: initialize_workspace, reserve_workspace_bytes, release_workspace_bytes, &
                                reset_workspace
 
@@ -76,6 +77,14 @@ program test_cuda_executor
   integer(i32) :: page_recycle_epochs(4)
   integer(i32) :: page_logical_ids(4)
   integer(i32) :: page_flags(4)
+  integer(i32) :: page_key_storage_offsets(4)
+  integer(i32) :: page_key_committed_bytes(4)
+  integer(i32) :: page_key_capacity_bytes(4)
+  integer(i32) :: page_key_row_stride_bytes(4)
+  integer(i32) :: page_value_storage_offsets(4)
+  integer(i32) :: page_value_committed_bytes(4)
+  integer(i32) :: page_value_capacity_bytes(4)
+  integer(i32) :: page_value_row_stride_bytes(4)
   integer(i32) :: recent_tokens(4)
   integer(i32) :: current_page_index
   integer(i32) :: valid_page_count
@@ -215,6 +224,25 @@ program test_cuda_executor
   call expect_equal_i32("cuda prefill page control should mark the page as resident", page_flags(1), PAGE_FLAG_RESIDENT)
   call expect_equal_i32("cuda prefill page control should leave the full flag clear", &
     iand(page_flags(1), PAGE_FLAG_FULL), 0_i32)
+  call extract_cuda_context_page_tensor_snapshot(context_bytes_a, context_byte_count_a, page_key_storage_offsets, &
+    page_key_committed_bytes, page_key_capacity_bytes, page_key_row_stride_bytes, page_value_storage_offsets, &
+    page_value_committed_bytes, page_value_capacity_bytes, page_value_row_stride_bytes, snapshot_valid)
+  call expect_true("cuda prefill page tensor snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill page tensor should place key rows at the key payload origin", &
+    page_key_storage_offsets(1), 128_i32)
+  call expect_equal_i32("cuda prefill page tensor should place value rows at the value payload origin", &
+    page_value_storage_offsets(1), 256_i32)
+  call expect_equal_i32("cuda prefill page tensor should commit twenty-eight key bytes", &
+    page_key_committed_bytes(1), 28_i32)
+  call expect_equal_i32("cuda prefill page tensor should commit twenty-eight value bytes", &
+    page_value_committed_bytes(1), 28_i32)
+  call expect_equal_i32("cuda prefill page tensor should reserve thirty-two key bytes", &
+    page_key_capacity_bytes(1), 32_i32)
+  call expect_equal_i32("cuda prefill page tensor should reserve thirty-two value bytes", &
+    page_value_capacity_bytes(1), 32_i32)
+  call expect_equal_i32("cuda prefill page tensor should use four-byte key rows", page_key_row_stride_bytes(1), 4_i32)
+  call expect_equal_i32("cuda prefill page tensor should use four-byte value rows", &
+    page_value_row_stride_bytes(1), 4_i32)
   prefill_token_digest_a = token_digest
   prefill_modal_digest_a = modal_digest
   prefill_rolling_state_a = rolling_state_digest
@@ -290,6 +318,14 @@ program test_cuda_executor
     page_owner_kinds(1), 1_i32)
   call expect_equal_i32("cuda prefill page control for the second tensor set should preserve logical page id", &
     page_logical_ids(1), 1_i32)
+  call extract_cuda_context_page_tensor_snapshot(context_bytes_b, context_byte_count_b, page_key_storage_offsets, &
+    page_key_committed_bytes, page_key_capacity_bytes, page_key_row_stride_bytes, page_value_storage_offsets, &
+    page_value_committed_bytes, page_value_capacity_bytes, page_value_row_stride_bytes, snapshot_valid)
+  call expect_true("cuda prefill page tensor snapshot for the second tensor set should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill page tensor for the second tensor set should preserve the key payload origin", &
+    page_key_storage_offsets(1), 128_i32)
+  call expect_equal_i32("cuda prefill page tensor for the second tensor set should preserve key capacity bytes", &
+    page_key_capacity_bytes(1), 32_i32)
 
   workspace_view = 0_c_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value, stop_reason, &
@@ -382,6 +418,25 @@ program test_cuda_executor
     page_flags(2), PAGE_FLAG_RESIDENT + PAGE_FLAG_DECODE_OWNED)
   call expect_equal_i32("cuda decode page control should keep the recycle flag clear", &
     iand(page_flags(2), PAGE_FLAG_RECYCLED), 0_i32)
+  call extract_cuda_context_page_tensor_snapshot(updated_context_bytes, updated_context_byte_count, &
+    page_key_storage_offsets, page_key_committed_bytes, page_key_capacity_bytes, page_key_row_stride_bytes, &
+    page_value_storage_offsets, page_value_committed_bytes, page_value_capacity_bytes, &
+    page_value_row_stride_bytes, snapshot_valid)
+  call expect_true("cuda decode page tensor snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda decode page tensor should keep the prefill page at the first key offset", &
+    page_key_storage_offsets(1), 128_i32)
+  call expect_equal_i32("cuda decode page tensor should place the new decode page at the second key offset", &
+    page_key_storage_offsets(2), 160_i32)
+  call expect_equal_i32("cuda decode page tensor should place the new decode value page at the second value offset", &
+    page_value_storage_offsets(2), 288_i32)
+  call expect_equal_i32("cuda decode page tensor should commit four key bytes on the decode page", &
+    page_key_committed_bytes(2), 4_i32)
+  call expect_equal_i32("cuda decode page tensor should commit four value bytes on the decode page", &
+    page_value_committed_bytes(2), 4_i32)
+  call expect_equal_i32("cuda decode page tensor should reserve thirty-two key bytes on the decode page", &
+    page_key_capacity_bytes(2), 32_i32)
+  call expect_equal_i32("cuda decode page tensor should keep a four-byte key row stride", &
+    page_key_row_stride_bytes(2), 4_i32)
   decode_rolling_state_1 = rolling_state_digest
   decode_page_digest_1 = page_lane_digests(2)
   prefill_state_image_digest_a = state_image_digest
@@ -456,6 +511,17 @@ program test_cuda_executor
     page_logical_ids(2), 2_i32)
   call expect_equal_i32("second cuda decode page control should keep the decode flags stable", &
     page_flags(2), PAGE_FLAG_RESIDENT + PAGE_FLAG_DECODE_OWNED)
+  call extract_cuda_context_page_tensor_snapshot(updated_context_bytes, updated_context_byte_count, &
+    page_key_storage_offsets, page_key_committed_bytes, page_key_capacity_bytes, page_key_row_stride_bytes, &
+    page_value_storage_offsets, page_value_committed_bytes, page_value_capacity_bytes, &
+    page_value_row_stride_bytes, snapshot_valid)
+  call expect_true("second cuda decode page tensor snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("second cuda decode page tensor should keep the second-page key offset stable", &
+    page_key_storage_offsets(2), 160_i32)
+  call expect_equal_i32("second cuda decode page tensor should grow the decode page key bytes", &
+    page_key_committed_bytes(2), 8_i32)
+  call expect_equal_i32("second cuda decode page tensor should grow the decode page value bytes", &
+    page_value_committed_bytes(2), 8_i32)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
 
@@ -517,6 +583,25 @@ program test_cuda_executor
   call expect_equal_i32("overflowed cuda decode should keep the recycled page decode-owned", page_owner_kinds(4), 2_i32)
   call expect_equal_i32("overflowed cuda decode should set the recycled page flags", page_flags(4), &
     PAGE_FLAG_RESIDENT + PAGE_FLAG_DECODE_OWNED + PAGE_FLAG_RECYCLED)
+  call extract_cuda_context_page_tensor_snapshot(updated_context_bytes, updated_context_byte_count, &
+    page_key_storage_offsets, page_key_committed_bytes, page_key_capacity_bytes, page_key_row_stride_bytes, &
+    page_value_storage_offsets, page_value_committed_bytes, page_value_capacity_bytes, &
+    page_value_row_stride_bytes, snapshot_valid)
+  call expect_true("overflowed cuda decode page tensor snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("overflowed cuda decode should rotate the oldest decode page into the first key slot", &
+    page_key_storage_offsets(1), 128_i32)
+  call expect_equal_i32("overflowed cuda decode should keep the recycled page in the last key slot", &
+    page_key_storage_offsets(4), 224_i32)
+  call expect_equal_i32("overflowed cuda decode should keep the recycled value page in the last value slot", &
+    page_value_storage_offsets(4), 352_i32)
+  call expect_equal_i32("overflowed cuda decode should retain eight key bytes for the oldest surviving decode page", &
+    page_key_committed_bytes(1), 8_i32)
+  call expect_equal_i32("overflowed cuda decode should commit four key bytes on the recycled page", &
+    page_key_committed_bytes(4), 4_i32)
+  call expect_equal_i32("overflowed cuda decode should preserve thirty-two key bytes of capacity on the recycled page", &
+    page_key_capacity_bytes(4), 32_i32)
+  call expect_equal_i32("overflowed cuda decode should preserve a four-byte row stride on the recycled page", &
+    page_key_row_stride_bytes(4), 4_i32)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
 
