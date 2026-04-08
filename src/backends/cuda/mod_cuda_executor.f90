@@ -326,11 +326,13 @@ contains
     integer(i64), intent(out)    :: dependency_hash
     logical, intent(out)         :: has_dependency
     character(len=64)            :: pack_hash_text
+    character(len=64)            :: pack_dispatch_hash_text
     character(len=64)            :: pack_bytes_text
     character(len=64)            :: pack_use_hash_text
     character(len=64)            :: pack_use_bytes_text
     character(len=64)            :: pack_use_count_text
     logical                      :: found_hash
+    logical                      :: found_dispatch_hash
     logical                      :: found_bytes
     logical                      :: found_use_hash
     logical                      :: found_use_bytes
@@ -339,6 +341,7 @@ contains
     dependency_hash = 0_i64
     has_dependency = .false.
     pack_hash_text = ""
+    pack_dispatch_hash_text = ""
     pack_bytes_text = ""
     pack_use_hash_text = ""
     pack_use_bytes_text = ""
@@ -346,6 +349,7 @@ contains
 
     call extract_payload_field_text(payload_text, "pack_ref_hash=", pack_hash_text, found_hash)
     if (.not. found_hash) call extract_payload_field_text(payload_text, "weight_pack_hash=", pack_hash_text, found_hash)
+    call extract_payload_field_text(payload_text, "pack_dispatch_hash=", pack_dispatch_hash_text, found_dispatch_hash)
     call extract_payload_field_text(payload_text, "pack_ref_bytes=", pack_bytes_text, found_bytes)
     if (.not. found_bytes) call extract_payload_field_text(payload_text, "weight_pack_bytes=", pack_bytes_text, found_bytes)
     call extract_payload_field_text(payload_text, "pack_use_hash=", pack_use_hash_text, found_use_hash)
@@ -354,6 +358,11 @@ contains
 
     if (found_hash) then
       dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_hash_text)))
+      has_dependency = .true.
+    end if
+    if (found_dispatch_hash) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), &
+        positive_hash64(trim(pack_dispatch_hash_text)))
       has_dependency = .true.
     end if
     if (found_bytes) then
@@ -384,11 +393,15 @@ contains
     integer(i64)                        :: entry_bytes
     integer(i32)                        :: role_code
     integer(i32)                        :: layout_code
+    logical                             :: found_compact
     logical                             :: found_entry
     logical                             :: parsed_ok
 
     pack_usage = cuda_pack_usage_profile()
     if (len_trim(payload_text) == 0) return
+    call extract_compact_pack_usage_profile(payload_text, pack_usage, found_compact)
+    if (found_compact) return
+    pack_usage = cuda_pack_usage_profile()
 
     do entry_index = 1_i32, 16_i32
       write(field_key, '("pack_use",I0,"=")') entry_index
@@ -415,6 +428,113 @@ contains
 
     pack_usage%has_usage = (pack_usage%usage_count > 0_i32)
   end subroutine extract_payload_pack_usage_profile
+
+  subroutine extract_compact_pack_usage_profile(payload_text, pack_usage, found_compact)
+    character(len=*), intent(in)                 :: payload_text
+    type(cuda_pack_usage_profile), intent(inout) :: pack_usage
+    logical, intent(out)                         :: found_compact
+    character(len=64)                            :: field_text
+    character(len=128)                           :: entry_text
+    integer(i32)                                 :: entry_index
+    integer(i32)                                 :: entry_limit
+    integer(i64)                                 :: parsed_i64
+    integer(i64)                                 :: entry_offset
+    integer(i64)                                 :: entry_bytes
+    integer(i32)                                 :: role_code
+    integer(i32)                                 :: layout_code
+    logical                                      :: found_count
+    logical                                      :: found_bytes
+    logical                                      :: found_hash
+    logical                                      :: found_first_offset
+    logical                                      :: found_last_offset
+    logical                                      :: found_last_bytes
+    logical                                      :: found_dispatch_count
+    logical                                      :: found_entry
+    logical                                      :: has_compact_markers
+    logical                                      :: parsed_ok
+
+    found_compact = .false.
+    has_compact_markers = .false.
+    if (len_trim(payload_text) == 0) return
+
+    field_text = ""
+    call extract_payload_field_text(payload_text, "pack_use_count=", field_text, found_count)
+    if (found_count) then
+      if (parse_i64_text(field_text, parsed_i64)) then
+        pack_usage%usage_count = max(0_i32, int(parsed_i64, kind=i32))
+      end if
+    end if
+
+    field_text = ""
+    call extract_payload_field_text(payload_text, "pack_use_bytes=", field_text, found_bytes)
+    if (found_bytes) then
+      if (parse_i64_text(field_text, parsed_i64)) then
+        pack_usage%usage_bytes = max(0_i64, parsed_i64)
+      end if
+    end if
+
+    field_text = ""
+    call extract_payload_field_text(payload_text, "pack_use_hash=", field_text, found_hash)
+    if (found_hash) then
+      pack_usage%usage_hash = positive_hash64(trim(field_text))
+    end if
+
+    field_text = ""
+    call extract_payload_field_text(payload_text, "pack_use_first_offset=", field_text, found_first_offset)
+    if (found_first_offset) then
+      if (parse_i64_text(field_text, parsed_i64)) then
+        pack_usage%first_pack_offset = max(0_i64, parsed_i64)
+        has_compact_markers = .true.
+      end if
+    end if
+
+    field_text = ""
+    call extract_payload_field_text(payload_text, "pack_use_last_offset=", field_text, found_last_offset)
+    if (found_last_offset) then
+      if (parse_i64_text(field_text, parsed_i64)) then
+        pack_usage%last_pack_offset = max(0_i64, parsed_i64)
+        has_compact_markers = .true.
+      end if
+    end if
+
+    field_text = ""
+    call extract_payload_field_text(payload_text, "pack_use_last_bytes=", field_text, found_last_bytes)
+    if (found_last_bytes) then
+      if (parse_i64_text(field_text, parsed_i64)) then
+        pack_usage%last_pack_bytes = max(0_i64, parsed_i64)
+        has_compact_markers = .true.
+      end if
+    end if
+
+    field_text = ""
+    call extract_payload_field_text(payload_text, "pack_dispatch_count=", field_text, found_dispatch_count)
+    entry_limit = 0_i32
+    if (found_dispatch_count) then
+      if (parse_i64_text(field_text, parsed_i64)) then
+        entry_limit = max(0_i32, min(MAX_CUDA_PACK_DISPATCH_ENTRIES, int(parsed_i64, kind=i32)))
+        has_compact_markers = .true.
+      end if
+    end if
+
+    do entry_index = 1_i32, entry_limit
+      write(field_text, '("pack_dispatch",I0,"=")') entry_index
+      entry_text = ""
+      call extract_payload_field_text(payload_text, trim(field_text), entry_text, found_entry)
+      if (.not. found_entry) exit
+      call extract_payload_dispatch_entry(trim(entry_text), entry_offset, entry_bytes, role_code, layout_code, parsed_ok)
+      if (.not. parsed_ok) cycle
+      pack_usage%entry_offsets(entry_index) = entry_offset
+      pack_usage%entry_bytes(entry_index) = entry_bytes
+      pack_usage%role_codes(entry_index) = role_code
+      pack_usage%layout_codes(entry_index) = layout_code
+    end do
+
+    if (pack_usage%usage_count > 0_i32 .and. pack_usage%usage_hash == 0_i64) then
+      pack_usage%usage_hash = positive_hash64(trim(payload_text))
+    end if
+    found_compact = has_compact_markers
+    pack_usage%has_usage = (pack_usage%usage_count > 0_i32)
+  end subroutine extract_compact_pack_usage_profile
 
   subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
     character(len=*), intent(in) :: usage_entry
@@ -450,6 +570,44 @@ contains
     if (found_layout) layout_code = pack_layout_code(trim(layout_text))
     parsed_ok = (pack_bytes > 0_i64 .and. pack_offset >= 0_i64)
   end subroutine extract_payload_usage_entry
+
+  subroutine extract_payload_dispatch_entry(dispatch_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
+    character(len=*), intent(in) :: dispatch_entry
+    integer(i64), intent(out)    :: pack_offset
+    integer(i64), intent(out)    :: pack_bytes
+    integer(i32), intent(out)    :: role_code
+    integer(i32), intent(out)    :: layout_code
+    logical, intent(out)         :: parsed_ok
+    character(len=64)            :: offset_text
+    character(len=64)            :: bytes_text
+    character(len=64)            :: role_text
+    character(len=64)            :: layout_text
+    integer(i64)                 :: parsed_i64
+    logical                      :: found_offset
+    logical                      :: found_bytes
+    logical                      :: found_role
+    logical                      :: found_layout
+
+    pack_offset = 0_i64
+    pack_bytes = 0_i64
+    role_code = 0_i32
+    layout_code = 0_i32
+    parsed_ok = .false.
+    if (len_trim(dispatch_entry) == 0) return
+
+    call extract_inline_numeric_field(dispatch_entry, "offset=", offset_text, found_offset)
+    call extract_inline_numeric_field(dispatch_entry, "bytes=", bytes_text, found_bytes)
+    call extract_inline_numeric_field(dispatch_entry, "role=", role_text, found_role)
+    call extract_inline_numeric_field(dispatch_entry, "layout=", layout_text, found_layout)
+    if (.not. found_offset .or. .not. found_bytes .or. .not. found_role .or. .not. found_layout) return
+    if (.not. parse_i64_text(offset_text, pack_offset)) return
+    if (.not. parse_i64_text(bytes_text, pack_bytes)) return
+    if (.not. parse_i64_text(role_text, parsed_i64)) return
+    role_code = int(parsed_i64, kind=i32)
+    if (.not. parse_i64_text(layout_text, parsed_i64)) return
+    layout_code = int(parsed_i64, kind=i32)
+    parsed_ok = (pack_bytes > 0_i64 .and. pack_offset >= 0_i64)
+  end subroutine extract_payload_dispatch_entry
 
   subroutine extract_pipe_field(source_text, field_index, value_text, found)
     character(len=*), intent(in)  :: source_text

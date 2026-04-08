@@ -105,6 +105,7 @@ module mod_c_api
   public :: mizu_session_get_last_report
 
   integer(i64), parameter :: INITIAL_REGISTRY_CAPACITY = 8_i64
+  integer(i32), parameter :: MAX_IMPORT_STAGE_PACK_DISPATCH = 4_i32
 
   type, bind(c) :: c_runtime_config
     integer(c_size_t)  :: struct_size
@@ -2124,10 +2125,17 @@ contains
     character(len=MAX_NAME_LEN)       :: usage_kind
     integer(i32)                      :: tensor_index
     integer(i32)                      :: usage_index
+    integer(i32)                      :: dispatch_index
+    integer(i32)                      :: role_code
+    integer(i32)                      :: layout_code
     integer(i64)                      :: tensor_bytes
     integer(i64)                      :: pack_offset
     integer(i64)                      :: usage_hash
     integer(i64)                      :: usage_total_bytes
+    integer(i64)                      :: dispatch_hash
+    integer(i64)                      :: first_pack_offset
+    integer(i64)                      :: last_pack_offset
+    integer(i64)                      :: last_pack_bytes
 
     if (.not. allocated(model%import_tensors)) return
     usage_kind = stage_pack_usage_kind_token(stage_kind)
@@ -2137,9 +2145,18 @@ contains
     write(field_text, '(";pack_use_kind=",A)') trim(usage_kind)
     call append_payload_fragment(payload_text, trim(field_text))
 
+    field_text = ""
+    write(field_text, '(";pack_dispatch_kind=cuda_pack_dispatch_v1")')
+    call append_payload_fragment(payload_text, trim(field_text))
+
     usage_index = 0_i32
+    dispatch_index = 0_i32
     usage_hash = 0_i64
     usage_total_bytes = 0_i64
+    dispatch_hash = 0_i64
+    first_pack_offset = 0_i64
+    last_pack_offset = 0_i64
+    last_pack_bytes = 0_i64
     pack_offset = 0_i64
 
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
@@ -2152,6 +2169,9 @@ contains
       if (import_stage_uses_tensor(stage_kind, model%import_tensors(tensor_index))) then
         usage_index = usage_index + 1_i32
         usage_total_bytes = usage_total_bytes + tensor_bytes
+        if (usage_index == 1_i32) first_pack_offset = pack_offset
+        last_pack_offset = pack_offset
+        last_pack_bytes = tensor_bytes
         field_text = ""
         write(field_text, '(";pack_use",I0,"=",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
           usage_index, trim(model%import_tensors(tensor_index)%tensor_name), &
@@ -2159,6 +2179,17 @@ contains
           trim(model%import_tensors(tensor_index)%layout_name)
         call append_payload_fragment(payload_text, trim(field_text))
         usage_hash = ieor(usage_hash, hash_text64(trim(field_text)))
+
+        if (dispatch_index < MAX_IMPORT_STAGE_PACK_DISPATCH) then
+          dispatch_index = dispatch_index + 1_i32
+          role_code = import_tensor_role_code(trim(model%import_tensors(tensor_index)%tensor_role))
+          layout_code = import_tensor_layout_code(trim(model%import_tensors(tensor_index)%layout_name))
+          field_text = ""
+          write(field_text, '(";pack_dispatch",I0,"=offset=",I0,"|bytes=",I0,"|role=",I0,"|layout=",I0)') &
+            dispatch_index, pack_offset, tensor_bytes, role_code, layout_code
+          call append_payload_fragment(payload_text, trim(field_text))
+          dispatch_hash = ieor(dispatch_hash, hash_text64(trim(field_text)))
+        end if
       end if
 
       pack_offset = align_import_bytes(pack_offset + tensor_bytes)
@@ -2167,6 +2198,17 @@ contains
     if (usage_index > 0_i32 .and. usage_hash == 0_i64) then
       usage_hash = hash_text64(trim(usage_kind) // ":" // trim(model%source_model_id))
     end if
+    if (dispatch_index > 0_i32 .and. dispatch_hash == 0_i64) then
+      dispatch_hash = hash_text64(trim(usage_kind) // ":dispatch:" // trim(model%source_model_id))
+    end if
+
+    field_text = ""
+    write(field_text, '(";pack_dispatch_count=",I0)') dispatch_index
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_dispatch_hash=",Z16.16)') dispatch_hash
+    call append_payload_fragment(payload_text, trim(field_text))
 
     field_text = ""
     write(field_text, '(";pack_use_count=",I0)') usage_index
@@ -2174,6 +2216,18 @@ contains
 
     field_text = ""
     write(field_text, '(";pack_use_bytes=",I0)') usage_total_bytes
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_use_first_offset=",I0)') first_pack_offset
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_use_last_offset=",I0)') last_pack_offset
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_use_last_bytes=",I0)') last_pack_bytes
     call append_payload_fragment(payload_text, trim(field_text))
 
     field_text = ""
@@ -2280,6 +2334,40 @@ contains
       is_used = .false.
     end select
   end function import_stage_uses_tensor
+
+  pure integer(i32) function import_tensor_role_code(role_text) result(role_code)
+    character(len=*), intent(in) :: role_text
+
+    select case (trim(role_text))
+    case ("embedding_table")
+      role_code = 1_i32
+    case ("decoder_stack")
+      role_code = 2_i32
+    case ("normalization")
+      role_code = 3_i32
+    case ("token_projection")
+      role_code = 4_i32
+    case ("multimodal_projector")
+      role_code = 5_i32
+    case default
+      role_code = 0_i32
+    end select
+  end function import_tensor_role_code
+
+  pure integer(i32) function import_tensor_layout_code(layout_text) result(layout_code)
+    character(len=*), intent(in) :: layout_text
+
+    select case (trim(layout_text))
+    case ("row_major")
+      layout_code = 1_i32
+    case ("packed")
+      layout_code = 2_i32
+    case ("vector")
+      layout_code = 3_i32
+    case default
+      layout_code = 0_i32
+    end select
+  end function import_tensor_layout_code
 
   pure logical function import_tensor_belongs_to_projector(import_tensor, model) result(is_projector_tensor)
     type(import_tensor_state), intent(in) :: import_tensor
