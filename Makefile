@@ -86,10 +86,16 @@ all: test
 test: unit-tests contract-tests
 
 unit-tests: $(UNIT_BINS)
-	@set -e; for test_bin in $(UNIT_BINS); do $$test_bin; done
+	@set -e; for test_bin in $(UNIT_BINS); do \
+		echo "running $$test_bin"; \
+		$$test_bin || exit $$?; \
+	done
 
 contract-tests: contract-smokes $(CONTRACT_BINS)
-	@set -e; for test_bin in $(CONTRACT_BINS); do $$test_bin; done
+	@set -e; for test_bin in $(CONTRACT_BINS); do \
+		echo "running $$test_bin"; \
+		$$test_bin || exit $$?; \
+	done
 
 contract-smokes: $(CONTRACT_SMOKES)
 
