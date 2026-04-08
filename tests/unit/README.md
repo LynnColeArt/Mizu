@@ -129,6 +129,9 @@ bodies.
   - validates CUDA prefill and decode now also stamp an explicit imported
     pack-dispatch snapshot into live context state for the first selected
     packed tensors, including offsets, byte spans, role codes, and layout codes
+  - validates CUDA usage artifacts can now resolve compact importer-rooted
+    tensor-span records from the fixture bundle and feed those sampled spans
+    into executor behavior
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub

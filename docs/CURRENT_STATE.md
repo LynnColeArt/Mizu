@@ -31,6 +31,11 @@ Last updated: 2026-04-08
   `pack_dispatch*` records for the first selected packed tensors, and the CUDA
   executor now prefers that compact record before falling back to verbose
   `pack_use*` parsing
+- those same CUDA stage artifacts now also emit compact importer-rooted
+  `pack_span*` records for the first selected packed tensors, and the CUDA
+  executor now resolves those bundle files, hashes real sampled span bytes plus
+  source paths, and feeds that span data into both the real CUDA bridge and
+  the CPU stub
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact
@@ -266,6 +271,11 @@ In short:
   `pack_dispatch*` records for the first selected packed tensors, and the CUDA
   executor now prefers those records when reconstructing its pack-dispatch
   working set
+- CUDA prefill and decode artifact payloads now also retain compact
+  importer-rooted `pack_span*` records for the first selected packed tensors,
+  and the CUDA executor now resolves those bundle files directly so bridge
+  execution depends on sampled imported tensor spans instead of only artifact
+  text and numeric dispatch identity
 - CUDA live-context payloads now also retain an explicit pack-usage snapshot
   with usage hash, byte total, and first/last packed tensor spans, so session
   state carries selected imported tensor profile data directly

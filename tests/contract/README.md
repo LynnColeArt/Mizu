@@ -43,6 +43,8 @@ These suites cover the `API-C*` portion of
     byte spans
   - verifies CUDA prefill and decode artifacts now also retain compact numeric
     `pack_dispatch*` records for the first selected packed tensors
+  - verifies CUDA prefill and decode artifacts now also retain importer-rooted
+    `pack_span*` records for the first selected packed tensors
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
   - verifies session-state transitions across staging, prefill, decode,
     `park`, and `resume`
