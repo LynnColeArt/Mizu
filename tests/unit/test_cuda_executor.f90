@@ -145,7 +145,7 @@ program test_cuda_executor
   call execute_cuda_projector(cache_root, projector_path, 8192_i64, 1_i32, 12345_i64, embedding_count, &
     status_code, workspace%host_buffer, workspace%bytes_in_use)
   call expect_equal_i32("cuda projector should succeed", status_code, MIZU_STATUS_OK)
-  call expect_true("cuda projector should emit at least one embedding slot", embedding_count >= 1_i64)
+  call expect_equal_i64("cuda projector should deterministically emit two embedding slots", embedding_count, 2_i64)
   call expect_true("cuda projector should stamp workspace scratch bytes", any(workspace_view(1:16) /= 0_c_i8))
 
   workspace_view = 0_c_i8
@@ -332,6 +332,7 @@ program test_cuda_executor
     status_code, workspace%host_buffer, workspace%bytes_in_use, context_bytes_a, context_byte_count_a, &
     updated_context_bytes, updated_context_byte_count)
   call expect_equal_i32("cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i32("cuda decode should deterministically emit the first reference token", token_value, 1815_i32)
   call expect_equal_i64("cuda decode should emit one token", emitted_token_count, 1_i64)
   call expect_true("cuda decode should generate a positive token id", token_value > 0_i32)
   call expect_equal_i32("cuda decode stop reason should stay none", stop_reason, MIZU_STOP_REASON_NONE)
@@ -447,6 +448,8 @@ program test_cuda_executor
     stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
     decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
   call expect_equal_i32("second cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i32("second cuda decode should deterministically emit the second reference token", &
+    token_value_step_2, 629_i32)
   call expect_equal_i64("second cuda decode should emit one token", emitted_token_count, 1_i64)
   call expect_true("second cuda decode should generate a positive token id", token_value_step_2 > 0_i32)
   call extract_cuda_context_state_snapshot(updated_context_bytes, updated_context_byte_count, producer_stage, &
@@ -529,6 +532,8 @@ program test_cuda_executor
     stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
     decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
   call expect_equal_i32("third cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i32("third cuda decode should deterministically emit the third reference token", &
+    token_value_page_3, 1828_i32)
   call expect_equal_i64("third cuda decode should emit one token", emitted_token_count, 1_i64)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
@@ -537,6 +542,8 @@ program test_cuda_executor
     stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
     decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
   call expect_equal_i32("fourth cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i32("fourth cuda decode should deterministically emit the fourth reference token", &
+    token_value_page_4, 3361_i32)
   call expect_equal_i64("fourth cuda decode should emit one token", emitted_token_count, 1_i64)
   decode_context_bytes = updated_context_bytes
   decode_context_byte_count = updated_context_byte_count
@@ -545,6 +552,8 @@ program test_cuda_executor
     stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, decode_context_bytes, &
     decode_context_byte_count, updated_context_bytes, updated_context_byte_count)
   call expect_equal_i32("fifth cuda decode should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i32("fifth cuda decode should deterministically emit the fifth reference token", &
+    token_value_page_5, 1966_i32)
   call expect_equal_i64("fifth cuda decode should emit one token", emitted_token_count, 1_i64)
   call extract_cuda_context_window_snapshot(updated_context_bytes, updated_context_byte_count, page_anchors, &
     page_token_counts, page_kinds, current_page_index, valid_page_count, recent_tokens, recent_token_count, &
@@ -609,6 +618,8 @@ program test_cuda_executor
     stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, context_bytes_b, &
     context_byte_count_b, updated_context_bytes, updated_context_byte_count)
   call expect_equal_i32("cuda decode with another context should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i32("cuda decode should deterministically reflect alternate context identity", &
+    token_value_with_other_context, 1438_i32)
   call expect_true("cuda decode should reflect direct context buffer identity", &
     token_value_with_other_context /= token_value)
 

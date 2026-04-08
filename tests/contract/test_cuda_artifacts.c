@@ -259,7 +259,9 @@ int main(void) {
         return 1;
     }
     if (!expect_true("cuda decode should emit one token", decode_result.token_count == 1U)) return 1;
-    if (!expect_true("cuda decode should produce a positive token id", decode_tokens[0] > 0)) return 1;
+    if (!expect_i64("cuda decode should reproduce the public reference token", (int64_t)decode_tokens[0], 2429)) {
+        return 1;
+    }
     status = mizu_session_read_output(session, &output_buffer);
     if (!expect_status("cuda read output", status, MIZU_STATUS_OK)) return 1;
     if (!expect_true("cuda output buffer should report one written token", output_buffer.bytes_written == sizeof(int32_t))) {
