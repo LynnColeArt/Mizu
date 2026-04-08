@@ -33,6 +33,7 @@
 #define MIZU_CUDA_CONTEXT_PACK_DISPATCH_OFFSET INT32_C(816)
 #define MIZU_CUDA_CONTEXT_PACK_DISPATCH_STRIDE INT32_C(24)
 #define MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT 4
+#define MIZU_CUDA_PACK_PAGE_WORDS 8
 #define MIZU_CUDA_PACK_SPAN_SAMPLE_BYTES 64
 #define MIZU_CUDA_CONTEXT_TOTAL_BYTES INT32_C(912)
 #define MIZU_CUDA_CONTEXT_PAGE_COUNT 4
@@ -78,6 +79,38 @@ static uint64_t mix_span_sample_bytes(uint64_t seed,
             (uint64_t)(uint8_t)pack_entry_span_samples[sample_base + sample_index] ^
             ((uint64_t)(uint32_t)(usage_index + 1) << 8) ^
             ((uint64_t)(uint32_t)(sample_index + 1) << 24));
+    }
+    return seed;
+}
+
+static uint64_t mix_pack_page_words(uint64_t seed,
+                                    const int64_t *pack_entry_page_hashes,
+                                    const int32_t *pack_entry_page_word_counts,
+                                    const int32_t *pack_entry_page_words,
+                                    int32_t usage_index) {
+    int32_t page_word_count;
+    int32_t page_base;
+    int32_t word_index;
+
+    if (pack_entry_page_hashes == NULL || pack_entry_page_word_counts == NULL ||
+        pack_entry_page_words == NULL) {
+        return seed;
+    }
+
+    page_word_count = pack_entry_page_word_counts[usage_index];
+    if (page_word_count < 0) page_word_count = 0;
+    if (page_word_count > MIZU_CUDA_PACK_PAGE_WORDS) page_word_count = MIZU_CUDA_PACK_PAGE_WORDS;
+    if (page_word_count <= 0) return seed;
+
+    page_base = usage_index * MIZU_CUDA_PACK_PAGE_WORDS;
+    seed = mix_u64(seed ^
+        (uint64_t)pack_entry_page_hashes[usage_index] ^
+        ((uint64_t)(uint32_t)(usage_index + 1) << 20));
+    for (word_index = 0; word_index < page_word_count; ++word_index) {
+        seed = mix_u64(seed ^
+            (uint64_t)(uint32_t)pack_entry_page_words[page_base + word_index] ^
+            ((uint64_t)(uint32_t)(usage_index + 1) << 8) ^
+            ((uint64_t)(uint32_t)(word_index + 1) << 28));
     }
     return seed;
 }
@@ -1366,6 +1399,9 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                               const int32_t *pack_layout_codes,
                               const int64_t *pack_entry_span_hashes,
                               const int64_t *pack_entry_span_bytes,
+                              const int64_t *pack_entry_page_hashes,
+                              const int32_t *pack_entry_page_word_counts,
+                              const int32_t *pack_entry_page_words,
                               const int32_t *pack_entry_span_sample_sizes,
                               const int8_t *pack_entry_span_samples,
                               const int32_t *token_values,
@@ -1421,8 +1457,12 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                 (uint64_t)pack_entry_span_bytes[index] ^
                 ((uint64_t)(uint32_t)(index + 1) << 16));
         }
-        workspace_seed = mix_span_sample_bytes(workspace_seed, pack_entry_span_sample_sizes,
-                                               pack_entry_span_samples, index);
+        workspace_seed = mix_pack_page_words(workspace_seed, pack_entry_page_hashes,
+                                             pack_entry_page_word_counts, pack_entry_page_words, index);
+        if (pack_entry_page_word_counts == NULL || pack_entry_page_word_counts[index] <= 0) {
+            workspace_seed = mix_span_sample_bytes(workspace_seed, pack_entry_span_sample_sizes,
+                                                   pack_entry_span_samples, index);
+        }
     }
     build_prefill_state_block(workspace_seed, (uint64_t)artifact_hash, token_count, modal_byte_count,
                               staged_modal_count, *consumed_token_count, state_lanes, &summary_word);
@@ -1470,6 +1510,9 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                              const int32_t *pack_layout_codes,
                              const int64_t *pack_entry_span_hashes,
                              const int64_t *pack_entry_span_bytes,
+                             const int64_t *pack_entry_page_hashes,
+                             const int32_t *pack_entry_page_word_counts,
+                             const int32_t *pack_entry_page_words,
                              const int32_t *pack_entry_span_sample_sizes,
                              const int8_t *pack_entry_span_samples,
                              int64_t kv_before,
@@ -1569,7 +1612,11 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                 (uint64_t)pack_entry_span_bytes[index] ^
                 ((uint64_t)(uint32_t)(index + 1) << 16));
         }
-        seed = mix_span_sample_bytes(seed, pack_entry_span_sample_sizes, pack_entry_span_samples, index);
+        seed = mix_pack_page_words(seed, pack_entry_page_hashes,
+                                   pack_entry_page_word_counts, pack_entry_page_words, index);
+        if (pack_entry_page_word_counts == NULL || pack_entry_page_word_counts[index] <= 0) {
+            seed = mix_span_sample_bytes(seed, pack_entry_span_sample_sizes, pack_entry_span_samples, index);
+        }
     }
     seed ^= (uint64_t)kv_before * UINT64_C(0x9e3779b97f4a7c15);
     seed ^= (uint64_t)token_budget * UINT64_C(0xbf58476d1ce4e5b9);

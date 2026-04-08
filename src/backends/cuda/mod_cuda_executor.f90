@@ -25,6 +25,7 @@ module mod_cuda_executor
 
   integer(i32), parameter :: MAX_CUDA_PACK_DISPATCH_ENTRIES = 4_i32
   integer(i32), parameter :: MAX_CUDA_SPAN_SAMPLE_BYTES = 64_i32
+  integer(i32), parameter :: MAX_CUDA_PACK_PAGE_WORDS = 8_i32
 
   type :: cuda_pack_usage_profile
     integer(i64) :: usage_hash = 0_i64
@@ -41,6 +42,9 @@ module mod_cuda_executor
     integer(i64) :: entry_span_bytes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
     integer(i32) :: entry_span_sample_sizes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     integer(i8)  :: entry_span_samples(MAX_CUDA_SPAN_SAMPLE_BYTES, MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i8
+    integer(i64) :: entry_page_hashes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
+    integer(i32) :: entry_page_word_counts(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
+    integer(i32) :: entry_page_words(MAX_CUDA_PACK_PAGE_WORDS, MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     character(len=MAX_PATH_LEN) :: entry_span_paths(MAX_CUDA_PACK_DISPATCH_ENTRIES) = ""
     character(len=MAX_PATH_LEN) :: span_root = ""
     logical      :: has_usage = .false.
@@ -174,6 +178,7 @@ contains
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
       pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
       pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      pack_usage%entry_page_hashes, pack_usage%entry_page_word_counts, pack_usage%entry_page_words, &
       pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
       max(0_i64, staged_tokens), staged_modal_count, &
       consumed_token_count, status_code, workspace_buffer_local, workspace_bytes_local, token_values, &
@@ -265,6 +270,7 @@ contains
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
       pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
       pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      pack_usage%entry_page_hashes, pack_usage%entry_page_word_counts, pack_usage%entry_page_words, &
       pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
       kv_before, token_budget, emitted_token_count, token_value, &
       stop_reason, status_code, workspace_buffer_local, workspace_bytes_local, context_bytes, &
@@ -595,6 +601,9 @@ contains
     integer(i64)                                 :: span_hash
     integer(i64)                                 :: actual_sample_bytes
     integer(i8)                                  :: span_sample_bytes(MAX_CUDA_SPAN_SAMPLE_BYTES)
+    integer(i64)                                 :: page_hash
+    integer(i32)                                 :: page_word_count
+    integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
 
     if (len_trim(pack_usage%span_root) == 0) return
 
@@ -611,6 +620,16 @@ contains
           pack_usage%entry_span_samples(1:pack_usage%entry_span_sample_sizes(entry_index), entry_index) = &
             span_sample_bytes(1:pack_usage%entry_span_sample_sizes(entry_index))
         end if
+      end if
+      call build_cuda_pack_page_record(pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), &
+        pack_usage%role_codes(entry_index), pack_usage%layout_codes(entry_index), span_hash, &
+        pack_usage%entry_span_samples(:, entry_index), int(pack_usage%entry_span_sample_sizes(entry_index), kind=i64), &
+        page_hash, page_word_count, page_words)
+      pack_usage%entry_page_hashes(entry_index) = page_hash
+      pack_usage%entry_page_word_counts(entry_index) = page_word_count
+      pack_usage%entry_page_words(:, entry_index) = 0_i32
+      if (page_word_count > 0_i32) then
+        pack_usage%entry_page_words(1:page_word_count, entry_index) = page_words(1:page_word_count)
       end if
     end do
   end subroutine hydrate_payload_pack_span_profile
@@ -630,8 +649,14 @@ contains
     logical                                      :: found_cache_path
     logical                                      :: found_hash
     logical                                      :: found_bytes
+    logical                                      :: found_page_hash
+    logical                                      :: found_page_words
+    logical                                      :: found_page_hex
     logical                                      :: loaded_ok
     logical                                      :: required_entry_found
+    integer(i64)                                 :: page_hash
+    integer(i32)                                 :: page_word_count
+    integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
 
     loaded_cached = .false.
     if (len_trim(cache_root) == 0) return
@@ -643,7 +668,8 @@ contains
 
     call load_cuda_artifact_payload(cache_root, trim(cache_path), cache_text, loaded_ok)
     if (.not. loaded_ok) return
-    if (index(cache_text, "kind=cuda_pack_span_cache_v1") <= 0) return
+    if (index(cache_text, "kind=cuda_pack_span_cache_v1") <= 0 .and. &
+        index(cache_text, "kind=cuda_pack_span_cache_v2") <= 0) return
 
     required_entry_found = .false.
     do entry_index = 1_i32, MAX_CUDA_PACK_DISPATCH_ENTRIES
@@ -672,6 +698,43 @@ contains
       if (found_bytes) then
         call decode_hex_to_span_bytes(trim(value_text), pack_usage%entry_span_samples(:, entry_index), &
           pack_usage%entry_span_sample_sizes(entry_index))
+      end if
+
+      write(key_text, '("entry",I0,"_page_hash=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hash)
+      page_hash = 0_i64
+      if (found_page_hash) then
+        if (.not. parse_i64_text(value_text, page_hash)) return
+      end if
+
+      write(key_text, '("entry",I0,"_page_words=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_words)
+      page_word_count = 0_i32
+      if (found_page_words) then
+        if (.not. parse_i64_text(value_text, parsed_i64)) return
+        page_word_count = max(0_i32, min(MAX_CUDA_PACK_PAGE_WORDS, int(parsed_i64, kind=i32)))
+      end if
+
+      write(key_text, '("entry",I0,"_page_hex=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hex)
+      page_words = 0_i32
+      if (found_page_words .and. found_page_hex .and. page_word_count > 0_i32) then
+        call decode_hex_to_page_words(trim(value_text), page_words, page_word_count)
+      else if (pack_usage%entry_span_sample_sizes(entry_index) > 0_i32) then
+        call build_cuda_pack_page_record(pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), &
+          pack_usage%role_codes(entry_index), pack_usage%layout_codes(entry_index), &
+          pack_usage%entry_span_hashes(entry_index), pack_usage%entry_span_samples(:, entry_index), &
+          int(pack_usage%entry_span_sample_sizes(entry_index), kind=i64), page_hash, page_word_count, page_words)
+      end if
+      pack_usage%entry_page_hashes(entry_index) = max(0_i64, page_hash)
+      pack_usage%entry_page_word_counts(entry_index) = max(0_i32, page_word_count)
+      pack_usage%entry_page_words(:, entry_index) = 0_i32
+      if (pack_usage%entry_page_word_counts(entry_index) > 0_i32) then
+        pack_usage%entry_page_words(1:pack_usage%entry_page_word_counts(entry_index), entry_index) = &
+          page_words(1:pack_usage%entry_page_word_counts(entry_index))
       end if
     end do
 
@@ -831,6 +894,114 @@ contains
       stored_count = decode_index
     end do
   end subroutine decode_hex_to_span_bytes
+
+  subroutine build_cuda_pack_page_record(pack_offset, pack_bytes, role_code, layout_code, span_hash, &
+                                         sample_bytes, actual_sample_bytes, page_hash, page_word_count, page_words)
+    integer(i64), intent(in) :: pack_offset
+    integer(i64), intent(in) :: pack_bytes
+    integer(i32), intent(in) :: role_code
+    integer(i32), intent(in) :: layout_code
+    integer(i64), intent(in) :: span_hash
+    integer(i8), intent(in)  :: sample_bytes(:)
+    integer(i64), intent(in) :: actual_sample_bytes
+    integer(i64), intent(out) :: page_hash
+    integer(i32), intent(out) :: page_word_count
+    integer(i32), intent(out) :: page_words(:)
+    integer(i32)              :: stored_sample_bytes
+    integer(i32)              :: preview_word_1
+    integer(i32)              :: preview_word_2
+    integer(i32)              :: preview_word_3
+    integer(i32)              :: preview_word_4
+    integer(i32)              :: control_word
+    integer(i32)              :: word_index
+
+    page_hash = 0_i64
+    page_word_count = 0_i32
+    page_words = 0_i32
+    if (span_hash <= 0_i64 .or. pack_bytes <= 0_i64) return
+
+    stored_sample_bytes = int(max(0_i64, min(actual_sample_bytes, int(size(sample_bytes), kind=i64))), kind=i32)
+    preview_word_1 = pack_sample_word(sample_bytes, stored_sample_bytes, 1_i32)
+    preview_word_2 = pack_sample_word(sample_bytes, stored_sample_bytes, 2_i32)
+    preview_word_3 = pack_sample_word(sample_bytes, stored_sample_bytes, 3_i32)
+    preview_word_4 = pack_sample_word(sample_bytes, stored_sample_bytes, 4_i32)
+    control_word = ior(iand(role_code, int(z'000000FF', kind=i32)), &
+      ishft(iand(layout_code, int(z'000000FF', kind=i32)), 8))
+    control_word = ior(control_word, ishft(iand(stored_sample_bytes, int(z'000000FF', kind=i32)), 16))
+    control_word = ior(control_word, ishft(4_i32, 24))
+
+    page_word_count = min(MAX_CUDA_PACK_PAGE_WORDS, int(size(page_words), kind=i32))
+    if (page_word_count < 8_i32) return
+
+    page_words(1) = int(iand(pack_offset, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(2) = int(iand(pack_bytes, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(3) = control_word
+    page_words(4) = int(iand(span_hash, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(5) = int(iand(shiftr(span_hash, 32), int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(6) = preview_word_1
+    page_words(7) = preview_word_2
+    page_words(8) = ieor(preview_word_3, ishft(preview_word_4, 1))
+
+    page_hash = max(1_i64, span_hash)
+    do word_index = 1_i32, 8_i32
+      page_hash = combine_positive_hash64(max(1_i64, page_hash), &
+        iand(int(page_words(word_index), kind=i64), int(z'FFFFFFFF', kind=i64)))
+    end do
+  end subroutine build_cuda_pack_page_record
+
+  pure integer(i32) function pack_sample_word(sample_bytes, stored_sample_bytes, word_index) result(word_value)
+    integer(i8), intent(in)  :: sample_bytes(:)
+    integer(i32), intent(in) :: stored_sample_bytes
+    integer(i32), intent(in) :: word_index
+    integer(i32)             :: byte_offset
+    integer(i32)             :: byte_index
+    integer(i32)             :: byte_value
+
+    word_value = 0_i32
+    if (word_index <= 0_i32) return
+
+    byte_offset = (word_index - 1_i32) * 4_i32
+    do byte_index = 0_i32, 3_i32
+      if ((byte_offset + byte_index + 1_i32) > stored_sample_bytes) exit
+      if ((byte_offset + byte_index + 1_i32) > int(size(sample_bytes), kind=i32)) exit
+      byte_value = int(sample_bytes(byte_offset + byte_index + 1_i32), kind=i32)
+      if (byte_value < 0_i32) byte_value = byte_value + 256_i32
+      word_value = ior(word_value, ishft(byte_value, 8 * byte_index))
+    end do
+  end function pack_sample_word
+
+  subroutine decode_hex_to_page_words(hex_text, page_words, stored_count)
+    character(len=*), intent(in) :: hex_text
+    integer(i32), intent(out)    :: page_words(:)
+    integer(i32), intent(inout)  :: stored_count
+    integer(i8)                  :: packed_bytes(MAX_CUDA_PACK_PAGE_WORDS * 4)
+    integer(i32)                 :: byte_count
+    integer(i32)                 :: word_index
+
+    page_words = 0_i32
+    packed_bytes = 0_i8
+    if (stored_count <= 0_i32) return
+
+    call decode_hex_to_span_bytes(hex_text, packed_bytes, byte_count)
+    stored_count = max(0_i32, min(stored_count, min(int(size(page_words), kind=i32), byte_count / 4_i32)))
+    do word_index = 1_i32, stored_count
+      page_words(word_index) = unpack_le_i32(packed_bytes(((word_index - 1_i32) * 4_i32) + 1: &
+        ((word_index - 1_i32) * 4_i32) + 4_i32))
+    end do
+  end subroutine decode_hex_to_page_words
+
+  pure integer(i32) function unpack_le_i32(byte_values) result(word_value)
+    integer(i8), intent(in) :: byte_values(:)
+    integer(i32)            :: byte_index
+    integer(i32)            :: byte_value
+
+    word_value = 0_i32
+    do byte_index = 1_i32, min(4_i32, int(size(byte_values), kind=i32))
+      byte_value = int(byte_values(byte_index), kind=i32)
+      if (byte_value < 0_i32) byte_value = byte_value + 256_i32
+      word_value = ior(word_value, ishft(byte_value, 8 * (byte_index - 1_i32)))
+    end do
+  end function unpack_le_i32
 
   pure integer(i32) function hex_digit_value(hex_char) result(digit_value)
     character(len=*), intent(in) :: hex_char

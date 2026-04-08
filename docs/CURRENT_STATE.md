@@ -40,6 +40,10 @@ Last updated: 2026-04-08
   `.spancache` sidecars under `cache_root`, and the CUDA executor now prefers
   those cached staged span records, including sampled span bytes, on warm runs
   before falling back to importer bundle reads
+- those same CUDA `.spancache` sidecars now also retain compact staged
+  pack-page records derived from the selected imported tensor spans, and the
+  CUDA bridge now prefers those structured page words before falling back to
+  raw sampled span bytes
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact
@@ -284,6 +288,10 @@ In short:
   `.spancache` sidecars under `cache_root`, and the CUDA executor prefers
   those persisted staged span records, including sampled span bytes, on warm
   runs before falling back to importer bundle reads
+- those same CUDA `.spancache` sidecars now also retain compact staged
+  pack-page records derived from the selected imported tensor spans, and the
+  CUDA bridge now prefers those structured page words before falling back to
+  raw sampled span bytes
 - CUDA live-context payloads now also retain an explicit pack-usage snapshot
   with usage hash, byte total, and first/last packed tensor spans, so session
   state carries selected imported tensor profile data directly

@@ -106,6 +106,7 @@ module mod_c_api
 
   integer(i64), parameter :: INITIAL_REGISTRY_CAPACITY = 8_i64
   integer(i32), parameter :: MAX_IMPORT_STAGE_PACK_DISPATCH = 4_i32
+  integer(i32), parameter :: MAX_CUDA_PACK_PAGE_WORDS = 8_i32
   integer(i64), parameter :: IMPORT_STAGE_SPAN_SAMPLE_BYTES = 64_i64
 
   type, bind(c) :: c_runtime_config
@@ -3495,12 +3496,19 @@ contains
     character(len=320)                        :: field_text
     integer(i32)                              :: entry_index
     integer(i32)                              :: entry_limit
+    integer(i32)                              :: role_code
+    integer(i32)                              :: layout_code
     integer(i32)                              :: unit_id
     integer(i32)                              :: ios
     integer(i64)                              :: parsed_i64
     integer(i64)                              :: span_hash
     integer(i64)                              :: actual_sample_bytes
+    integer(i64)                              :: entry_offset
+    integer(i64)                              :: entry_bytes
+    integer(i64)                              :: page_hash
     integer(i8)                               :: sample_bytes(64)
+    integer(i32)                              :: page_word_count
+    integer(i32)                              :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
     logical                                   :: exists
     logical                                   :: found_count
     logical                                   :: found_root
@@ -3509,6 +3517,7 @@ contains
     logical                                   :: found_sample_bytes
     logical                                   :: found_sidecar
     logical                                   :: has_entries
+    logical                                   :: parsed_dispatch
 
     if (metadata%backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
     if (len_trim(cache_root) == 0) return
@@ -3543,7 +3552,7 @@ contains
     inquire(file=trim(full_path), exist=exists)
     if (exists) return
 
-    sidecar_payload = "kind=cuda_pack_span_cache_v1"
+    sidecar_payload = "kind=cuda_pack_span_cache_v2"
     has_entries = .false.
 
     do entry_index = 1_i32, entry_limit
@@ -3567,6 +3576,19 @@ contains
         actual_sample_bytes, sample_bytes)
       if (span_hash <= 0_i64) cycle
 
+      role_code = 0_i32
+      layout_code = 0_i32
+      entry_offset = 0_i64
+      entry_bytes = 0_i64
+      parsed_dispatch = .false.
+      write(field_text, '("pack_dispatch",I0,"=")') entry_index
+      entry_text = ""
+      call extract_payload_field_text_cache(payload_text, trim(field_text), entry_text, found_entry)
+      if (found_entry) then
+        call extract_payload_dispatch_entry_cache(trim(entry_text), entry_offset, entry_bytes, role_code, &
+          layout_code, parsed_dispatch)
+      end if
+
       field_text = ""
       write(field_text, '(";entry",I0,"_hash=",I0)') entry_index, span_hash
       call append_payload_fragment(sidecar_payload, trim(field_text))
@@ -3580,6 +3602,23 @@ contains
         field_text = ""
         write(field_text, '(";entry",I0,"_sample_hex=",A)') entry_index, trim(hex_text)
         call append_payload_fragment(sidecar_payload, trim(field_text))
+      end if
+      if (parsed_dispatch) then
+        call build_cuda_pack_page_record_cache(entry_offset, entry_bytes, role_code, layout_code, span_hash, &
+          sample_bytes, actual_sample_bytes, page_hash, page_word_count, page_words)
+        if (page_hash > 0_i64 .and. page_word_count > 0_i32) then
+          field_text = ""
+          write(field_text, '(";entry",I0,"_page_hash=",I0)') entry_index, page_hash
+          call append_payload_fragment(sidecar_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";entry",I0,"_page_words=",I0)') entry_index, page_word_count
+          call append_payload_fragment(sidecar_payload, trim(field_text))
+          hex_text = ""
+          call encode_i32_words_as_hex_cache(page_words, page_word_count, hex_text)
+          field_text = ""
+          write(field_text, '(";entry",I0,"_page_hex=",A)') entry_index, trim(hex_text)
+          call append_payload_fragment(sidecar_payload, trim(field_text))
+        end if
       end if
       has_entries = .true.
     end do
@@ -3607,6 +3646,157 @@ contains
     if (len_trim(payload_path) == 0) return
     write(sidecar_path, '(A,".spancache")') trim(payload_path)
   end function build_cuda_pack_span_cache_path
+
+  subroutine extract_payload_dispatch_entry_cache(dispatch_entry, pack_offset, pack_bytes, role_code, layout_code, &
+                                                  parsed_ok)
+    character(len=*), intent(in) :: dispatch_entry
+    integer(i64), intent(out)    :: pack_offset
+    integer(i64), intent(out)    :: pack_bytes
+    integer(i32), intent(out)    :: role_code
+    integer(i32), intent(out)    :: layout_code
+    logical, intent(out)         :: parsed_ok
+    character(len=64)            :: offset_text
+    character(len=64)            :: bytes_text
+    character(len=64)            :: role_text
+    character(len=64)            :: layout_text
+    integer(i64)                 :: parsed_i64
+    logical                      :: found_offset
+    logical                      :: found_bytes
+    logical                      :: found_role
+    logical                      :: found_layout
+
+    pack_offset = 0_i64
+    pack_bytes = 0_i64
+    role_code = 0_i32
+    layout_code = 0_i32
+    parsed_ok = .false.
+    if (len_trim(dispatch_entry) == 0) return
+
+    call extract_inline_numeric_field_cache(dispatch_entry, "offset=", offset_text, found_offset)
+    call extract_inline_numeric_field_cache(dispatch_entry, "bytes=", bytes_text, found_bytes)
+    call extract_inline_numeric_field_cache(dispatch_entry, "role=", role_text, found_role)
+    call extract_inline_numeric_field_cache(dispatch_entry, "layout=", layout_text, found_layout)
+    if (.not. found_offset .or. .not. found_bytes .or. .not. found_role .or. .not. found_layout) return
+    if (.not. parse_i64_text_cache(offset_text, pack_offset)) return
+    if (.not. parse_i64_text_cache(bytes_text, pack_bytes)) return
+    if (.not. parse_i64_text_cache(role_text, parsed_i64)) return
+    role_code = int(parsed_i64, kind=i32)
+    if (.not. parse_i64_text_cache(layout_text, parsed_i64)) return
+    layout_code = int(parsed_i64, kind=i32)
+    parsed_ok = (pack_bytes > 0_i64 .and. pack_offset >= 0_i64)
+  end subroutine extract_payload_dispatch_entry_cache
+
+  subroutine build_cuda_pack_page_record_cache(pack_offset, pack_bytes, role_code, layout_code, span_hash, &
+                                               sample_bytes, actual_sample_bytes, page_hash, page_word_count, &
+                                               page_words)
+    integer(i64), intent(in) :: pack_offset
+    integer(i64), intent(in) :: pack_bytes
+    integer(i32), intent(in) :: role_code
+    integer(i32), intent(in) :: layout_code
+    integer(i64), intent(in) :: span_hash
+    integer(i8), intent(in)  :: sample_bytes(:)
+    integer(i64), intent(in) :: actual_sample_bytes
+    integer(i64), intent(out) :: page_hash
+    integer(i32), intent(out) :: page_word_count
+    integer(i32), intent(out) :: page_words(:)
+    integer(i32)              :: stored_sample_bytes
+    integer(i32)              :: preview_word_1
+    integer(i32)              :: preview_word_2
+    integer(i32)              :: preview_word_3
+    integer(i32)              :: preview_word_4
+    integer(i32)              :: control_word
+    integer(i32)              :: word_index
+
+    page_hash = 0_i64
+    page_word_count = 0_i32
+    page_words = 0_i32
+    if (span_hash <= 0_i64 .or. pack_bytes <= 0_i64) return
+
+    stored_sample_bytes = int(max(0_i64, min(actual_sample_bytes, int(size(sample_bytes), kind=i64))), kind=i32)
+    preview_word_1 = pack_sample_word_cache(sample_bytes, stored_sample_bytes, 1_i32)
+    preview_word_2 = pack_sample_word_cache(sample_bytes, stored_sample_bytes, 2_i32)
+    preview_word_3 = pack_sample_word_cache(sample_bytes, stored_sample_bytes, 3_i32)
+    preview_word_4 = pack_sample_word_cache(sample_bytes, stored_sample_bytes, 4_i32)
+    control_word = ior(iand(role_code, int(z'000000FF', kind=i32)), &
+      ishft(iand(layout_code, int(z'000000FF', kind=i32)), 8))
+    control_word = ior(control_word, ishft(iand(stored_sample_bytes, int(z'000000FF', kind=i32)), 16))
+    control_word = ior(control_word, ishft(4_i32, 24))
+
+    page_word_count = min(MAX_CUDA_PACK_PAGE_WORDS, int(size(page_words), kind=i32))
+    if (page_word_count < 8_i32) return
+
+    page_words(1) = int(iand(pack_offset, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(2) = int(iand(pack_bytes, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(3) = control_word
+    page_words(4) = int(iand(span_hash, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(5) = int(iand(shiftr(span_hash, 32), int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(6) = preview_word_1
+    page_words(7) = preview_word_2
+    page_words(8) = ieor(preview_word_3, ishft(preview_word_4, 1))
+
+    page_hash = max(1_i64, span_hash)
+    do word_index = 1_i32, 8_i32
+      page_hash = combine_positive_hash64_cache(max(1_i64, page_hash), &
+        iand(int(page_words(word_index), kind=i64), int(z'FFFFFFFF', kind=i64)))
+    end do
+  end subroutine build_cuda_pack_page_record_cache
+
+  pure integer(i32) function pack_sample_word_cache(sample_bytes, stored_sample_bytes, word_index) result(word_value)
+    integer(i8), intent(in)  :: sample_bytes(:)
+    integer(i32), intent(in) :: stored_sample_bytes
+    integer(i32), intent(in) :: word_index
+    integer(i32)             :: byte_offset
+    integer(i32)             :: byte_index
+    integer(i32)             :: byte_value
+
+    word_value = 0_i32
+    if (word_index <= 0_i32) return
+
+    byte_offset = (word_index - 1_i32) * 4_i32
+    do byte_index = 0_i32, 3_i32
+      if ((byte_offset + byte_index + 1_i32) > stored_sample_bytes) exit
+      if ((byte_offset + byte_index + 1_i32) > int(size(sample_bytes), kind=i32)) exit
+      byte_value = int(sample_bytes(byte_offset + byte_index + 1_i32), kind=i32)
+      if (byte_value < 0_i32) byte_value = byte_value + 256_i32
+      word_value = ior(word_value, ishft(byte_value, 8 * byte_index))
+    end do
+  end function pack_sample_word_cache
+
+  subroutine encode_i32_words_as_hex_cache(word_values, word_count, hex_text)
+    integer(i32), intent(in)       :: word_values(:)
+    integer(i32), intent(in)       :: word_count
+    character(len=*), intent(out)  :: hex_text
+    integer(i8)                    :: packed_bytes(MAX_CUDA_PACK_PAGE_WORDS * 4)
+    integer(i32)                   :: encode_word_count
+    integer(i32)                   :: byte_index
+
+    packed_bytes = 0_i8
+    encode_word_count = max(0_i32, min(word_count, min(int(size(word_values), kind=i32), MAX_CUDA_PACK_PAGE_WORDS)))
+    do byte_index = 1_i32, encode_word_count
+      call store_i32_as_le_bytes_cache(word_values(byte_index), packed_bytes(((byte_index - 1_i32) * 4_i32) + 1: &
+        ((byte_index - 1_i32) * 4_i32) + 4_i32))
+    end do
+    call encode_bytes_as_hex(packed_bytes, encode_word_count * 4_i32, hex_text)
+  end subroutine encode_i32_words_as_hex_cache
+
+  subroutine store_i32_as_le_bytes_cache(word_value, byte_values)
+    integer(i32), intent(in)      :: word_value
+    integer(i8), intent(out)      :: byte_values(:)
+    integer(i64)                  :: unsigned_word
+    integer(i32)                  :: byte_index
+    integer(i32)                  :: byte_value
+
+    byte_values = 0_i8
+    unsigned_word = iand(int(word_value, kind=i64), int(z'FFFFFFFF', kind=i64))
+    do byte_index = 1_i32, min(4_i32, int(size(byte_values), kind=i32))
+      byte_value = int(iand(shiftr(unsigned_word, 8 * (byte_index - 1_i32)), int(z'FF', kind=i64)), kind=i32)
+      if (byte_value > 127_i32) then
+        byte_values(byte_index) = int(byte_value - 256_i32, kind=i8)
+      else
+        byte_values(byte_index) = int(byte_value, kind=i8)
+      end if
+    end do
+  end subroutine store_i32_as_le_bytes_cache
 
   function join_cache_root_with_payload_path(cache_root, payload_path) result(full_path)
     character(len=*), intent(in) :: cache_root
