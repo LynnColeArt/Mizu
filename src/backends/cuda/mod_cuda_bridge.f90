@@ -36,14 +36,21 @@ module mod_cuda_bridge
       integer(c_int32_t), intent(out) :: status_code
     end subroutine c_mizu_cuda_bridge_get_device_info
 
-    subroutine c_mizu_cuda_bridge_prefill(payload_hash, artifact_hash, token_values, token_count, modal_bytes, &
-                                          modal_byte_count, staged_modal_count, workspace_buffer, &
-                                          workspace_bytes, context_bytes, context_capacity, &
+    subroutine c_mizu_cuda_bridge_prefill(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
+                                          first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+                                          token_values, token_count, modal_bytes, modal_byte_count, &
+                                          staged_modal_count, workspace_buffer, workspace_bytes, context_bytes, context_capacity, &
                                           context_byte_count, consumed_token_count, status_code) &
         bind(c, name="mizu_cuda_bridge_prefill")
       import c_int32_t, c_int64_t, c_ptr
       integer(c_int64_t), value      :: payload_hash
       integer(c_int64_t), value      :: artifact_hash
+      integer(c_int64_t), value      :: pack_usage_hash
+      integer(c_int64_t), value      :: pack_usage_bytes
+      integer(c_int64_t), value      :: first_pack_offset
+      integer(c_int64_t), value      :: last_pack_offset
+      integer(c_int64_t), value      :: last_pack_bytes
+      integer(c_int32_t), value      :: pack_usage_count
       type(c_ptr), value             :: token_values
       integer(c_int64_t), value      :: token_count
       type(c_ptr), value             :: modal_bytes
@@ -72,8 +79,10 @@ module mod_cuda_bridge
       integer(c_int32_t), intent(out) :: status_code
     end subroutine c_mizu_cuda_bridge_projector
 
-    subroutine c_mizu_cuda_bridge_decode(payload_hash, artifact_hash, kv_before, token_budget, context_bytes, &
-                                         context_byte_count, workspace_buffer, workspace_bytes, &
+    subroutine c_mizu_cuda_bridge_decode(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
+                                         first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+                                         kv_before, token_budget, context_bytes, context_byte_count, &
+                                         workspace_buffer, workspace_bytes, &
                                          updated_context_bytes, updated_context_capacity, &
                                          updated_context_byte_count, emitted_token_count, token_value, &
                                          stop_reason, status_code) &
@@ -81,6 +90,12 @@ module mod_cuda_bridge
       import c_int32_t, c_int64_t, c_ptr
       integer(c_int64_t), value      :: payload_hash
       integer(c_int64_t), value      :: artifact_hash
+      integer(c_int64_t), value      :: pack_usage_hash
+      integer(c_int64_t), value      :: pack_usage_bytes
+      integer(c_int64_t), value      :: first_pack_offset
+      integer(c_int64_t), value      :: last_pack_offset
+      integer(c_int64_t), value      :: last_pack_bytes
+      integer(c_int32_t), value      :: pack_usage_count
       integer(c_int64_t), value      :: kv_before
       integer(c_int64_t), value      :: token_budget
       type(c_ptr), value             :: context_bytes
@@ -135,11 +150,19 @@ contains
     call copy_c_string_to_fortran(device_name_buffer, info%device_name)
   end subroutine query_cuda_device_info
 
-  subroutine launch_cuda_prefill(payload_hash, artifact_hash, staged_tokens, staged_modal_count, &
+  subroutine launch_cuda_prefill(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
+                                 first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+                                 staged_tokens, staged_modal_count, &
                                  consumed_token_count, status_code, workspace_buffer, workspace_bytes, &
                                  token_values, modal_bytes, context_bytes, context_byte_count)
     integer(i64), intent(in)  :: payload_hash
     integer(i64), intent(in)  :: artifact_hash
+    integer(i64), intent(in)  :: pack_usage_hash
+    integer(i64), intent(in)  :: pack_usage_bytes
+    integer(i64), intent(in)  :: first_pack_offset
+    integer(i64), intent(in)  :: last_pack_offset
+    integer(i64), intent(in)  :: last_pack_bytes
+    integer(i32), intent(in)  :: pack_usage_count
     integer(i64), intent(in)  :: staged_tokens
     integer(i32), intent(in)  :: staged_modal_count
     integer(i64), intent(out) :: consumed_token_count
@@ -196,6 +219,9 @@ contains
     end if
 
     call c_mizu_cuda_bridge_prefill(int(payload_hash, kind=c_int64_t), int(artifact_hash, kind=c_int64_t), &
+      int(pack_usage_hash, kind=c_int64_t), int(pack_usage_bytes, kind=c_int64_t), &
+      int(first_pack_offset, kind=c_int64_t), int(last_pack_offset, kind=c_int64_t), &
+      int(last_pack_bytes, kind=c_int64_t), int(pack_usage_count, kind=c_int32_t), &
       token_values_c, token_count_c, modal_bytes_c, modal_byte_count_c, int(staged_modal_count, kind=c_int32_t), &
       workspace_buffer_c, workspace_bytes_c, context_bytes_c, int(MAX_LIVE_CONTEXT_BYTES, kind=c_int32_t), &
       context_byte_count_c, consumed_token_count_c, status_code_c)
@@ -239,12 +265,20 @@ contains
     status_code = int(status_code_c, kind=i32)
   end subroutine launch_cuda_projector
 
-  subroutine launch_cuda_decode(payload_hash, artifact_hash, kv_before, token_budget, emitted_token_count, &
+  subroutine launch_cuda_decode(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
+                                first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+                                kv_before, token_budget, emitted_token_count, &
                                 token_value, stop_reason, status_code, workspace_buffer, workspace_bytes, &
                                 context_bytes, context_byte_count, updated_context_bytes, &
                                 updated_context_byte_count)
     integer(i64), intent(in)  :: payload_hash
     integer(i64), intent(in)  :: artifact_hash
+    integer(i64), intent(in)  :: pack_usage_hash
+    integer(i64), intent(in)  :: pack_usage_bytes
+    integer(i64), intent(in)  :: first_pack_offset
+    integer(i64), intent(in)  :: last_pack_offset
+    integer(i64), intent(in)  :: last_pack_bytes
+    integer(i32), intent(in)  :: pack_usage_count
     integer(i64), intent(in)  :: kv_before
     integer(i64), intent(in)  :: token_budget
     integer(i64), intent(out) :: emitted_token_count
@@ -294,6 +328,9 @@ contains
     if (present(updated_context_bytes)) updated_context_bytes_c = c_loc(updated_context_bytes_copy(1))
 
     call c_mizu_cuda_bridge_decode(int(payload_hash, kind=c_int64_t), int(artifact_hash, kind=c_int64_t), &
+      int(pack_usage_hash, kind=c_int64_t), int(pack_usage_bytes, kind=c_int64_t), &
+      int(first_pack_offset, kind=c_int64_t), int(last_pack_offset, kind=c_int64_t), &
+      int(last_pack_bytes, kind=c_int64_t), int(pack_usage_count, kind=c_int32_t), &
       int(kv_before, kind=c_int64_t), int(token_budget, kind=c_int64_t), context_bytes_c, context_byte_count_c, &
       workspace_buffer_c, workspace_bytes_c, updated_context_bytes_c, int(MAX_LIVE_CONTEXT_BYTES, kind=c_int32_t), &
       updated_context_byte_count_c, emitted_token_count_c, token_value_c, stop_reason_c, status_code_c)

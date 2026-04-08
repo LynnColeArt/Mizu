@@ -9,7 +9,8 @@ program test_cuda_executor
                                extract_cuda_context_state_snapshot, extract_cuda_context_window_snapshot, &
                                extract_cuda_context_kv_lane_snapshot, extract_cuda_context_kv_layout_snapshot, &
                                extract_cuda_context_page_control_snapshot, &
-                               extract_cuda_context_page_tensor_snapshot
+                               extract_cuda_context_page_tensor_snapshot, &
+                               extract_cuda_context_pack_usage_snapshot
   use mod_workspace,     only: initialize_workspace, reserve_workspace_bytes, release_workspace_bytes, &
                                reset_workspace
 
@@ -23,6 +24,8 @@ program test_cuda_executor
   integer(i8)  :: context_bytes_b(MAX_LIVE_CONTEXT_BYTES)
   integer(i8)  :: decode_context_bytes(MAX_LIVE_CONTEXT_BYTES)
   integer(i8)  :: updated_context_bytes(MAX_LIVE_CONTEXT_BYTES)
+  integer(i8)  :: usage_context_bytes(MAX_LIVE_CONTEXT_BYTES)
+  integer(i8)  :: usage_decode_context_bytes(MAX_LIVE_CONTEXT_BYTES)
   integer(i64) :: embedding_count
   integer(i64) :: consumed_token_count
   integer(i64) :: emitted_token_count
@@ -36,14 +39,22 @@ program test_cuda_executor
   integer(i32) :: context_byte_count_b
   integer(i32) :: decode_context_byte_count
   integer(i32) :: updated_context_byte_count
+  integer(i32) :: usage_context_byte_count
+  integer(i32) :: usage_decode_context_byte_count
   integer(i32) :: stop_reason
   integer(i32) :: status_code
   integer(i32) :: bridge_status_code
   integer(i32) :: producer_stage
   integer(i32) :: summary_control_a
   integer(i32) :: summary_control_b
+  integer(i32) :: pack_usage_count
   integer      :: shell_status
   integer(i64) :: artifact_hash
+  integer(i64) :: pack_usage_hash
+  integer(i64) :: pack_usage_bytes
+  integer(i64) :: first_pack_offset
+  integer(i64) :: last_pack_offset
+  integer(i64) :: last_pack_bytes
   integer(i64) :: token_digest
   integer(i64) :: modal_digest
   integer(i64) :: kv_token_count
@@ -112,6 +123,8 @@ program test_cuda_executor
   character(len=*), parameter :: projector_path = "artifacts/cuda/cuda/projector/test.mm"
   character(len=*), parameter :: prefill_path = "artifacts/cuda/cuda/plans/prefill/test.plan"
   character(len=*), parameter :: decode_path = "artifacts/cuda/cuda/plans/decode/test.plan"
+  character(len=*), parameter :: prefill_usage_path = "artifacts/cuda/cuda/plans/prefill/usage.plan"
+  character(len=*), parameter :: decode_usage_path = "artifacts/cuda/cuda/plans/decode/usage.plan"
 
   token_values_a = [3_i32, 5_i32, 7_i32, 11_i32, 13_i32, 17_i32, 19_i32]
   token_values_b = [2_i32, 4_i32, 6_i32, 8_i32, 10_i32, 12_i32, 14_i32]
@@ -121,20 +134,24 @@ program test_cuda_executor
   context_bytes_b = 0_i8
   decode_context_bytes = 0_i8
   updated_context_bytes = 0_i8
+  usage_context_bytes = 0_i8
+  usage_decode_context_bytes = 0_i8
   context_byte_count_a = 0_i32
   context_byte_count_b = 0_i32
   decode_context_byte_count = 0_i32
   updated_context_byte_count = 0_i32
+  usage_context_byte_count = 0_i32
+  usage_decode_context_byte_count = 0_i32
 
   call query_cuda_device_info(cuda_info, bridge_status_code)
   call expect_equal_i32("cuda bridge device probe should succeed", bridge_status_code, MIZU_STATUS_OK)
   using_stub_bridge = (trim(cuda_info%device_name) == "cuda_stub")
-  expected_token_value = merge(1059_i32, 1815_i32, using_stub_bridge)
-  expected_token_value_step_2 = merge(2636_i32, 629_i32, using_stub_bridge)
-  expected_token_value_page_3 = merge(1490_i32, 1828_i32, using_stub_bridge)
-  expected_token_value_page_4 = merge(1608_i32, 3361_i32, using_stub_bridge)
-  expected_token_value_page_5 = merge(3873_i32, 1966_i32, using_stub_bridge)
-  expected_token_value_with_other_context = merge(2078_i32, 1438_i32, using_stub_bridge)
+  expected_token_value = merge(1241_i32, 3479_i32, using_stub_bridge)
+  expected_token_value_step_2 = merge(3752_i32, 3781_i32, using_stub_bridge)
+  expected_token_value_page_3 = merge(2885_i32, 3107_i32, using_stub_bridge)
+  expected_token_value_page_4 = merge(1900_i32, 1557_i32, using_stub_bridge)
+  expected_token_value_page_5 = merge(2246_i32, 531_i32, using_stub_bridge)
+  expected_token_value_with_other_context = merge(2182_i32, 3022_i32, using_stub_bridge)
 
   shell_status = 0
   call execute_command_line("rm -rf " // cache_root // " && mkdir -p " // cache_root // &
@@ -154,6 +171,34 @@ program test_cuda_executor
   open(unit=11, file=trim(cache_root) // "/" // trim(decode_path), status="replace", action="write")
   write(11, "(A)") "candidate=decode;stage=4;format=cuda_bf16_decode_plan_v1"
   close(11)
+
+  open(unit=12, file=trim(cache_root) // "/" // trim(prefill_usage_path), status="replace", action="write")
+  write(12, "(A)") "candidate=prefill_usage;stage=3;format=cuda_bf16_prefill_plan_v1;" // &
+    "pack_use_kind=cuda_prefill_pack_usage_v1;" // &
+    "pack_use1=token_embeddings|embedding_table|offset=0|" // &
+    "bytes=1089994752|layout=row_major;" // &
+    "pack_use2=decoder_blocks|decoder_stack|offset=1089994752|" // &
+    "bytes=25690112|layout=packed;" // &
+    "pack_use3=final_norm|normalization|offset=1115684864|" // &
+    "bytes=14336|layout=vector;" // &
+    "pack_use_count=3;pack_use_bytes=1115699200;" // &
+    "pack_use_hash=1111111111111111"
+  close(12)
+
+  open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
+  write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
+    "pack_use_kind=cuda_decode_pack_usage_v1;" // &
+    "pack_use1=token_embeddings|embedding_table|offset=0|" // &
+    "bytes=1089994752|layout=row_major;" // &
+    "pack_use2=decoder_blocks|decoder_stack|offset=1089994752|" // &
+    "bytes=25690112|layout=packed;" // &
+    "pack_use3=final_norm|normalization|offset=1115684864|" // &
+    "bytes=14336|layout=vector;" // &
+    "pack_use4=lm_head|token_projection|offset=1115699200|" // &
+    "bytes=1089994752|layout=row_major;" // &
+    "pack_use_count=4;pack_use_bytes=2205693952;" // &
+    "pack_use_hash=2222222222222222"
+  close(13)
 
   call initialize_workspace(workspace, 0_i64)
   call reserve_workspace_bytes(workspace, 64_i64, status_code)
@@ -346,6 +391,26 @@ program test_cuda_executor
     page_key_storage_offsets(1), 128_i32)
   call expect_equal_i32("cuda prefill page tensor for the second tensor set should preserve key capacity bytes", &
     page_key_capacity_bytes(1), 32_i32)
+
+  call execute_cuda_prefill(cache_root, prefill_usage_path, 7_i64, 1_i32, 0_i64, 0_i64, consumed_token_count, &
+    status_code, workspace%host_buffer, workspace%bytes_in_use, token_values_a, modal_bytes_a, usage_context_bytes, &
+    usage_context_byte_count)
+  call expect_equal_i32("cuda prefill with explicit pack usage should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i64("cuda prefill with explicit pack usage should consume staged tokens", &
+    consumed_token_count, 7_i64)
+  call extract_cuda_context_pack_usage_snapshot(usage_context_bytes, usage_context_byte_count, pack_usage_hash, &
+    pack_usage_bytes, first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, snapshot_valid)
+  call expect_true("cuda prefill pack-usage snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill pack-usage snapshot should record three selected tensors", &
+    pack_usage_count, 3_i32)
+  call expect_equal_i64("cuda prefill pack-usage snapshot should record prefill usage bytes", &
+    pack_usage_bytes, 1115699200_i64)
+  call expect_equal_i64("cuda prefill pack-usage snapshot should start at the first packed offset", &
+    first_pack_offset, 0_i64)
+  call expect_equal_i64("cuda prefill pack-usage snapshot should end at the normalization tensor offset", &
+    last_pack_offset, 1115684864_i64)
+  call expect_equal_i64("cuda prefill pack-usage snapshot should record the normalization tensor bytes", &
+    last_pack_bytes, 14336_i64)
 
   workspace_view = 0_c_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value, stop_reason, &
@@ -643,6 +708,26 @@ program test_cuda_executor
     token_value_with_other_context, expected_token_value_with_other_context)
   call expect_true("cuda decode should reflect direct context buffer identity", &
     token_value_with_other_context /= token_value)
+
+  call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
+    token_value_with_other_context, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
+  call expect_equal_i32("cuda decode with explicit pack usage should succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i64("cuda decode with explicit pack usage should emit one token", emitted_token_count, 1_i64)
+  call extract_cuda_context_pack_usage_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, &
+    pack_usage_hash, pack_usage_bytes, first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+    snapshot_valid)
+  call expect_true("cuda decode pack-usage snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda decode pack-usage snapshot should record four selected tensors", &
+    pack_usage_count, 4_i32)
+  call expect_equal_i64("cuda decode pack-usage snapshot should record decode usage bytes", &
+    pack_usage_bytes, 2205693952_i64)
+  call expect_equal_i64("cuda decode pack-usage snapshot should start at the first packed offset", &
+    first_pack_offset, 0_i64)
+  call expect_equal_i64("cuda decode pack-usage snapshot should end at the token projection tensor offset", &
+    last_pack_offset, 1115699200_i64)
+  call expect_equal_i64("cuda decode pack-usage snapshot should record the token projection bytes", &
+    last_pack_bytes, 1089994752_i64)
 
   open(unit=12, file=trim(cache_root) // "/" // trim(decode_path), status="replace", action="write")
   write(12, "(A)") "candidate=decode;stage=4;format=cuda_bf16_decode_plan_v2"

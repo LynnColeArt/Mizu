@@ -19,7 +19,18 @@ module mod_cuda_executor
   public :: extract_cuda_context_kv_layout_snapshot
   public :: extract_cuda_context_page_control_snapshot
   public :: extract_cuda_context_page_tensor_snapshot
+  public :: extract_cuda_context_pack_usage_snapshot
   public :: extract_cuda_context_slot_snapshot
+
+  type :: cuda_pack_usage_profile
+    integer(i64) :: usage_hash = 0_i64
+    integer(i64) :: usage_bytes = 0_i64
+    integer(i64) :: first_pack_offset = 0_i64
+    integer(i64) :: last_pack_offset = 0_i64
+    integer(i64) :: last_pack_bytes = 0_i64
+    integer(i32) :: usage_count = 0_i32
+    logical      :: has_usage = .false.
+  end type cuda_pack_usage_profile
 
 contains
 
@@ -95,6 +106,7 @@ contains
     integer(i64)                 :: payload_hash
     integer(i64)                 :: pack_dependency_hash
     integer(i64)                 :: workspace_bytes_local
+    type(cuda_pack_usage_profile) :: pack_usage
     logical                      :: loaded_ok
     logical                      :: has_pack_dependency
     type(c_ptr)                  :: workspace_buffer_local
@@ -132,6 +144,7 @@ contains
 
     artifact_hash = positive_hash64(trim(payload_text))
     call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
+    call extract_payload_pack_usage_profile(payload_text, pack_usage)
     if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
     payload_hash = artifact_hash
     payload_hash = combine_positive_hash64(payload_hash, token_content_hash)
@@ -140,7 +153,9 @@ contains
     workspace_bytes_local = 0_i64
     if (present(workspace_buffer)) workspace_buffer_local = workspace_buffer
     if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
-    call launch_cuda_prefill(payload_hash, artifact_hash, max(0_i64, staged_tokens), staged_modal_count, &
+    call launch_cuda_prefill(payload_hash, artifact_hash, pack_usage%usage_hash, pack_usage%usage_bytes, &
+      pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
+      pack_usage%usage_count, max(0_i64, staged_tokens), staged_modal_count, &
       consumed_token_count, status_code, workspace_buffer_local, workspace_bytes_local, token_values, &
       modal_bytes, context_bytes, context_byte_count)
     if (present(context_artifact_hash)) context_artifact_hash = merge(artifact_hash, 0_i64, status_code == MIZU_STATUS_OK)
@@ -172,6 +187,7 @@ contains
     integer(i64)                 :: workspace_bytes_local
     integer(i64)                 :: current_context_artifact_hash
     integer(i32)                 :: current_context_stage
+    type(cuda_pack_usage_profile) :: pack_usage
     logical                      :: loaded_ok
     logical                      :: lineage_known
     logical                      :: has_pack_dependency
@@ -207,6 +223,7 @@ contains
 
     artifact_hash = positive_hash64(trim(payload_text))
     call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
+    call extract_payload_pack_usage_profile(payload_text, pack_usage)
     if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
     payload_hash = artifact_hash
     call extract_cuda_context_lineage(context_bytes, context_byte_count, current_context_stage, &
@@ -221,7 +238,9 @@ contains
     workspace_bytes_local = 0_i64
     if (present(workspace_buffer)) workspace_buffer_local = workspace_buffer
     if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
-    call launch_cuda_decode(payload_hash, artifact_hash, kv_before, token_budget, emitted_token_count, token_value, &
+    call launch_cuda_decode(payload_hash, artifact_hash, pack_usage%usage_hash, pack_usage%usage_bytes, &
+      pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
+      pack_usage%usage_count, kv_before, token_budget, emitted_token_count, token_value, &
       stop_reason, status_code, workspace_buffer_local, workspace_bytes_local, context_bytes, &
       context_byte_count, updated_context_bytes, updated_context_byte_count)
     if (present(context_artifact_hash)) context_artifact_hash = merge(artifact_hash, 0_i64, status_code == MIZU_STATUS_OK)
@@ -345,6 +364,109 @@ contains
       has_dependency = .true.
     end if
   end subroutine extract_payload_pack_dependency_hash
+
+  subroutine extract_payload_pack_usage_profile(payload_text, pack_usage)
+    character(len=*), intent(in)        :: payload_text
+    type(cuda_pack_usage_profile), intent(out) :: pack_usage
+    character(len=32)                   :: field_key
+    character(len=256)                  :: usage_entry
+    integer(i32)                        :: entry_index
+    integer(i64)                        :: entry_offset
+    integer(i64)                        :: entry_bytes
+    logical                             :: found_entry
+    logical                             :: parsed_ok
+
+    pack_usage = cuda_pack_usage_profile()
+    if (len_trim(payload_text) == 0) return
+
+    do entry_index = 1_i32, 16_i32
+      write(field_key, '("pack_use",I0,"=")') entry_index
+      usage_entry = ""
+      call extract_payload_field_text(payload_text, trim(field_key), usage_entry, found_entry)
+      if (.not. found_entry) exit
+      call extract_payload_usage_entry(trim(usage_entry), entry_offset, entry_bytes, parsed_ok)
+      if (.not. parsed_ok) cycle
+
+      pack_usage%usage_count = pack_usage%usage_count + 1_i32
+      pack_usage%usage_bytes = pack_usage%usage_bytes + entry_bytes
+      if (pack_usage%usage_count == 1_i32) pack_usage%first_pack_offset = entry_offset
+      pack_usage%last_pack_offset = entry_offset
+      pack_usage%last_pack_bytes = entry_bytes
+      pack_usage%usage_hash = combine_positive_hash64(max(1_i64, pack_usage%usage_hash), &
+        positive_hash64(trim(usage_entry)))
+    end do
+
+    pack_usage%has_usage = (pack_usage%usage_count > 0_i32)
+  end subroutine extract_payload_pack_usage_profile
+
+  subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, parsed_ok)
+    character(len=*), intent(in) :: usage_entry
+    integer(i64), intent(out)    :: pack_offset
+    integer(i64), intent(out)    :: pack_bytes
+    logical, intent(out)         :: parsed_ok
+    character(len=64)            :: offset_text
+    character(len=64)            :: bytes_text
+    logical                      :: found_offset
+    logical                      :: found_bytes
+
+    pack_offset = 0_i64
+    pack_bytes = 0_i64
+    parsed_ok = .false.
+    if (len_trim(usage_entry) == 0) return
+
+    call extract_inline_numeric_field(usage_entry, "offset=", offset_text, found_offset)
+    call extract_inline_numeric_field(usage_entry, "bytes=", bytes_text, found_bytes)
+    if (.not. found_offset .or. .not. found_bytes) return
+    if (.not. parse_i64_text(offset_text, pack_offset)) return
+    if (.not. parse_i64_text(bytes_text, pack_bytes)) return
+    parsed_ok = (pack_bytes > 0_i64 .and. pack_offset >= 0_i64)
+  end subroutine extract_payload_usage_entry
+
+  subroutine extract_inline_numeric_field(source_text, key_text, value_text, found)
+    character(len=*), intent(in)  :: source_text
+    character(len=*), intent(in)  :: key_text
+    character(len=*), intent(out) :: value_text
+    logical, intent(out)          :: found
+    integer(i32)                  :: start_index
+    integer(i32)                  :: value_start
+    integer(i32)                  :: remaining_len
+    integer(i32)                  :: separator_index
+    integer(i32)                  :: copy_len
+
+    value_text = ""
+    found = .false.
+    if (len_trim(source_text) == 0 .or. len_trim(key_text) == 0) return
+
+    start_index = index(source_text, trim(key_text))
+    if (start_index <= 0) return
+
+    value_start = start_index + len_trim(key_text)
+    if (value_start > len_trim(source_text)) return
+
+    remaining_len = len_trim(source_text) - value_start + 1_i32
+    separator_index = index(source_text(value_start:value_start + remaining_len - 1_i32), "|")
+    if (separator_index <= 0) then
+      copy_len = min(len_trim(source_text) - value_start + 1_i32, len(value_text))
+    else
+      copy_len = min(separator_index - 1_i32, len(value_text))
+    end if
+    if (copy_len <= 0) return
+
+    value_text(1:copy_len) = source_text(value_start:value_start + copy_len - 1_i32)
+    found = (len_trim(value_text) > 0)
+  end subroutine extract_inline_numeric_field
+
+  logical function parse_i64_text(text, value_out) result(parsed_ok)
+    character(len=*), intent(in) :: text
+    integer(i64), intent(out)    :: value_out
+    integer(i32)                 :: ios
+
+    value_out = 0_i64
+    parsed_ok = .false.
+    if (len_trim(text) == 0) return
+    read(text, *, iostat=ios) value_out
+    parsed_ok = (ios == 0_i32)
+  end function parse_i64_text
 
   subroutine extract_payload_field_text(payload_text, key_text, value_text, found)
     character(len=*), intent(in)  :: payload_text
@@ -850,6 +972,39 @@ contains
     snapshot_valid = .true.
   end subroutine extract_cuda_context_page_tensor_snapshot
 
+  pure subroutine extract_cuda_context_pack_usage_snapshot(context_bytes, context_byte_count, usage_hash, &
+                                                           usage_bytes, first_pack_offset, last_pack_offset, &
+                                                           last_pack_bytes, usage_count, snapshot_valid)
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i64), intent(out) :: usage_hash
+    integer(i64), intent(out) :: usage_bytes
+    integer(i64), intent(out) :: first_pack_offset
+    integer(i64), intent(out) :: last_pack_offset
+    integer(i64), intent(out) :: last_pack_bytes
+    integer(i32), intent(out) :: usage_count
+    logical, intent(out)      :: snapshot_valid
+    integer(i32), parameter   :: USAGE_PROFILE_OFFSET = 769_i32
+
+    usage_hash = 0_i64
+    usage_bytes = 0_i64
+    first_pack_offset = 0_i64
+    last_pack_offset = 0_i64
+    last_pack_bytes = 0_i64
+    usage_count = 0_i32
+    snapshot_valid = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (context_byte_count < USAGE_PROFILE_OFFSET + 43_i32) return
+
+    usage_hash = decode_context_u64at(context_bytes, USAGE_PROFILE_OFFSET)
+    usage_bytes = decode_context_u64at(context_bytes, USAGE_PROFILE_OFFSET + 8_i32)
+    first_pack_offset = decode_context_u64at(context_bytes, USAGE_PROFILE_OFFSET + 16_i32)
+    last_pack_offset = decode_context_u64at(context_bytes, USAGE_PROFILE_OFFSET + 24_i32)
+    last_pack_bytes = decode_context_u64at(context_bytes, USAGE_PROFILE_OFFSET + 32_i32)
+    usage_count = decode_context_i32at(context_bytes, USAGE_PROFILE_OFFSET + 40_i32)
+    snapshot_valid = .true.
+  end subroutine extract_cuda_context_pack_usage_snapshot
+
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1
     integer(i8), intent(in) :: byte_2
@@ -889,6 +1044,24 @@ contains
     value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_7), kind=i64), 48)
     value_u64 = value_u64 + shiftl(int(context_byte_to_u32(byte_8), kind=i64), 56)
   end function decode_context_u64le
+
+  pure integer(i64) function decode_context_u64at(context_bytes, offset_1based) result(value_u64)
+    integer(i8), intent(in)  :: context_bytes(:)
+    integer(i32), intent(in) :: offset_1based
+
+    value_u64 = decode_context_u64le(context_bytes(offset_1based), context_bytes(offset_1based + 1_i32), &
+      context_bytes(offset_1based + 2_i32), context_bytes(offset_1based + 3_i32), &
+      context_bytes(offset_1based + 4_i32), context_bytes(offset_1based + 5_i32), &
+      context_bytes(offset_1based + 6_i32), context_bytes(offset_1based + 7_i32))
+  end function decode_context_u64at
+
+  pure integer(i32) function decode_context_i32at(context_bytes, offset_1based) result(value_i32)
+    integer(i8), intent(in)  :: context_bytes(:)
+    integer(i32), intent(in) :: offset_1based
+
+    value_i32 = int(decode_context_u32le(context_bytes(offset_1based), context_bytes(offset_1based + 1_i32), &
+      context_bytes(offset_1based + 2_i32), context_bytes(offset_1based + 3_i32)), kind=i32)
+  end function decode_context_i32at
 
   pure integer(i64) function compute_context_checksum32(context_bytes, stored_count) result(checksum_value)
     integer(i8), intent(in) :: context_bytes(:)

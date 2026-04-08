@@ -180,7 +180,7 @@ module mod_types
   integer(i32), parameter :: MAX_RUNTIME_BACKENDS = 2_i32
   integer(i32), parameter :: MAX_MODEL_IMPORT_PREVIEW = 6_i32
   integer(i32), parameter :: MAX_RECENT_OUTPUT_TOKENS = 8_i32
-  integer(i32), parameter :: MAX_LIVE_CONTEXT_BYTES = 768_i32
+  integer(i32), parameter :: MAX_LIVE_CONTEXT_BYTES = 832_i32
 
   type :: runtime_handle
     integer(i64) :: value = 0_i64

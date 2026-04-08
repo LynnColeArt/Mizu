@@ -33,7 +33,8 @@ constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CONTROL_OFFSET = 512;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CONTROL_STRIDE = 32;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET = 640;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE = 32;
-constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 768;
+constexpr int32_t MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET = 768;
+constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 832;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_COUNT = 4;
 constexpr int32_t MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT = 4;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_CAPACITY = 8;
@@ -738,6 +739,22 @@ inline void write_context_window_block(unsigned char *bytes,
   write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_STATE_IMAGE_DIGEST_OFFSET, state_image_digest);
 }
 
+inline void write_context_pack_usage_block(unsigned char *bytes,
+                                           int32_t stored_count,
+                                           unsigned long long usage_hash,
+                                           unsigned long long usage_bytes,
+                                           unsigned long long first_pack_offset,
+                                           unsigned long long last_pack_offset,
+                                           unsigned long long last_pack_bytes,
+                                           int32_t usage_count) {
+  write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET, usage_hash);
+  write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET + 8, usage_bytes);
+  write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET + 16, first_pack_offset);
+  write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET + 24, last_pack_offset);
+  write_context_u64(bytes, stored_count, MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET + 32, last_pack_bytes);
+  write_context_i32(bytes, stored_count, MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET + 40, usage_count);
+}
+
 inline void build_decode_window_block(const unsigned long long current_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       const int32_t current_recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
                                       const int32_t current_key_slot_lanes[MIZU_CUDA_CONTEXT_SLOT_COUNT],
@@ -1063,6 +1080,12 @@ inline void stamp_workspace_buffer(void *workspace_buffer,
 
 inline void fill_prefill_context_bytes(unsigned long long seed,
                                        unsigned long long artifact_hash,
+                                       unsigned long long pack_usage_hash,
+                                       unsigned long long pack_usage_bytes,
+                                       unsigned long long first_pack_offset,
+                                       unsigned long long last_pack_offset,
+                                       unsigned long long last_pack_bytes,
+                                       int32_t pack_usage_count,
                                        const int32_t *token_values,
                                        int64_t token_count,
                                        int64_t modal_byte_count,
@@ -1130,6 +1153,8 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
                              page_value_lane_counts, page_head_blocks, page_generations, page_owner_kinds,
                              page_usable_capacities, page_committed_tokens, page_free_slots, page_epochs,
                              page_recycle_epochs, page_logical_ids, page_flags, window_meta, state_image_digest);
+  write_context_pack_usage_block(bytes, stored_count, pack_usage_hash, pack_usage_bytes, first_pack_offset,
+                                 last_pack_offset, last_pack_bytes, pack_usage_count);
 
   checksum = compute_context_checksum(bytes, stored_count);
   if (stored_count > 8) {
@@ -1141,6 +1166,12 @@ inline void fill_prefill_context_bytes(unsigned long long seed,
 
 inline void fill_decode_context_bytes(unsigned long long seed,
                                       unsigned long long artifact_hash,
+                                      unsigned long long pack_usage_hash,
+                                      unsigned long long pack_usage_bytes,
+                                      unsigned long long first_pack_offset,
+                                      unsigned long long last_pack_offset,
+                                      unsigned long long last_pack_bytes,
+                                      int32_t pack_usage_count,
                                       const unsigned long long next_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES],
                                       unsigned long long summary_word,
                                       const unsigned long long next_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
@@ -1198,6 +1229,8 @@ inline void fill_decode_context_bytes(unsigned long long seed,
                              next_page_usable_capacities, next_page_committed_tokens, next_page_free_slots,
                              next_page_epochs, next_page_recycle_epochs, next_page_logical_ids, next_page_flags,
                              next_window_meta, next_state_image_digest);
+  write_context_pack_usage_block(bytes, stored_count, pack_usage_hash, pack_usage_bytes, first_pack_offset,
+                                 last_pack_offset, last_pack_bytes, pack_usage_count);
 
   checksum = compute_context_checksum(bytes, stored_count);
   if (stored_count > 8) {
@@ -1255,6 +1288,12 @@ extern "C" void mizu_cuda_bridge_get_device_info(int32_t *device_count,
 
 extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
                                          int64_t artifact_hash,
+                                         int64_t pack_usage_hash,
+                                         int64_t pack_usage_bytes,
+                                         int64_t first_pack_offset,
+                                         int64_t last_pack_offset,
+                                         int64_t last_pack_bytes,
+                                         int32_t pack_usage_count,
                                          const int32_t *token_values,
                                          int64_t token_count,
                                          const int8_t *modal_bytes,
@@ -1329,11 +1368,23 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
   if (status == cudaSuccess) status = cudaDeviceSynchronize();
   if (status == cudaSuccess) {
     *consumed_token_count = *managed_consumed_token_count;
-    workspace_seed = mix_u64_host(static_cast<unsigned long long>(payload_hash) ^ *managed_tensor_seed);
+    workspace_seed = mix_u64_host(static_cast<unsigned long long>(payload_hash) ^ *managed_tensor_seed ^
+                                  static_cast<unsigned long long>(pack_usage_hash));
+    workspace_seed = mix_u64_host(workspace_seed ^ static_cast<unsigned long long>(pack_usage_bytes) ^
+                                  static_cast<unsigned long long>(first_pack_offset) ^
+                                  static_cast<unsigned long long>(last_pack_offset) ^
+                                  static_cast<unsigned long long>(last_pack_bytes) ^
+                                  static_cast<unsigned long long>(static_cast<uint32_t>(pack_usage_count)));
     build_prefill_state_block(workspace_seed, static_cast<unsigned long long>(artifact_hash), token_count,
                               modal_byte_count, staged_modal_count, *consumed_token_count, state_lanes,
                               &summary_word);
-    fill_prefill_context_bytes(workspace_seed, static_cast<unsigned long long>(artifact_hash), token_values,
+    fill_prefill_context_bytes(workspace_seed, static_cast<unsigned long long>(artifact_hash),
+                               static_cast<unsigned long long>(pack_usage_hash),
+                               static_cast<unsigned long long>(pack_usage_bytes),
+                               static_cast<unsigned long long>(first_pack_offset),
+                               static_cast<unsigned long long>(last_pack_offset),
+                               static_cast<unsigned long long>(last_pack_bytes),
+                               pack_usage_count, token_values,
                                token_count, modal_byte_count, staged_modal_count, *consumed_token_count,
                                context_bytes, context_capacity, context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes, state_lanes[0] ^ state_lanes[3] ^ summary_word, 3U);
@@ -1384,6 +1435,12 @@ extern "C" void mizu_cuda_bridge_projector(int64_t payload_hash,
 
 extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
                                         int64_t artifact_hash,
+                                        int64_t pack_usage_hash,
+                                        int64_t pack_usage_bytes,
+                                        int64_t first_pack_offset,
+                                        int64_t last_pack_offset,
+                                        int64_t last_pack_bytes,
+                                        int32_t pack_usage_count,
                                         int64_t kv_before,
                                         int64_t token_budget,
                                         const int8_t *context_bytes,
@@ -1494,6 +1551,12 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
   decode_seed = mix_u64_host(decode_seed ^ current_state_lanes[0] ^ current_state_lanes[1]);
   decode_seed = mix_u64_host(decode_seed ^ current_state_lanes[2] ^ current_state_lanes[3] ^ summary_word);
   decode_seed = mix_u64_host(decode_seed ^ current_window_meta ^ current_state_image_digest);
+  decode_seed = mix_u64_host(decode_seed ^ static_cast<unsigned long long>(pack_usage_hash) ^
+                             static_cast<unsigned long long>(pack_usage_bytes) ^
+                             static_cast<unsigned long long>(first_pack_offset) ^
+                             static_cast<unsigned long long>(last_pack_offset) ^
+                             static_cast<unsigned long long>(last_pack_bytes) ^
+                             static_cast<unsigned long long>(static_cast<uint32_t>(pack_usage_count)));
 
   mizu_decode_kernel<<<1, 1>>>(static_cast<int64_t>(decode_seed), kv_before, token_budget, managed_emitted_token_count,
                                managed_token_value, managed_stop_reason);
@@ -1523,7 +1586,13 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
                               next_page_recycle_epochs, next_page_logical_ids, next_page_flags,
                               &next_window_meta, &next_state_image_digest);
     fill_decode_context_bytes(decode_seed ^ static_cast<unsigned long long>(*token_value),
-                              static_cast<unsigned long long>(artifact_hash), next_state_lanes, summary_word,
+                              static_cast<unsigned long long>(artifact_hash),
+                              static_cast<unsigned long long>(pack_usage_hash),
+                              static_cast<unsigned long long>(pack_usage_bytes),
+                              static_cast<unsigned long long>(first_pack_offset),
+                              static_cast<unsigned long long>(last_pack_offset),
+                              static_cast<unsigned long long>(last_pack_bytes),
+                              pack_usage_count, next_state_lanes, summary_word,
                               next_page_words, next_recent_tokens, next_key_slot_lanes, next_value_slot_lanes,
                               next_page_lane_digests, next_page_key_rows, next_page_key_lane_counts,
                               next_page_value_rows, next_page_value_lane_counts, next_page_head_blocks,
