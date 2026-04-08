@@ -27,6 +27,10 @@ Last updated: 2026-04-08
   packed offsets, and byte spans for the tensors each stage declares it uses,
   and those usage records now feed plan identity plus CUDA placeholder
   execution identity
+- those same CUDA stage artifacts now also emit compact numeric
+  `pack_dispatch*` records for the first selected packed tensors, and the CUDA
+  executor now prefers that compact record before falling back to verbose
+  `pack_use*` parsing
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact
@@ -258,6 +262,10 @@ In short:
   imported pack dependency lineage, and prefill/decode now also retain
   stage-specific `pack_use_*` usage records that name the exact imported
   tensors selected from the packed layout
+- CUDA prefill and decode artifact payloads now also retain compact numeric
+  `pack_dispatch*` records for the first selected packed tensors, and the CUDA
+  executor now prefers those records when reconstructing its pack-dispatch
+  working set
 - CUDA live-context payloads now also retain an explicit pack-usage snapshot
   with usage hash, byte total, and first/last packed tensor spans, so session
   state carries selected imported tensor profile data directly

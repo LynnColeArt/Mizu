@@ -117,6 +117,10 @@ Current implementation status:
   `pack_use_*` records that name the exact imported tensors selected from the
   packed layout, and CUDA execution now reads those usage summaries back into
   its placeholder execution identity
+- those same CUDA stage artifacts now also carry compact numeric
+  `pack_dispatch*` records for the first selected packed tensors, and the CUDA
+  executor now prefers that compact record before falling back to verbose
+  `pack_use*` parsing
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside payload
