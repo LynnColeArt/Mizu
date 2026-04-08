@@ -10,7 +10,8 @@ program test_cuda_executor
                                extract_cuda_context_kv_lane_snapshot, extract_cuda_context_kv_layout_snapshot, &
                                extract_cuda_context_page_control_snapshot, &
                                extract_cuda_context_page_tensor_snapshot, &
-                               extract_cuda_context_pack_usage_snapshot
+                               extract_cuda_context_pack_usage_snapshot, &
+                               extract_cuda_context_pack_dispatch_snapshot
   use mod_workspace,     only: initialize_workspace, reserve_workspace_bytes, release_workspace_bytes, &
                                reset_workspace
 
@@ -48,6 +49,7 @@ program test_cuda_executor
   integer(i32) :: summary_control_a
   integer(i32) :: summary_control_b
   integer(i32) :: pack_usage_count
+  integer(i32) :: pack_dispatch_count
   integer      :: shell_status
   integer(i64) :: artifact_hash
   integer(i64) :: pack_usage_hash
@@ -55,6 +57,8 @@ program test_cuda_executor
   integer(i64) :: first_pack_offset
   integer(i64) :: last_pack_offset
   integer(i64) :: last_pack_bytes
+  integer(i64) :: pack_dispatch_offsets(4)
+  integer(i64) :: pack_dispatch_bytes(4)
   integer(i64) :: token_digest
   integer(i64) :: modal_digest
   integer(i64) :: kv_token_count
@@ -98,6 +102,8 @@ program test_cuda_executor
   integer(i32) :: page_value_committed_bytes(4)
   integer(i32) :: page_value_capacity_bytes(4)
   integer(i32) :: page_value_row_stride_bytes(4)
+  integer(i32) :: pack_dispatch_role_codes(4)
+  integer(i32) :: pack_dispatch_layout_codes(4)
   integer(i32) :: recent_tokens(4)
   integer(i32) :: current_page_index
   integer(i32) :: valid_page_count
@@ -411,6 +417,36 @@ program test_cuda_executor
     last_pack_offset, 1115684864_i64)
   call expect_equal_i64("cuda prefill pack-usage snapshot should record the normalization tensor bytes", &
     last_pack_bytes, 14336_i64)
+  call extract_cuda_context_pack_dispatch_snapshot(usage_context_bytes, usage_context_byte_count, &
+    pack_dispatch_offsets, pack_dispatch_bytes, pack_dispatch_role_codes, pack_dispatch_layout_codes, &
+    pack_dispatch_count, snapshot_valid)
+  call expect_true("cuda prefill pack-dispatch snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda prefill pack-dispatch snapshot should record three live entries", &
+    pack_dispatch_count, 3_i32)
+  call expect_equal_i64("cuda prefill pack-dispatch snapshot should keep the embedding tensor offset", &
+    pack_dispatch_offsets(1), 0_i64)
+  call expect_equal_i64("cuda prefill pack-dispatch snapshot should keep the decoder tensor offset", &
+    pack_dispatch_offsets(2), 1089994752_i64)
+  call expect_equal_i64("cuda prefill pack-dispatch snapshot should keep the normalization tensor offset", &
+    pack_dispatch_offsets(3), 1115684864_i64)
+  call expect_equal_i64("cuda prefill pack-dispatch snapshot should keep the decoder tensor bytes", &
+    pack_dispatch_bytes(2), 25690112_i64)
+  call expect_equal_i32("cuda prefill pack-dispatch snapshot should label the embedding tensor role", &
+    pack_dispatch_role_codes(1), 1_i32)
+  call expect_equal_i32("cuda prefill pack-dispatch snapshot should label the decoder tensor role", &
+    pack_dispatch_role_codes(2), 2_i32)
+  call expect_equal_i32("cuda prefill pack-dispatch snapshot should label the normalization tensor role", &
+    pack_dispatch_role_codes(3), 3_i32)
+  call expect_equal_i32("cuda prefill pack-dispatch snapshot should label the embedding layout", &
+    pack_dispatch_layout_codes(1), 1_i32)
+  call expect_equal_i32("cuda prefill pack-dispatch snapshot should label the decoder layout", &
+    pack_dispatch_layout_codes(2), 2_i32)
+  call expect_equal_i32("cuda prefill pack-dispatch snapshot should label the normalization layout", &
+    pack_dispatch_layout_codes(3), 3_i32)
+  call expect_equal_i64("cuda prefill pack-dispatch snapshot should clear the trailing offset slot", &
+    pack_dispatch_offsets(4), 0_i64)
+  call expect_equal_i32("cuda prefill pack-dispatch snapshot should clear the trailing role slot", &
+    pack_dispatch_role_codes(4), 0_i32)
 
   workspace_view = 0_c_i8
   call execute_cuda_decode(cache_root, decode_path, 42_i64, 1_i64, emitted_token_count, token_value, stop_reason, &
@@ -728,6 +764,20 @@ program test_cuda_executor
     last_pack_offset, 1115699200_i64)
   call expect_equal_i64("cuda decode pack-usage snapshot should record the token projection bytes", &
     last_pack_bytes, 1089994752_i64)
+  call extract_cuda_context_pack_dispatch_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, &
+    pack_dispatch_offsets, pack_dispatch_bytes, pack_dispatch_role_codes, pack_dispatch_layout_codes, &
+    pack_dispatch_count, snapshot_valid)
+  call expect_true("cuda decode pack-dispatch snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda decode pack-dispatch snapshot should record four live entries", &
+    pack_dispatch_count, 4_i32)
+  call expect_equal_i64("cuda decode pack-dispatch snapshot should keep the token projection offset", &
+    pack_dispatch_offsets(4), 1115699200_i64)
+  call expect_equal_i64("cuda decode pack-dispatch snapshot should keep the token projection bytes", &
+    pack_dispatch_bytes(4), 1089994752_i64)
+  call expect_equal_i32("cuda decode pack-dispatch snapshot should label the token projection role", &
+    pack_dispatch_role_codes(4), 4_i32)
+  call expect_equal_i32("cuda decode pack-dispatch snapshot should label the token projection layout", &
+    pack_dispatch_layout_codes(4), 1_i32)
 
   open(unit=12, file=trim(cache_root) // "/" // trim(decode_path), status="replace", action="write")
   write(12, "(A)") "candidate=decode;stage=4;format=cuda_bf16_decode_plan_v2"

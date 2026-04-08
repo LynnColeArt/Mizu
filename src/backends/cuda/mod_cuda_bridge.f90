@@ -38,6 +38,7 @@ module mod_cuda_bridge
 
     subroutine c_mizu_cuda_bridge_prefill(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
                                           first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+                                          pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
                                           token_values, token_count, modal_bytes, modal_byte_count, &
                                           staged_modal_count, workspace_buffer, workspace_bytes, context_bytes, context_capacity, &
                                           context_byte_count, consumed_token_count, status_code) &
@@ -51,6 +52,10 @@ module mod_cuda_bridge
       integer(c_int64_t), value      :: last_pack_offset
       integer(c_int64_t), value      :: last_pack_bytes
       integer(c_int32_t), value      :: pack_usage_count
+      type(c_ptr), value             :: pack_entry_offsets
+      type(c_ptr), value             :: pack_entry_bytes
+      type(c_ptr), value             :: pack_role_codes
+      type(c_ptr), value             :: pack_layout_codes
       type(c_ptr), value             :: token_values
       integer(c_int64_t), value      :: token_count
       type(c_ptr), value             :: modal_bytes
@@ -81,6 +86,7 @@ module mod_cuda_bridge
 
     subroutine c_mizu_cuda_bridge_decode(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
                                          first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+                                         pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
                                          kv_before, token_budget, context_bytes, context_byte_count, &
                                          workspace_buffer, workspace_bytes, &
                                          updated_context_bytes, updated_context_capacity, &
@@ -96,6 +102,10 @@ module mod_cuda_bridge
       integer(c_int64_t), value      :: last_pack_offset
       integer(c_int64_t), value      :: last_pack_bytes
       integer(c_int32_t), value      :: pack_usage_count
+      type(c_ptr), value             :: pack_entry_offsets
+      type(c_ptr), value             :: pack_entry_bytes
+      type(c_ptr), value             :: pack_role_codes
+      type(c_ptr), value             :: pack_layout_codes
       integer(c_int64_t), value      :: kv_before
       integer(c_int64_t), value      :: token_budget
       type(c_ptr), value             :: context_bytes
@@ -152,6 +162,7 @@ contains
 
   subroutine launch_cuda_prefill(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
                                  first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+                                 pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
                                  staged_tokens, staged_modal_count, &
                                  consumed_token_count, status_code, workspace_buffer, workspace_bytes, &
                                  token_values, modal_bytes, context_bytes, context_byte_count)
@@ -163,6 +174,10 @@ contains
     integer(i64), intent(in)  :: last_pack_offset
     integer(i64), intent(in)  :: last_pack_bytes
     integer(i32), intent(in)  :: pack_usage_count
+    integer(i64), intent(in)  :: pack_entry_offsets(:)
+    integer(i64), intent(in)  :: pack_entry_bytes(:)
+    integer(i32), intent(in)  :: pack_role_codes(:)
+    integer(i32), intent(in)  :: pack_layout_codes(:)
     integer(i64), intent(in)  :: staged_tokens
     integer(i32), intent(in)  :: staged_modal_count
     integer(i64), intent(out) :: consumed_token_count
@@ -177,17 +192,30 @@ contains
     integer(c_int32_t)        :: context_byte_count_c
     integer(c_int32_t)        :: status_code_c
     type(c_ptr)               :: workspace_buffer_c
+    type(c_ptr)               :: pack_entry_offsets_c
+    type(c_ptr)               :: pack_entry_bytes_c
+    type(c_ptr)               :: pack_role_codes_c
+    type(c_ptr)               :: pack_layout_codes_c
     type(c_ptr)               :: token_values_c
     type(c_ptr)               :: modal_bytes_c
     type(c_ptr)               :: context_bytes_c
     integer(c_int64_t)        :: workspace_bytes_c
     integer(c_int64_t)        :: token_count_c
     integer(c_int64_t)        :: modal_byte_count_c
+    integer(i32)              :: pack_entry_limit
+    integer(c_i32), target    :: pack_role_codes_copy(4)
+    integer(c_i32), target    :: pack_layout_codes_copy(4)
+    integer(c_int64_t), target :: pack_entry_offsets_copy(4)
+    integer(c_int64_t), target :: pack_entry_bytes_copy(4)
     integer(c_i32), allocatable, target :: token_values_copy(:)
     integer(c_i8), allocatable, target  :: modal_bytes_copy(:)
     integer(c_i8), target               :: context_bytes_copy(MAX_LIVE_CONTEXT_BYTES)
 
     workspace_buffer_c = c_null_ptr
+    pack_entry_offsets_c = c_null_ptr
+    pack_entry_bytes_c = c_null_ptr
+    pack_role_codes_c = c_null_ptr
+    pack_layout_codes_c = c_null_ptr
     token_values_c = c_null_ptr
     modal_bytes_c = c_null_ptr
     context_bytes_c = c_null_ptr
@@ -195,6 +223,11 @@ contains
     token_count_c = int(max(0_i64, staged_tokens), kind=c_int64_t)
     modal_byte_count_c = 0_c_int64_t
     context_byte_count_c = 0_c_int32_t
+    pack_entry_limit = 0_i32
+    pack_entry_offsets_copy = 0_c_int64_t
+    pack_entry_bytes_copy = 0_c_int64_t
+    pack_role_codes_copy = 0_c_i32
+    pack_layout_codes_copy = 0_c_i32
     context_bytes_copy = 0_c_i8
     if (present(workspace_buffer)) workspace_buffer_c = workspace_buffer
     if (present(workspace_bytes)) workspace_bytes_c = int(max(0_i64, workspace_bytes), kind=c_int64_t)
@@ -217,11 +250,26 @@ contains
     if (present(context_bytes)) then
       context_bytes_c = c_loc(context_bytes_copy(1))
     end if
+    if (size(pack_entry_offsets) > 0) then
+      pack_entry_limit = min(4_i32, int(size(pack_entry_offsets), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_bytes), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_role_codes), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_layout_codes), kind=i32))
+      pack_entry_offsets_copy(1:pack_entry_limit) = int(pack_entry_offsets(1:pack_entry_limit), kind=c_int64_t)
+      pack_entry_bytes_copy(1:pack_entry_limit) = int(pack_entry_bytes(1:pack_entry_limit), kind=c_int64_t)
+      pack_role_codes_copy(1:pack_entry_limit) = int(pack_role_codes(1:pack_entry_limit), kind=c_i32)
+      pack_layout_codes_copy(1:pack_entry_limit) = int(pack_layout_codes(1:pack_entry_limit), kind=c_i32)
+      pack_entry_offsets_c = c_loc(pack_entry_offsets_copy(1))
+      pack_entry_bytes_c = c_loc(pack_entry_bytes_copy(1))
+      pack_role_codes_c = c_loc(pack_role_codes_copy(1))
+      pack_layout_codes_c = c_loc(pack_layout_codes_copy(1))
+    end if
 
     call c_mizu_cuda_bridge_prefill(int(payload_hash, kind=c_int64_t), int(artifact_hash, kind=c_int64_t), &
       int(pack_usage_hash, kind=c_int64_t), int(pack_usage_bytes, kind=c_int64_t), &
       int(first_pack_offset, kind=c_int64_t), int(last_pack_offset, kind=c_int64_t), &
       int(last_pack_bytes, kind=c_int64_t), int(pack_usage_count, kind=c_int32_t), &
+      pack_entry_offsets_c, pack_entry_bytes_c, pack_role_codes_c, pack_layout_codes_c, &
       token_values_c, token_count_c, modal_bytes_c, modal_byte_count_c, int(staged_modal_count, kind=c_int32_t), &
       workspace_buffer_c, workspace_bytes_c, context_bytes_c, int(MAX_LIVE_CONTEXT_BYTES, kind=c_int32_t), &
       context_byte_count_c, consumed_token_count_c, status_code_c)
@@ -267,6 +315,7 @@ contains
 
   subroutine launch_cuda_decode(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
                                 first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+                                pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
                                 kv_before, token_budget, emitted_token_count, &
                                 token_value, stop_reason, status_code, workspace_buffer, workspace_bytes, &
                                 context_bytes, context_byte_count, updated_context_bytes, &
@@ -279,6 +328,10 @@ contains
     integer(i64), intent(in)  :: last_pack_offset
     integer(i64), intent(in)  :: last_pack_bytes
     integer(i32), intent(in)  :: pack_usage_count
+    integer(i64), intent(in)  :: pack_entry_offsets(:)
+    integer(i64), intent(in)  :: pack_entry_bytes(:)
+    integer(i32), intent(in)  :: pack_role_codes(:)
+    integer(i32), intent(in)  :: pack_layout_codes(:)
     integer(i64), intent(in)  :: kv_before
     integer(i64), intent(in)  :: token_budget
     integer(i64), intent(out) :: emitted_token_count
@@ -298,18 +351,36 @@ contains
     integer(c_int32_t)        :: context_byte_count_c
     integer(c_int32_t)        :: updated_context_byte_count_c
     type(c_ptr)               :: workspace_buffer_c
+    type(c_ptr)               :: pack_entry_offsets_c
+    type(c_ptr)               :: pack_entry_bytes_c
+    type(c_ptr)               :: pack_role_codes_c
+    type(c_ptr)               :: pack_layout_codes_c
     type(c_ptr)               :: context_bytes_c
     type(c_ptr)               :: updated_context_bytes_c
     integer(c_int64_t)        :: workspace_bytes_c
+    integer(i32)              :: pack_entry_limit
+    integer(c_i32), target    :: pack_role_codes_copy(4)
+    integer(c_i32), target    :: pack_layout_codes_copy(4)
+    integer(c_int64_t), target :: pack_entry_offsets_copy(4)
+    integer(c_int64_t), target :: pack_entry_bytes_copy(4)
     integer(c_i8), allocatable, target  :: context_bytes_copy(:)
     integer(c_i8), target               :: updated_context_bytes_copy(MAX_LIVE_CONTEXT_BYTES)
 
     workspace_buffer_c = c_null_ptr
+    pack_entry_offsets_c = c_null_ptr
+    pack_entry_bytes_c = c_null_ptr
+    pack_role_codes_c = c_null_ptr
+    pack_layout_codes_c = c_null_ptr
     context_bytes_c = c_null_ptr
     updated_context_bytes_c = c_null_ptr
     workspace_bytes_c = 0_c_int64_t
     context_byte_count_c = 0_c_int32_t
     updated_context_byte_count_c = 0_c_int32_t
+    pack_entry_limit = 0_i32
+    pack_entry_offsets_copy = 0_c_int64_t
+    pack_entry_bytes_copy = 0_c_int64_t
+    pack_role_codes_copy = 0_c_i32
+    pack_layout_codes_copy = 0_c_i32
     updated_context_bytes_copy = 0_c_i8
     if (present(workspace_buffer)) workspace_buffer_c = workspace_buffer
     if (present(workspace_bytes)) workspace_bytes_c = int(max(0_i64, workspace_bytes), kind=c_int64_t)
@@ -326,11 +397,26 @@ contains
         kind=c_int32_t)
     end if
     if (present(updated_context_bytes)) updated_context_bytes_c = c_loc(updated_context_bytes_copy(1))
+    if (size(pack_entry_offsets) > 0) then
+      pack_entry_limit = min(4_i32, int(size(pack_entry_offsets), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_bytes), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_role_codes), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_layout_codes), kind=i32))
+      pack_entry_offsets_copy(1:pack_entry_limit) = int(pack_entry_offsets(1:pack_entry_limit), kind=c_int64_t)
+      pack_entry_bytes_copy(1:pack_entry_limit) = int(pack_entry_bytes(1:pack_entry_limit), kind=c_int64_t)
+      pack_role_codes_copy(1:pack_entry_limit) = int(pack_role_codes(1:pack_entry_limit), kind=c_i32)
+      pack_layout_codes_copy(1:pack_entry_limit) = int(pack_layout_codes(1:pack_entry_limit), kind=c_i32)
+      pack_entry_offsets_c = c_loc(pack_entry_offsets_copy(1))
+      pack_entry_bytes_c = c_loc(pack_entry_bytes_copy(1))
+      pack_role_codes_c = c_loc(pack_role_codes_copy(1))
+      pack_layout_codes_c = c_loc(pack_layout_codes_copy(1))
+    end if
 
     call c_mizu_cuda_bridge_decode(int(payload_hash, kind=c_int64_t), int(artifact_hash, kind=c_int64_t), &
       int(pack_usage_hash, kind=c_int64_t), int(pack_usage_bytes, kind=c_int64_t), &
       int(first_pack_offset, kind=c_int64_t), int(last_pack_offset, kind=c_int64_t), &
       int(last_pack_bytes, kind=c_int64_t), int(pack_usage_count, kind=c_int32_t), &
+      pack_entry_offsets_c, pack_entry_bytes_c, pack_role_codes_c, pack_layout_codes_c, &
       int(kv_before, kind=c_int64_t), int(token_budget, kind=c_int64_t), context_bytes_c, context_byte_count_c, &
       workspace_buffer_c, workspace_bytes_c, updated_context_bytes_c, int(MAX_LIVE_CONTEXT_BYTES, kind=c_int32_t), &
       updated_context_byte_count_c, emitted_token_count_c, token_value_c, stop_reason_c, status_code_c)

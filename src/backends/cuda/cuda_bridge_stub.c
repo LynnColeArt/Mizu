@@ -30,7 +30,10 @@
 #define MIZU_CUDA_CONTEXT_PAGE_TENSOR_OFFSET INT32_C(640)
 #define MIZU_CUDA_CONTEXT_PAGE_TENSOR_STRIDE INT32_C(32)
 #define MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET INT32_C(768)
-#define MIZU_CUDA_CONTEXT_TOTAL_BYTES INT32_C(832)
+#define MIZU_CUDA_CONTEXT_PACK_DISPATCH_OFFSET INT32_C(816)
+#define MIZU_CUDA_CONTEXT_PACK_DISPATCH_STRIDE INT32_C(24)
+#define MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT 4
+#define MIZU_CUDA_CONTEXT_TOTAL_BYTES INT32_C(912)
 #define MIZU_CUDA_CONTEXT_PAGE_COUNT 4
 #define MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT 4
 #define MIZU_CUDA_CONTEXT_PAGE_CAPACITY 8
@@ -808,6 +811,31 @@ static void write_context_pack_usage_block(uint8_t *bytes,
     write_context_i32(bytes, stored_count, MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET + 40, usage_count);
 }
 
+static void write_context_pack_dispatch_block(uint8_t *bytes,
+                                              int32_t stored_count,
+                                              const int64_t *pack_entry_offsets,
+                                              const int64_t *pack_entry_bytes,
+                                              const int32_t *pack_role_codes,
+                                              const int32_t *pack_layout_codes,
+                                              int32_t pack_usage_count) {
+    int32_t index;
+
+    for (index = 0; index < MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT; ++index) {
+        const int32_t entry_offset = MIZU_CUDA_CONTEXT_PACK_DISPATCH_OFFSET +
+            (index * MIZU_CUDA_CONTEXT_PACK_DISPATCH_STRIDE);
+        const int entry_is_live = (index < pack_usage_count && pack_entry_offsets != NULL && pack_entry_bytes != NULL &&
+            pack_role_codes != NULL && pack_layout_codes != NULL);
+        write_context_u64(bytes, stored_count, entry_offset,
+            entry_is_live ? (uint64_t)pack_entry_offsets[index] : UINT64_C(0));
+        write_context_u64(bytes, stored_count, entry_offset + 8,
+            entry_is_live ? (uint64_t)pack_entry_bytes[index] : UINT64_C(0));
+        write_context_i32(bytes, stored_count, entry_offset + 16,
+            entry_is_live ? pack_role_codes[index] : 0);
+        write_context_i32(bytes, stored_count, entry_offset + 20,
+            entry_is_live ? pack_layout_codes[index] : 0);
+    }
+}
+
 static void build_decode_window_block(const uint64_t current_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
                                       const int32_t current_recent_tokens[MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT],
                                       const int32_t current_key_slot_lanes[MIZU_CUDA_CONTEXT_SLOT_COUNT],
@@ -1106,6 +1134,10 @@ static void fill_prefill_context_bytes(uint64_t seed,
                                        uint64_t last_pack_offset,
                                        uint64_t last_pack_bytes,
                                        int32_t pack_usage_count,
+                                       const int64_t *pack_entry_offsets,
+                                       const int64_t *pack_entry_bytes,
+                                       const int32_t *pack_role_codes,
+                                       const int32_t *pack_layout_codes,
                                        const int32_t *token_values,
                                        int64_t token_count,
                                        int64_t modal_byte_count,
@@ -1177,6 +1209,8 @@ static void fill_prefill_context_bytes(uint64_t seed,
                                page_recycle_epochs, page_logical_ids, page_flags, window_meta, state_image_digest);
     write_context_pack_usage_block(bytes, stored_count, pack_usage_hash, pack_usage_bytes, first_pack_offset,
                                    last_pack_offset, last_pack_bytes, pack_usage_count);
+    write_context_pack_dispatch_block(bytes, stored_count, pack_entry_offsets, pack_entry_bytes, pack_role_codes,
+                                      pack_layout_codes, pack_usage_count);
 
     checksum = compute_context_checksum(bytes, stored_count);
     if (stored_count > 8) {
@@ -1194,6 +1228,10 @@ static void fill_decode_context_bytes(uint64_t seed,
                                       uint64_t last_pack_offset,
                                       uint64_t last_pack_bytes,
                                       int32_t pack_usage_count,
+                                      const int64_t *pack_entry_offsets,
+                                      const int64_t *pack_entry_bytes,
+                                      const int32_t *pack_role_codes,
+                                      const int32_t *pack_layout_codes,
                                       const uint64_t next_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES],
                                       uint64_t summary_word,
                                       const uint64_t next_page_words[MIZU_CUDA_CONTEXT_PAGE_COUNT],
@@ -1255,6 +1293,8 @@ static void fill_decode_context_bytes(uint64_t seed,
                                next_window_meta, next_state_image_digest);
     write_context_pack_usage_block(bytes, stored_count, pack_usage_hash, pack_usage_bytes, first_pack_offset,
                                    last_pack_offset, last_pack_bytes, pack_usage_count);
+    write_context_pack_dispatch_block(bytes, stored_count, pack_entry_offsets, pack_entry_bytes, pack_role_codes,
+                                      pack_layout_codes, pack_usage_count);
 
     checksum = compute_context_checksum(bytes, stored_count);
     if (stored_count > 8) {
@@ -1294,6 +1334,10 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                               int64_t last_pack_offset,
                               int64_t last_pack_bytes,
                               int32_t pack_usage_count,
+                              const int64_t *pack_entry_offsets,
+                              const int64_t *pack_entry_bytes,
+                              const int32_t *pack_role_codes,
+                              const int32_t *pack_layout_codes,
                               const int32_t *token_values,
                               int64_t token_count,
                               const int8_t *modal_bytes,
@@ -1332,11 +1376,22 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
     workspace_seed = mix_u64(workspace_seed ^ (uint64_t)pack_usage_bytes ^ (uint64_t)first_pack_offset ^
         (uint64_t)last_pack_offset ^ (uint64_t)last_pack_bytes ^
         (uint64_t)(uint32_t)pack_usage_count);
+    for (index = 0; index < pack_usage_count && index < MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT; ++index) {
+        if (pack_entry_offsets == NULL || pack_entry_bytes == NULL || pack_role_codes == NULL ||
+            pack_layout_codes == NULL) break;
+        workspace_seed = mix_u64(workspace_seed ^
+            (uint64_t)pack_entry_offsets[index] ^
+            (uint64_t)pack_entry_bytes[index] ^
+            ((uint64_t)(uint32_t)pack_role_codes[index] << 32) ^
+            ((uint64_t)(uint32_t)pack_layout_codes[index] << 48) ^
+            (uint64_t)(uint32_t)(index + 1));
+    }
     build_prefill_state_block(workspace_seed, (uint64_t)artifact_hash, token_count, modal_byte_count,
                               staged_modal_count, *consumed_token_count, state_lanes, &summary_word);
     fill_prefill_context_bytes(workspace_seed, (uint64_t)artifact_hash, (uint64_t)pack_usage_hash,
                                (uint64_t)pack_usage_bytes, (uint64_t)first_pack_offset,
                                (uint64_t)last_pack_offset, (uint64_t)last_pack_bytes, pack_usage_count,
+                               pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes,
                                token_values, token_count,
                                modal_byte_count, staged_modal_count, *consumed_token_count, context_bytes,
                                context_capacity, context_byte_count);
@@ -1371,6 +1426,10 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                              int64_t last_pack_offset,
                              int64_t last_pack_bytes,
                              int32_t pack_usage_count,
+                             const int64_t *pack_entry_offsets,
+                             const int64_t *pack_entry_bytes,
+                             const int32_t *pack_role_codes,
+                             const int32_t *pack_layout_codes,
                              int64_t kv_before,
                              int64_t token_budget,
                              const int8_t *context_bytes,
@@ -1384,6 +1443,7 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                              int32_t *token_value,
                              int32_t *stop_reason,
                              int32_t *status_code) {
+    int32_t index;
     uint64_t seed;
     uint64_t current_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES];
     uint64_t next_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES];
@@ -1452,6 +1512,16 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
     seed = mix_u64(seed ^ (uint64_t)pack_usage_hash ^ (uint64_t)pack_usage_bytes ^
         (uint64_t)first_pack_offset ^ (uint64_t)last_pack_offset ^
         (uint64_t)last_pack_bytes ^ (uint64_t)(uint32_t)pack_usage_count);
+    for (index = 0; index < pack_usage_count && index < MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT; ++index) {
+        if (pack_entry_offsets == NULL || pack_entry_bytes == NULL || pack_role_codes == NULL ||
+            pack_layout_codes == NULL) break;
+        seed = mix_u64(seed ^
+            (uint64_t)pack_entry_offsets[index] ^
+            (uint64_t)pack_entry_bytes[index] ^
+            ((uint64_t)(uint32_t)pack_role_codes[index] << 32) ^
+            ((uint64_t)(uint32_t)pack_layout_codes[index] << 48) ^
+            (uint64_t)(uint32_t)(index + 1));
+    }
     seed ^= (uint64_t)kv_before * UINT64_C(0x9e3779b97f4a7c15);
     seed ^= (uint64_t)token_budget * UINT64_C(0xbf58476d1ce4e5b9);
     seed = mix_u64(seed);
@@ -1480,7 +1550,8 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
     fill_decode_context_bytes(seed ^ (uint64_t)(uint32_t)(*token_value), (uint64_t)artifact_hash,
                               (uint64_t)pack_usage_hash, (uint64_t)pack_usage_bytes,
                               (uint64_t)first_pack_offset, (uint64_t)last_pack_offset,
-                              (uint64_t)last_pack_bytes, pack_usage_count, next_state_lanes, summary_word, next_page_words, next_recent_tokens,
+                              (uint64_t)last_pack_bytes, pack_usage_count, pack_entry_offsets, pack_entry_bytes,
+                              pack_role_codes, pack_layout_codes, next_state_lanes, summary_word, next_page_words, next_recent_tokens,
                               next_key_slot_lanes, next_value_slot_lanes, next_page_lane_digests,
                               next_page_key_rows, next_page_key_lane_counts, next_page_value_rows,
                               next_page_value_lane_counts, next_page_head_blocks, next_page_generations,

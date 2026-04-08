@@ -20,7 +20,10 @@ module mod_cuda_executor
   public :: extract_cuda_context_page_control_snapshot
   public :: extract_cuda_context_page_tensor_snapshot
   public :: extract_cuda_context_pack_usage_snapshot
+  public :: extract_cuda_context_pack_dispatch_snapshot
   public :: extract_cuda_context_slot_snapshot
+
+  integer(i32), parameter :: MAX_CUDA_PACK_DISPATCH_ENTRIES = 4_i32
 
   type :: cuda_pack_usage_profile
     integer(i64) :: usage_hash = 0_i64
@@ -29,6 +32,10 @@ module mod_cuda_executor
     integer(i64) :: last_pack_offset = 0_i64
     integer(i64) :: last_pack_bytes = 0_i64
     integer(i32) :: usage_count = 0_i32
+    integer(i64) :: entry_offsets(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
+    integer(i64) :: entry_bytes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
+    integer(i32) :: role_codes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
+    integer(i32) :: layout_codes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     logical      :: has_usage = .false.
   end type cuda_pack_usage_profile
 
@@ -155,7 +162,8 @@ contains
     if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
     call launch_cuda_prefill(payload_hash, artifact_hash, pack_usage%usage_hash, pack_usage%usage_bytes, &
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
-      pack_usage%usage_count, max(0_i64, staged_tokens), staged_modal_count, &
+      pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
+      pack_usage%layout_codes, max(0_i64, staged_tokens), staged_modal_count, &
       consumed_token_count, status_code, workspace_buffer_local, workspace_bytes_local, token_values, &
       modal_bytes, context_bytes, context_byte_count)
     if (present(context_artifact_hash)) context_artifact_hash = merge(artifact_hash, 0_i64, status_code == MIZU_STATUS_OK)
@@ -240,7 +248,8 @@ contains
     if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
     call launch_cuda_decode(payload_hash, artifact_hash, pack_usage%usage_hash, pack_usage%usage_bytes, &
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
-      pack_usage%usage_count, kv_before, token_budget, emitted_token_count, token_value, &
+      pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
+      pack_usage%layout_codes, kv_before, token_budget, emitted_token_count, token_value, &
       stop_reason, status_code, workspace_buffer_local, workspace_bytes_local, context_bytes, &
       context_byte_count, updated_context_bytes, updated_context_byte_count)
     if (present(context_artifact_hash)) context_artifact_hash = merge(artifact_hash, 0_i64, status_code == MIZU_STATUS_OK)
@@ -373,6 +382,8 @@ contains
     integer(i32)                        :: entry_index
     integer(i64)                        :: entry_offset
     integer(i64)                        :: entry_bytes
+    integer(i32)                        :: role_code
+    integer(i32)                        :: layout_code
     logical                             :: found_entry
     logical                             :: parsed_ok
 
@@ -384,11 +395,17 @@ contains
       usage_entry = ""
       call extract_payload_field_text(payload_text, trim(field_key), usage_entry, found_entry)
       if (.not. found_entry) exit
-      call extract_payload_usage_entry(trim(usage_entry), entry_offset, entry_bytes, parsed_ok)
+      call extract_payload_usage_entry(trim(usage_entry), entry_offset, entry_bytes, role_code, layout_code, parsed_ok)
       if (.not. parsed_ok) cycle
 
       pack_usage%usage_count = pack_usage%usage_count + 1_i32
       pack_usage%usage_bytes = pack_usage%usage_bytes + entry_bytes
+      if (pack_usage%usage_count <= MAX_CUDA_PACK_DISPATCH_ENTRIES) then
+        pack_usage%entry_offsets(pack_usage%usage_count) = entry_offset
+        pack_usage%entry_bytes(pack_usage%usage_count) = entry_bytes
+        pack_usage%role_codes(pack_usage%usage_count) = role_code
+        pack_usage%layout_codes(pack_usage%usage_count) = layout_code
+      end if
       if (pack_usage%usage_count == 1_i32) pack_usage%first_pack_offset = entry_offset
       pack_usage%last_pack_offset = entry_offset
       pack_usage%last_pack_bytes = entry_bytes
@@ -399,28 +416,111 @@ contains
     pack_usage%has_usage = (pack_usage%usage_count > 0_i32)
   end subroutine extract_payload_pack_usage_profile
 
-  subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, parsed_ok)
+  subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
     character(len=*), intent(in) :: usage_entry
     integer(i64), intent(out)    :: pack_offset
     integer(i64), intent(out)    :: pack_bytes
+    integer(i32), intent(out)    :: role_code
+    integer(i32), intent(out)    :: layout_code
     logical, intent(out)         :: parsed_ok
     character(len=64)            :: offset_text
     character(len=64)            :: bytes_text
+    character(len=64)            :: role_text
+    character(len=64)            :: layout_text
     logical                      :: found_offset
     logical                      :: found_bytes
+    logical                      :: found_role
+    logical                      :: found_layout
 
     pack_offset = 0_i64
     pack_bytes = 0_i64
+    role_code = 0_i32
+    layout_code = 0_i32
     parsed_ok = .false.
     if (len_trim(usage_entry) == 0) return
 
+    call extract_pipe_field(usage_entry, 2_i32, role_text, found_role)
     call extract_inline_numeric_field(usage_entry, "offset=", offset_text, found_offset)
     call extract_inline_numeric_field(usage_entry, "bytes=", bytes_text, found_bytes)
+    call extract_inline_numeric_field(usage_entry, "layout=", layout_text, found_layout)
     if (.not. found_offset .or. .not. found_bytes) return
     if (.not. parse_i64_text(offset_text, pack_offset)) return
     if (.not. parse_i64_text(bytes_text, pack_bytes)) return
+    if (found_role) role_code = pack_role_code(trim(role_text))
+    if (found_layout) layout_code = pack_layout_code(trim(layout_text))
     parsed_ok = (pack_bytes > 0_i64 .and. pack_offset >= 0_i64)
   end subroutine extract_payload_usage_entry
+
+  subroutine extract_pipe_field(source_text, field_index, value_text, found)
+    character(len=*), intent(in)  :: source_text
+    integer(i32), intent(in)      :: field_index
+    character(len=*), intent(out) :: value_text
+    logical, intent(out)          :: found
+    integer(i32)                  :: start_index
+    integer(i32)                  :: pipe_index
+    integer(i32)                  :: current_field
+    integer(i32)                  :: value_len
+
+    value_text = ""
+    found = .false.
+    if (len_trim(source_text) == 0 .or. field_index <= 0_i32) return
+
+    start_index = 1_i32
+    current_field = 1_i32
+    do
+      pipe_index = index(source_text(start_index:len_trim(source_text)), "|")
+      if (current_field == field_index) then
+        if (pipe_index <= 0) then
+          value_len = min(len_trim(source_text) - start_index + 1_i32, len(value_text))
+        else
+          value_len = min(pipe_index - 1_i32, len(value_text))
+        end if
+        if (value_len > 0_i32) then
+          value_text(1:value_len) = source_text(start_index:start_index + value_len - 1_i32)
+          found = (len_trim(value_text) > 0)
+        end if
+        return
+      end if
+      if (pipe_index <= 0) exit
+      start_index = start_index + pipe_index
+      current_field = current_field + 1_i32
+      if (start_index > len_trim(source_text)) exit
+    end do
+  end subroutine extract_pipe_field
+
+  pure integer(i32) function pack_role_code(role_text) result(role_code)
+    character(len=*), intent(in) :: role_text
+
+    select case (trim(role_text))
+    case ("embedding_table")
+      role_code = 1_i32
+    case ("decoder_stack")
+      role_code = 2_i32
+    case ("normalization")
+      role_code = 3_i32
+    case ("token_projection")
+      role_code = 4_i32
+    case ("multimodal_projector")
+      role_code = 5_i32
+    case default
+      role_code = 0_i32
+    end select
+  end function pack_role_code
+
+  pure integer(i32) function pack_layout_code(layout_text) result(layout_code)
+    character(len=*), intent(in) :: layout_text
+
+    select case (trim(layout_text))
+    case ("row_major")
+      layout_code = 1_i32
+    case ("packed")
+      layout_code = 2_i32
+    case ("vector")
+      layout_code = 3_i32
+    case default
+      layout_code = 0_i32
+    end select
+  end function pack_layout_code
 
   subroutine extract_inline_numeric_field(source_text, key_text, value_text, found)
     character(len=*), intent(in)  :: source_text
@@ -1004,6 +1104,47 @@ contains
     usage_count = decode_context_i32at(context_bytes, USAGE_PROFILE_OFFSET + 40_i32)
     snapshot_valid = .true.
   end subroutine extract_cuda_context_pack_usage_snapshot
+
+  pure subroutine extract_cuda_context_pack_dispatch_snapshot(context_bytes, context_byte_count, entry_offsets, &
+                                                              entry_bytes, role_codes, layout_codes, &
+                                                              dispatch_count, snapshot_valid)
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i64), intent(out) :: entry_offsets(:)
+    integer(i64), intent(out) :: entry_bytes(:)
+    integer(i32), intent(out) :: role_codes(:)
+    integer(i32), intent(out) :: layout_codes(:)
+    integer(i32), intent(out) :: dispatch_count
+    logical, intent(out)      :: snapshot_valid
+    integer(i32), parameter   :: DISPATCH_OFFSET = 817_i32
+    integer(i32), parameter   :: DISPATCH_STRIDE = 24_i32
+    integer(i32)              :: entry_index
+    integer(i32)              :: entry_limit
+    integer(i32)              :: offset_1based
+
+    entry_offsets = 0_i64
+    entry_bytes = 0_i64
+    role_codes = 0_i32
+    layout_codes = 0_i32
+    dispatch_count = 0_i32
+    snapshot_valid = .false.
+    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (context_byte_count < DISPATCH_OFFSET + (DISPATCH_STRIDE * MAX_CUDA_PACK_DISPATCH_ENTRIES) - 1_i32) return
+
+    entry_limit = min(MAX_CUDA_PACK_DISPATCH_ENTRIES, int(size(entry_offsets), kind=i32))
+    entry_limit = min(entry_limit, int(size(entry_bytes), kind=i32))
+    entry_limit = min(entry_limit, int(size(role_codes), kind=i32))
+    entry_limit = min(entry_limit, int(size(layout_codes), kind=i32))
+    do entry_index = 1_i32, entry_limit
+      offset_1based = DISPATCH_OFFSET + ((entry_index - 1_i32) * DISPATCH_STRIDE)
+      entry_offsets(entry_index) = decode_context_u64at(context_bytes, offset_1based)
+      entry_bytes(entry_index) = decode_context_u64at(context_bytes, offset_1based + 8_i32)
+      role_codes(entry_index) = decode_context_i32at(context_bytes, offset_1based + 16_i32)
+      layout_codes(entry_index) = decode_context_i32at(context_bytes, offset_1based + 20_i32)
+      if (entry_bytes(entry_index) > 0_i64) dispatch_count = dispatch_count + 1_i32
+    end do
+    snapshot_valid = .true.
+  end subroutine extract_cuda_context_pack_dispatch_snapshot
 
   pure integer(i32) function decode_context_u16le(byte_1, byte_2) result(value_u16)
     integer(i8), intent(in) :: byte_1
