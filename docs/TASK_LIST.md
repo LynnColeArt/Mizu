@@ -135,6 +135,7 @@ These are the highest-leverage next tasks.
 - [x] Emit imported tensor and projector lineage into materialized backend artifacts
 - [x] Derive imported byte-budget hints for backend artifact materialization
 - [x] Materialize a deterministic CUDA import-driven weight-pack layout
+- [x] Thread CUDA weight-pack dependency into projector and plan cache identity
 
 ## Phase 3: Runtime Skeleton
 

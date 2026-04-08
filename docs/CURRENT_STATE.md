@@ -18,6 +18,10 @@ Last updated: 2026-04-08
 - CUDA model-load artifact materialization now uses the imported tensor
   inventory directly to emit a narrow weight-pack layout with deterministic
   packed offsets and packed-byte totals for non-projector tensors
+- that CUDA weight-pack layout now also feeds projector, prefill, and decode
+  cache identity plus artifact payload dependencies, so those stage artifacts
+  rotate when the packed model layout changes and the CUDA executor now reads
+  the declared pack dependency back into its placeholder execution identity
 - immediate next target: map real Qwen and Gemma assets into this bundle shape
   and use that imported inventory in the first less-placeholder CUDA execution
   path

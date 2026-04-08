@@ -36,6 +36,8 @@ These suites cover the `API-C*` portion of
     imported `mizu_import/` source-path lineage
   - verifies the CUDA weight artifact now carries a deterministic import-driven
     pack table with exact packed tensor count, byte total, and stable offsets
+  - verifies CUDA projector and prefill artifacts now retain explicit
+    dependency on that packed model layout
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
   - verifies session-state transitions across staging, prefill, decode,
     `park`, and `resume`

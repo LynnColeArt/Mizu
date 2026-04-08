@@ -109,6 +109,10 @@ Current implementation status:
 - CUDA model-load artifacts now go one step further and materialize a narrow
   import-driven weight-pack record with deterministic per-tensor offsets and
   packed-byte totals derived from the imported tensor inventory
+- CUDA projector, prefill, and decode artifacts now explicitly depend on that
+  packed layout through `pack_ref_*` metadata, and CUDA execution now reads
+  that dependency back instead of treating the artifact payload as an opaque
+  stage-only blob
 - the narrow public CUDA flow now checks stable positive placeholder output plus
   warm-path reproducibility for the same multimodal staged context, while the
   unit suite still pins exact deterministic executor outputs per bridge variant
