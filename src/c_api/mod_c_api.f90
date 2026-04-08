@@ -68,6 +68,8 @@ module mod_c_api
   use mod_model_loader,   only: load_model_manifest_from_root
   use mod_apple_planner,  only: APPLE_ARTIFACT_PAYLOAD_LEN, plan_apple_stage, &
                                 build_apple_artifact_payload_text
+  use mod_apple_executor, only: execute_apple_projector, execute_apple_prefill, execute_apple_decode, &
+                                apple_context_bytes_are_valid, extract_apple_context_lineage
   use mod_cuda_planner,   only: CUDA_ARTIFACT_PAYLOAD_LEN, plan_cuda_stage, &
                                 build_cuda_artifact_payload_text
   use mod_cuda_executor,  only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
@@ -772,8 +774,7 @@ contains
 
     stage_started_us = monotonic_timestamp_us()
     restored_ok = .true.
-    if (session%live_context_execution_route == MIZU_EXEC_ROUTE_CUDA .and. &
-        .not. session%has_resident_live_context) then
+    if (session%live_context_byte_count > 0_i32 .and. .not. session%has_resident_live_context) then
       call restore_session_checkpoint(runtime%config%cache_root, runtime_cache, model, session, restored_ok)
       if (.not. restored_ok) then
         mizu_session_resume = int(MIZU_STATUS_INVALID_STATE, kind=c_int32_t)
@@ -1051,7 +1052,17 @@ contains
 
       stage_started_us = monotonic_timestamp_us()
       projector_embedding_count = 0_i64
-      if (projector_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. projector_route == MIZU_EXEC_ROUTE_CUDA) then
+      if (projector_backend_family == MIZU_BACKEND_FAMILY_APPLE .and. &
+          (projector_route == MIZU_EXEC_ROUTE_ANE .or. projector_route == MIZU_EXEC_ROUTE_METAL)) then
+        call execute_apple_projector(runtime%config%cache_root, trim(projector_artifact_metadata%payload_path), &
+          projector_route, staged_modal_byte_count_before, projector_placeholder_count, staged_modal_hash_before, &
+          projector_embedding_count, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use)
+        if (status_code /= MIZU_STATUS_OK) then
+          call release_stage_workspace(runtime, projector_workspace_reserved)
+          mizu_session_prefill = int(status_code, kind=c_int32_t)
+          return
+        end if
+      else if (projector_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. projector_route == MIZU_EXEC_ROUTE_CUDA) then
         call execute_cuda_projector(runtime%config%cache_root, trim(projector_artifact_metadata%payload_path), &
           staged_modal_byte_count_before, projector_placeholder_count, staged_modal_hash_before, &
           projector_embedding_count, status_code, runtime%workspace%host_buffer, &
@@ -1091,7 +1102,44 @@ contains
     prefill_context_byte_count = 0_i32
     prefill_context_bytes = 0_i8
     prefill_context_artifact_hash = 0_i64
-    if (prefill_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. prefill_route == MIZU_EXEC_ROUTE_CUDA) then
+    if (prefill_backend_family == MIZU_BACKEND_FAMILY_APPLE .and. &
+        (prefill_route == MIZU_EXEC_ROUTE_ANE .or. prefill_route == MIZU_EXEC_ROUTE_METAL)) then
+      if (allocated(session%staged_tokens)) then
+        if (allocated(session%staged_modal_bytes)) then
+          call execute_apple_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+            prefill_route, staged_tokens_before, staged_modal_before, staged_token_hash_before, &
+            staged_modal_hash_before, consumed_token_count, status_code, runtime%workspace%host_buffer, &
+            runtime%workspace%bytes_in_use, token_values=session%staged_tokens, &
+            modal_bytes=session%staged_modal_bytes, context_bytes=prefill_context_bytes, &
+            context_byte_count=prefill_context_byte_count, context_artifact_hash=prefill_context_artifact_hash)
+        else
+          call execute_apple_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+            prefill_route, staged_tokens_before, staged_modal_before, staged_token_hash_before, &
+            staged_modal_hash_before, consumed_token_count, status_code, runtime%workspace%host_buffer, &
+            runtime%workspace%bytes_in_use, token_values=session%staged_tokens, &
+            context_bytes=prefill_context_bytes, context_byte_count=prefill_context_byte_count, &
+            context_artifact_hash=prefill_context_artifact_hash)
+        end if
+      else if (allocated(session%staged_modal_bytes)) then
+        call execute_apple_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+          prefill_route, staged_tokens_before, staged_modal_before, staged_token_hash_before, &
+          staged_modal_hash_before, consumed_token_count, status_code, runtime%workspace%host_buffer, &
+          runtime%workspace%bytes_in_use, modal_bytes=session%staged_modal_bytes, &
+          context_bytes=prefill_context_bytes, context_byte_count=prefill_context_byte_count, &
+          context_artifact_hash=prefill_context_artifact_hash)
+      else
+        call execute_apple_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
+          prefill_route, staged_tokens_before, staged_modal_before, staged_token_hash_before, &
+          staged_modal_hash_before, consumed_token_count, status_code, runtime%workspace%host_buffer, &
+          runtime%workspace%bytes_in_use, context_bytes=prefill_context_bytes, &
+          context_byte_count=prefill_context_byte_count, context_artifact_hash=prefill_context_artifact_hash)
+      end if
+      if (status_code /= MIZU_STATUS_OK) then
+        call release_stage_workspace(runtime, prefill_workspace_reserved)
+        mizu_session_prefill = int(status_code, kind=c_int32_t)
+        return
+      end if
+    else if (prefill_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. prefill_route == MIZU_EXEC_ROUTE_CUDA) then
       if (allocated(session%staged_tokens)) then
         if (allocated(session%staged_modal_bytes)) then
           call execute_cuda_prefill(runtime%config%cache_root, trim(prefill_artifact_metadata%payload_path), &
@@ -1266,7 +1314,19 @@ contains
     decode_stop_reason = MIZU_STOP_REASON_NONE
     token_value = int(mod(session%kv_token_count, 4096_i64), kind=c_int32_t)
     if (token_value == 0_c_int32_t) token_value = 1_c_int32_t
-    if (report_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. report_route == MIZU_EXEC_ROUTE_CUDA) then
+    if (report_backend_family == MIZU_BACKEND_FAMILY_APPLE .and. &
+        (report_route == MIZU_EXEC_ROUTE_ANE .or. report_route == MIZU_EXEC_ROUTE_METAL)) then
+      call execute_apple_decode(runtime%config%cache_root, trim(decode_artifact_metadata%payload_path), &
+        report_route, kv_before, int(options%token_budget, kind=i64), emitted_token_count, token_value, &
+        decode_stop_reason, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
+        session%live_context_bytes, session%live_context_byte_count, updated_context_bytes, &
+        updated_context_byte_count, context_artifact_hash=decode_context_artifact_hash)
+      if (status_code /= MIZU_STATUS_OK) then
+        call release_stage_workspace(runtime, decode_workspace_reserved)
+        mizu_session_decode_step = int(status_code, kind=c_int32_t)
+        return
+      end if
+    else if (report_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. report_route == MIZU_EXEC_ROUTE_CUDA) then
       call execute_cuda_decode(runtime%config%cache_root, trim(decode_artifact_metadata%payload_path), &
         kv_before, int(options%token_budget, kind=i64), emitted_token_count, token_value, &
         decode_stop_reason, status_code, runtime%workspace%host_buffer, runtime%workspace%bytes_in_use, &
@@ -1300,7 +1360,9 @@ contains
       mizu_session_decode_step = int(status_code, kind=c_int32_t)
       return
     end if
-    if (report_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. report_route == MIZU_EXEC_ROUTE_CUDA) then
+    if ((report_backend_family == MIZU_BACKEND_FAMILY_APPLE .and. &
+         (report_route == MIZU_EXEC_ROUTE_ANE .or. report_route == MIZU_EXEC_ROUTE_METAL)) .or. &
+        (report_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. report_route == MIZU_EXEC_ROUTE_CUDA)) then
       call update_live_context_record(session, updated_context_bytes, updated_context_byte_count, &
         producer_stage=MIZU_STAGE_DECODE, artifact_hash=decode_context_artifact_hash, &
         backend_family=report_backend_family, execution_route=report_route)
@@ -1912,9 +1974,8 @@ contains
     checkpoint_ready = .false.
     if (len_trim(runtime%config%cache_root) == 0) return
     if (session%live_context_byte_count <= 0_i32) return
-    if (session%live_context_backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
-    if (session%live_context_execution_route /= MIZU_EXEC_ROUTE_CUDA) return
-    if (.not. cuda_context_bytes_are_valid(session%live_context_bytes, session%live_context_byte_count)) return
+    if (.not. backend_context_bytes_are_valid(session%live_context_backend_family, &
+        session%live_context_execution_route, session%live_context_bytes, session%live_context_byte_count)) return
 
     call build_session_checkpoint_key(model, session, checkpoint_key_text)
     if (len_trim(checkpoint_key_text) == 0) return
@@ -1950,8 +2011,8 @@ contains
 
     restored_ok = .false.
     if (len_trim(cache_root) == 0) return
-    if (session%live_context_backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
-    if (session%live_context_execution_route /= MIZU_EXEC_ROUTE_CUDA) return
+    if (session%live_context_backend_family == MIZU_BACKEND_FAMILY_NONE) return
+    if (session%live_context_execution_route == MIZU_EXEC_ROUTE_NONE) return
 
     call build_session_checkpoint_key(model, session, checkpoint_key_text)
     if (len_trim(checkpoint_key_text) == 0) return
@@ -1967,14 +2028,14 @@ contains
     call load_session_checkpoint_payload(trim(full_path), kv_token_count, live_context_hash, backend_family, &
       execution_route, context_bytes, context_byte_count, loaded_ok)
     if (.not. loaded_ok) return
-    if (.not. cuda_context_bytes_are_valid(context_bytes, context_byte_count)) return
+    if (.not. backend_context_bytes_are_valid(backend_family, execution_route, context_bytes, context_byte_count)) return
     if (backend_family /= session%live_context_backend_family) return
     if (execution_route /= session%live_context_execution_route) return
     if (kv_token_count /= session%kv_token_count) return
     if (live_context_hash /= session%live_context_hash) return
     if (context_byte_count /= session%live_context_byte_count) return
-    call extract_cuda_context_lineage(context_bytes, context_byte_count, context_producer_stage, &
-      context_artifact_hash, lineage_known)
+    call extract_backend_context_lineage(backend_family, execution_route, context_bytes, context_byte_count, &
+      context_producer_stage, context_artifact_hash, lineage_known)
     if (session%live_context_producer_stage /= MIZU_STAGE_NONE) then
       if (.not. lineage_known) return
       if (context_producer_stage /= session%live_context_producer_stage) return
@@ -2065,6 +2126,53 @@ contains
 
     call decode_hex_to_bytes(trim(hex_text), context_byte_count, context_bytes, loaded_ok)
   end subroutine load_session_checkpoint_payload
+
+  pure logical function backend_context_bytes_are_valid(backend_family, execution_route, context_bytes, &
+                                                        context_byte_count) result(is_valid)
+    integer(i32), intent(in) :: backend_family
+    integer(i32), intent(in) :: execution_route
+    integer(i8), intent(in)  :: context_bytes(:)
+    integer(i32), intent(in) :: context_byte_count
+
+    is_valid = .false.
+    select case (backend_family)
+    case (MIZU_BACKEND_FAMILY_APPLE)
+      if (execution_route /= MIZU_EXEC_ROUTE_ANE .and. execution_route /= MIZU_EXEC_ROUTE_METAL) return
+      is_valid = apple_context_bytes_are_valid(context_bytes, context_byte_count)
+    case (MIZU_BACKEND_FAMILY_CUDA)
+      if (execution_route /= MIZU_EXEC_ROUTE_CUDA) return
+      is_valid = cuda_context_bytes_are_valid(context_bytes, context_byte_count)
+    end select
+  end function backend_context_bytes_are_valid
+
+  pure subroutine extract_backend_context_lineage(backend_family, execution_route, context_bytes, &
+                                                  context_byte_count, producer_stage, artifact_hash, &
+                                                  lineage_known)
+    integer(i32), intent(in)  :: backend_family
+    integer(i32), intent(in)  :: execution_route
+    integer(i8), intent(in)   :: context_bytes(:)
+    integer(i32), intent(in)  :: context_byte_count
+    integer(i32), intent(out) :: producer_stage
+    integer(i64), intent(out) :: artifact_hash
+    logical, intent(out)      :: lineage_known
+    integer(i32)              :: context_route
+
+    producer_stage = MIZU_STAGE_NONE
+    artifact_hash = 0_i64
+    lineage_known = .false.
+    context_route = MIZU_EXEC_ROUTE_NONE
+
+    select case (backend_family)
+    case (MIZU_BACKEND_FAMILY_APPLE)
+      call extract_apple_context_lineage(context_bytes, context_byte_count, producer_stage, context_route, &
+        artifact_hash, lineage_known)
+      if (lineage_known) lineage_known = (context_route == execution_route)
+    case (MIZU_BACKEND_FAMILY_CUDA)
+      call extract_cuda_context_lineage(context_bytes, context_byte_count, producer_stage, artifact_hash, &
+        lineage_known)
+      if (lineage_known) lineage_known = (execution_route == MIZU_EXEC_ROUTE_CUDA)
+    end select
+  end subroutine extract_backend_context_lineage
 
   subroutine encode_bytes_as_hex(byte_values, byte_count, hex_text)
     integer(i8), intent(in)               :: byte_values(:)

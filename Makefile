@@ -2,17 +2,21 @@ FC := gfortran
 CC ?= gcc
 CXX ?= g++
 NVCC ?= nvcc
+OBJC ?= clang
+UNAME_S := $(shell uname -s)
 
 FFLAGS ?= -std=f2018 -Wall -Wextra
 CFLAGS ?= -std=c11 -Wall -Wextra
 CXXFLAGS ?= -std=c++17 -Wall -Wextra
 NVCCFLAGS ?= -std=c++17 -Iinclude -Isrc/backends/cuda
+OBJCFLAGS ?= -Wall -Wextra -fobjc-arc
 
 HAVE_NVCC := $(shell command -v $(NVCC) >/dev/null 2>&1 && echo 1 || echo 0)
 
 BUILD_DIR := build
 TEST_DIR := $(BUILD_DIR)/tests
 CUDA_BRIDGE_OBJ := $(BUILD_DIR)/cuda_bridge.o
+APPLE_BRIDGE_OBJ := $(BUILD_DIR)/apple_bridge.o
 
 COMMON_F90 := \
 	src/common/mod_kinds.f90 \
@@ -39,8 +43,10 @@ RUNTIME_F90 := \
 BACKEND_F90 := \
 	src/backends/mod_backend_contract.f90 \
 	src/backends/mod_backend_probe_support.f90 \
+	src/backends/apple/mod_apple_bridge.f90 \
 	src/backends/apple/mod_apple_capability.f90 \
 	src/backends/apple/mod_apple_planner.f90 \
+	src/backends/apple/mod_apple_executor.f90 \
 	src/backends/cuda/mod_cuda_bridge.f90 \
 	src/backends/cuda/mod_cuda_capability.f90 \
 	src/backends/cuda/mod_cuda_planner.f90 \
@@ -58,6 +64,7 @@ UNIT_BINS := \
 	$(TEST_DIR)/test_runtime_workspace \
 	$(TEST_DIR)/test_session_staging \
 	$(TEST_DIR)/test_apple_planner \
+	$(TEST_DIR)/test_apple_executor \
 	$(TEST_DIR)/test_cuda_planner \
 	$(TEST_DIR)/test_cuda_executor
 
@@ -104,6 +111,22 @@ $(CUDA_BRIDGE_OBJ): $(CUDA_BRIDGE_SRC) src/backends/cuda/cuda_bridge.h include/m
 	$(CC) $(CFLAGS) -Iinclude -Isrc/backends/cuda -c $< -o $@
 endif
 
+ifeq ($(UNAME_S),Darwin)
+APPLE_BRIDGE_SRC := src/backends/apple/apple_bridge.m
+APPLE_BRIDGE_LINK_LIBS := -framework Foundation -framework Metal
+
+$(APPLE_BRIDGE_OBJ): $(APPLE_BRIDGE_SRC) src/backends/apple/apple_bridge.h \
+	src/backends/apple/apple_bridge_common.h include/mizu.h | $(BUILD_DIR)
+	$(OBJC) $(OBJCFLAGS) -Iinclude -Isrc/backends/apple -c $< -o $@
+else
+APPLE_BRIDGE_SRC := src/backends/apple/apple_bridge_stub.c
+APPLE_BRIDGE_LINK_LIBS :=
+
+$(APPLE_BRIDGE_OBJ): $(APPLE_BRIDGE_SRC) src/backends/apple/apple_bridge.h \
+	src/backends/apple/apple_bridge_common.h include/mizu.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Iinclude -Isrc/backends/apple -c $< -o $@
+endif
+
 $(TEST_DIR)/test_model_manifest_loader: $(TEST_DIR)
 	mkdir -p $(TEST_DIR)/loader_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/loader_mods -o $@ \
@@ -147,7 +170,7 @@ $(TEST_DIR)/test_optimization_store: $(TEST_DIR)
 		src/runtime/mod_optimization_store.f90 \
 		tests/unit/test_optimization_store.f90
 
-$(TEST_DIR)/test_backend_registry: $(TEST_DIR) $(CUDA_BRIDGE_OBJ)
+$(TEST_DIR)/test_backend_registry: $(TEST_DIR) $(CUDA_BRIDGE_OBJ) $(APPLE_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/backend_registry_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/backend_registry_mods -o $@ \
 		src/common/mod_kinds.f90 \
@@ -157,12 +180,15 @@ $(TEST_DIR)/test_backend_registry: $(TEST_DIR) $(CUDA_BRIDGE_OBJ)
 		src/runtime/mod_runtime.f90 \
 		src/backends/mod_backend_contract.f90 \
 		src/backends/mod_backend_probe_support.f90 \
+		src/backends/apple/mod_apple_bridge.f90 \
 		src/backends/apple/mod_apple_capability.f90 \
 		src/backends/cuda/mod_cuda_bridge.f90 \
 		src/backends/cuda/mod_cuda_capability.f90 \
 		src/backends/mod_backend_registry.f90 \
 		tests/unit/test_backend_registry.f90 \
+		$(APPLE_BRIDGE_OBJ) \
 		$(CUDA_BRIDGE_OBJ) \
+		$(APPLE_BRIDGE_LINK_LIBS) \
 		$(CUDA_BRIDGE_LINK_LIBS)
 
 $(TEST_DIR)/test_runtime_workspace: $(TEST_DIR)
@@ -193,6 +219,20 @@ $(TEST_DIR)/test_apple_planner: $(TEST_DIR)
 		src/backends/mod_backend_contract.f90 \
 		src/backends/apple/mod_apple_planner.f90 \
 		tests/unit/test_apple_planner.f90
+
+$(TEST_DIR)/test_apple_executor: $(TEST_DIR) $(APPLE_BRIDGE_OBJ)
+	mkdir -p $(TEST_DIR)/apple_executor_mods
+	$(FC) $(FFLAGS) -J $(TEST_DIR)/apple_executor_mods -o $@ \
+		src/common/mod_kinds.f90 \
+		src/common/mod_status.f90 \
+		src/common/mod_types.f90 \
+		src/runtime/mod_workspace.f90 \
+		src/model/mod_model_manifest.f90 \
+		src/backends/apple/mod_apple_bridge.f90 \
+		src/backends/apple/mod_apple_executor.f90 \
+		tests/unit/test_apple_executor.f90 \
+		$(APPLE_BRIDGE_OBJ) \
+		$(APPLE_BRIDGE_LINK_LIBS)
 
 $(TEST_DIR)/test_cuda_planner: $(TEST_DIR)
 	mkdir -p $(TEST_DIR)/cuda_planner_mods
@@ -231,7 +271,7 @@ $(TEST_DIR)/test_cuda_artifacts.o: tests/contract/test_cuda_artifacts.c | $(TEST
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
 
 $(TEST_DIR)/test_cuda_artifacts: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $(RUNTIME_F90) $(BACKEND_F90) \
-	$(CAPI_F90) $(TEST_DIR)/test_cuda_artifacts.o $(CUDA_BRIDGE_OBJ)
+	$(CAPI_F90) $(TEST_DIR)/test_cuda_artifacts.o $(CUDA_BRIDGE_OBJ) $(APPLE_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/cuda_contract_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/cuda_contract_mods -I $(TEST_DIR)/cuda_contract_mods -o $@ \
 		$(COMMON_F90) \
@@ -241,14 +281,16 @@ $(TEST_DIR)/test_cuda_artifacts: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $(RUNTI
 		$(BACKEND_F90) \
 		$(CAPI_F90) \
 		$(TEST_DIR)/test_cuda_artifacts.o \
+		$(APPLE_BRIDGE_OBJ) \
 		$(CUDA_BRIDGE_OBJ) \
+		$(APPLE_BRIDGE_LINK_LIBS) \
 		$(CUDA_BRIDGE_LINK_LIBS)
 
 $(TEST_DIR)/test_stage_reports.o: tests/contract/test_stage_reports.c | $(TEST_DIR)
 	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
 
 $(TEST_DIR)/test_stage_reports: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $(RUNTIME_F90) $(BACKEND_F90) \
-	$(CAPI_F90) $(TEST_DIR)/test_stage_reports.o $(CUDA_BRIDGE_OBJ)
+	$(CAPI_F90) $(TEST_DIR)/test_stage_reports.o $(CUDA_BRIDGE_OBJ) $(APPLE_BRIDGE_OBJ)
 	mkdir -p $(TEST_DIR)/contract_mods
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/contract_mods -I $(TEST_DIR)/contract_mods -o $@ \
 		$(COMMON_F90) \
@@ -258,7 +300,9 @@ $(TEST_DIR)/test_stage_reports: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $(RUNTIM
 		$(BACKEND_F90) \
 		$(CAPI_F90) \
 		$(TEST_DIR)/test_stage_reports.o \
+		$(APPLE_BRIDGE_OBJ) \
 		$(CUDA_BRIDGE_OBJ) \
+		$(APPLE_BRIDGE_LINK_LIBS) \
 		$(CUDA_BRIDGE_LINK_LIBS)
 
 clean:

@@ -1,7 +1,8 @@
 program test_session_staging
   use mod_kinds,   only: i8, i32, i64
   use mod_status,  only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_STATE
-  use mod_types,   only: session_state, session_config, MIZU_BACKEND_FAMILY_CUDA, MIZU_EXEC_ROUTE_CUDA
+  use mod_types,   only: session_state, session_config, MIZU_BACKEND_FAMILY_APPLE, MIZU_BACKEND_FAMILY_CUDA, &
+                         MIZU_EXEC_ROUTE_ANE, MIZU_EXEC_ROUTE_CUDA
   use mod_session, only: initialize_session_state, stage_tokens, stage_modal_input, clear_pending_inputs, &
                          complete_prefill, complete_decode, store_live_context_record, &
                          update_live_context_record, offload_live_context_record, validate_decode
@@ -97,7 +98,19 @@ program test_session_staging
 
   call offload_live_context_record(session)
   call expect_true("offloaded context buffer should clear residency", .not. session%has_resident_live_context)
-  call expect_equal_i32("offloaded CUDA context should make decode invalid until restored", &
+  call expect_equal_i32("offloaded backend context should make decode invalid until restored", &
+    validate_decode(session), MIZU_STATUS_INVALID_STATE)
+
+  call store_live_context_record(session, MIZU_BACKEND_FAMILY_APPLE, MIZU_EXEC_ROUTE_ANE, context_bytes_a, 6_i32)
+  call expect_equal_i32("stored Apple context buffer should retain backend family", &
+    session%live_context_backend_family, MIZU_BACKEND_FAMILY_APPLE)
+  call expect_equal_i32("stored Apple context buffer should retain execution route", &
+    session%live_context_execution_route, MIZU_EXEC_ROUTE_ANE)
+  call expect_equal_i32("resident Apple context should keep decode valid", validate_decode(session), &
+    MIZU_STATUS_OK)
+
+  call offload_live_context_record(session)
+  call expect_equal_i32("offloaded Apple context should also make decode invalid until restored", &
     validate_decode(session), MIZU_STATUS_INVALID_STATE)
 
   write(*, "(A)") "test_session_staging: PASS"

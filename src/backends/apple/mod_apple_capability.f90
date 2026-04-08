@@ -6,6 +6,7 @@ module mod_apple_capability
                                        MIZU_DTYPE_U8, MIZU_DTYPE_BF16
   use mod_backend_contract,      only: capability_probe_request, capability_probe_result
   use mod_backend_probe_support, only: read_boolean_env_override
+  use mod_apple_bridge,          only: apple_device_info, query_apple_device_info
 
   implicit none
 
@@ -20,25 +21,36 @@ contains
     integer(i32), intent(out)                   :: status_code
     logical                                     :: ane_available
     logical                                     :: metal_available
-    logical                                     :: has_override
+    logical                                     :: has_ane_override
+    logical                                     :: has_metal_override
+    type(apple_device_info)                     :: device_info
+    integer(i32)                                :: bridge_status_code
 
     result = capability_probe_result()
     result%descriptor%family = MIZU_BACKEND_FAMILY_APPLE
     result%descriptor%backend_name = "apple"
     result%descriptor%device_name = "apple_platform"
+    device_info = apple_device_info()
+    bridge_status_code = MIZU_STATUS_OK
 
-    call read_boolean_env_override("MIZU_FORCE_APPLE_ANE_AVAILABLE", has_override, ane_available)
-    if (.not. has_override) ane_available = .false.
+    call read_boolean_env_override("MIZU_FORCE_APPLE_ANE_AVAILABLE", has_ane_override, ane_available)
+    call read_boolean_env_override("MIZU_FORCE_APPLE_METAL_AVAILABLE", has_metal_override, metal_available)
 
-    call read_boolean_env_override("MIZU_FORCE_APPLE_METAL_AVAILABLE", has_override, metal_available)
-    if (.not. has_override) then
-      inquire(file="/System/Library/Frameworks/Metal.framework", exist=metal_available)
+    if (.not. has_ane_override .or. .not. has_metal_override) then
+      call query_apple_device_info(device_info, bridge_status_code)
+      if (bridge_status_code /= MIZU_STATUS_OK) device_info = apple_device_info()
     end if
+    if (.not. has_ane_override) ane_available = device_info%ane_available
+    if (.not. has_metal_override) metal_available = device_info%metal_available
+    if (len_trim(device_info%device_name) > 0) result%descriptor%device_name = trim(device_info%device_name)
 
     result%descriptor%route_mask = MIZU_BACKEND_MASK_NONE
     if (ane_available) then
       result%descriptor%route_mask = ior(result%descriptor%route_mask, MIZU_BACKEND_MASK_APPLE_ANE)
-      result%descriptor%device_name = "apple_neural_engine"
+      if (len_trim(result%descriptor%device_name) == 0 .or. &
+          trim(result%descriptor%device_name) == "apple_platform") then
+        result%descriptor%device_name = "apple_neural_engine"
+      end if
     end if
     if (metal_available) then
       result%descriptor%route_mask = ior(result%descriptor%route_mask, MIZU_BACKEND_MASK_APPLE_METAL)

@@ -7,8 +7,7 @@ module mod_session
                         MIZU_STOP_REASON_NONE, MIZU_STAGE_NONE, MIZU_MODALITY_KIND_UNKNOWN, &
                         MIZU_DTYPE_UNKNOWN, session_config, session_info, &
                         session_state, execution_report, MIZU_BACKEND_FAMILY_NONE, &
-                        MIZU_BACKEND_FAMILY_CUDA, MIZU_EXEC_ROUTE_NONE, &
-                        MIZU_EXEC_ROUTE_CUDA, MAX_LIVE_CONTEXT_BYTES
+                        MIZU_EXEC_ROUTE_NONE, MAX_LIVE_CONTEXT_BYTES
 
   implicit none
 
@@ -112,8 +111,7 @@ contains
       status_code = MIZU_STATUS_INVALID_STATE
     else if (.not. session%has_live_context) then
       status_code = MIZU_STATUS_INVALID_STATE
-    else if (session%live_context_backend_family == MIZU_BACKEND_FAMILY_CUDA .and. &
-             session%live_context_execution_route == MIZU_EXEC_ROUTE_CUDA .and. &
+    else if (session%live_context_byte_count > 0_i32 .and. &
              .not. session%has_resident_live_context) then
       status_code = MIZU_STATUS_INVALID_STATE
     else if (session%has_pending_inputs) then
