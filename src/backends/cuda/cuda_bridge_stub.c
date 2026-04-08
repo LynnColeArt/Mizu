@@ -1338,6 +1338,8 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                               const int64_t *pack_entry_bytes,
                               const int32_t *pack_role_codes,
                               const int32_t *pack_layout_codes,
+                              const int64_t *pack_entry_span_hashes,
+                              const int64_t *pack_entry_span_bytes,
                               const int32_t *token_values,
                               int64_t token_count,
                               const int8_t *modal_bytes,
@@ -1385,6 +1387,12 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
             ((uint64_t)(uint32_t)pack_role_codes[index] << 32) ^
             ((uint64_t)(uint32_t)pack_layout_codes[index] << 48) ^
             (uint64_t)(uint32_t)(index + 1));
+        if (pack_entry_span_hashes != NULL && pack_entry_span_bytes != NULL) {
+            workspace_seed = mix_u64(workspace_seed ^
+                (uint64_t)pack_entry_span_hashes[index] ^
+                (uint64_t)pack_entry_span_bytes[index] ^
+                ((uint64_t)(uint32_t)(index + 1) << 16));
+        }
     }
     build_prefill_state_block(workspace_seed, (uint64_t)artifact_hash, token_count, modal_byte_count,
                               staged_modal_count, *consumed_token_count, state_lanes, &summary_word);
@@ -1430,6 +1438,8 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                              const int64_t *pack_entry_bytes,
                              const int32_t *pack_role_codes,
                              const int32_t *pack_layout_codes,
+                             const int64_t *pack_entry_span_hashes,
+                             const int64_t *pack_entry_span_bytes,
                              int64_t kv_before,
                              int64_t token_budget,
                              const int8_t *context_bytes,
@@ -1521,6 +1531,12 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
             ((uint64_t)(uint32_t)pack_role_codes[index] << 32) ^
             ((uint64_t)(uint32_t)pack_layout_codes[index] << 48) ^
             (uint64_t)(uint32_t)(index + 1));
+        if (pack_entry_span_hashes != NULL && pack_entry_span_bytes != NULL) {
+            seed = mix_u64(seed ^
+                (uint64_t)pack_entry_span_hashes[index] ^
+                (uint64_t)pack_entry_span_bytes[index] ^
+                ((uint64_t)(uint32_t)(index + 1) << 16));
+        }
     }
     seed ^= (uint64_t)kv_before * UINT64_C(0x9e3779b97f4a7c15);
     seed ^= (uint64_t)token_budget * UINT64_C(0xbf58476d1ce4e5b9);

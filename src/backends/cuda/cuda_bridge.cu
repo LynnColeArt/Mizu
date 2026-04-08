@@ -1334,6 +1334,8 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
                                          const int64_t *pack_entry_bytes,
                                          const int32_t *pack_role_codes,
                                          const int32_t *pack_layout_codes,
+                                         const int64_t *pack_entry_span_hashes,
+                                         const int64_t *pack_entry_span_bytes,
                                          const int32_t *token_values,
                                          int64_t token_count,
                                          const int8_t *modal_bytes,
@@ -1424,6 +1426,12 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
         (static_cast<unsigned long long>(static_cast<uint32_t>(pack_role_codes[usage_index])) << 32) ^
         (static_cast<unsigned long long>(static_cast<uint32_t>(pack_layout_codes[usage_index])) << 48) ^
         static_cast<unsigned long long>(usage_index + 1));
+      if (pack_entry_span_hashes != nullptr && pack_entry_span_bytes != nullptr) {
+        workspace_seed = mix_u64_host(workspace_seed ^
+          static_cast<unsigned long long>(pack_entry_span_hashes[usage_index]) ^
+          static_cast<unsigned long long>(pack_entry_span_bytes[usage_index]) ^
+          (static_cast<unsigned long long>(usage_index + 1) << 16));
+      }
     }
     build_prefill_state_block(workspace_seed, static_cast<unsigned long long>(artifact_hash), token_count,
                               modal_byte_count, staged_modal_count, *consumed_token_count, state_lanes,
@@ -1496,6 +1504,8 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
                                         const int64_t *pack_entry_bytes,
                                         const int32_t *pack_role_codes,
                                         const int32_t *pack_layout_codes,
+                                        const int64_t *pack_entry_span_hashes,
+                                        const int64_t *pack_entry_span_bytes,
                                         int64_t kv_before,
                                         int64_t token_budget,
                                         const int8_t *context_bytes,
@@ -1621,6 +1631,12 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
       (static_cast<unsigned long long>(static_cast<uint32_t>(pack_role_codes[usage_index])) << 32) ^
       (static_cast<unsigned long long>(static_cast<uint32_t>(pack_layout_codes[usage_index])) << 48) ^
       static_cast<unsigned long long>(usage_index + 1));
+    if (pack_entry_span_hashes != nullptr && pack_entry_span_bytes != nullptr) {
+      decode_seed = mix_u64_host(decode_seed ^
+        static_cast<unsigned long long>(pack_entry_span_hashes[usage_index]) ^
+        static_cast<unsigned long long>(pack_entry_span_bytes[usage_index]) ^
+        (static_cast<unsigned long long>(usage_index + 1) << 16));
+    }
   }
 
   mizu_decode_kernel<<<1, 1>>>(static_cast<int64_t>(decode_seed), kv_before, token_budget, managed_emitted_token_count,

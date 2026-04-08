@@ -36,6 +36,10 @@ module mod_cuda_executor
     integer(i64) :: entry_bytes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
     integer(i32) :: role_codes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     integer(i32) :: layout_codes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
+    integer(i64) :: entry_span_hashes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
+    integer(i64) :: entry_span_bytes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
+    character(len=MAX_PATH_LEN) :: entry_span_paths(MAX_CUDA_PACK_DISPATCH_ENTRIES) = ""
+    character(len=MAX_PATH_LEN) :: span_root = ""
     logical      :: has_usage = .false.
   end type cuda_pack_usage_profile
 
@@ -152,6 +156,7 @@ contains
     artifact_hash = positive_hash64(trim(payload_text))
     call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
     call extract_payload_pack_usage_profile(payload_text, pack_usage)
+    call hydrate_payload_pack_span_profile(pack_usage)
     if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
     payload_hash = artifact_hash
     payload_hash = combine_positive_hash64(payload_hash, token_content_hash)
@@ -163,7 +168,8 @@ contains
     call launch_cuda_prefill(payload_hash, artifact_hash, pack_usage%usage_hash, pack_usage%usage_bytes, &
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
       pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
-      pack_usage%layout_codes, max(0_i64, staged_tokens), staged_modal_count, &
+      pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      max(0_i64, staged_tokens), staged_modal_count, &
       consumed_token_count, status_code, workspace_buffer_local, workspace_bytes_local, token_values, &
       modal_bytes, context_bytes, context_byte_count)
     if (present(context_artifact_hash)) context_artifact_hash = merge(artifact_hash, 0_i64, status_code == MIZU_STATUS_OK)
@@ -232,6 +238,7 @@ contains
     artifact_hash = positive_hash64(trim(payload_text))
     call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
     call extract_payload_pack_usage_profile(payload_text, pack_usage)
+    call hydrate_payload_pack_span_profile(pack_usage)
     if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
     payload_hash = artifact_hash
     call extract_cuda_context_lineage(context_bytes, context_byte_count, current_context_stage, &
@@ -249,7 +256,8 @@ contains
     call launch_cuda_decode(payload_hash, artifact_hash, pack_usage%usage_hash, pack_usage%usage_bytes, &
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
       pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
-      pack_usage%layout_codes, kv_before, token_budget, emitted_token_count, token_value, &
+      pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      kv_before, token_budget, emitted_token_count, token_value, &
       stop_reason, status_code, workspace_buffer_local, workspace_bytes_local, context_bytes, &
       context_byte_count, updated_context_bytes, updated_context_byte_count)
     if (present(context_artifact_hash)) context_artifact_hash = merge(artifact_hash, 0_i64, status_code == MIZU_STATUS_OK)
@@ -435,6 +443,7 @@ contains
     logical, intent(out)                         :: found_compact
     character(len=64)                            :: field_text
     character(len=128)                           :: entry_text
+    character(len=MAX_PATH_LEN)                  :: path_text
     integer(i32)                                 :: entry_index
     integer(i32)                                 :: entry_limit
     integer(i64)                                 :: parsed_i64
@@ -449,6 +458,9 @@ contains
     logical                                      :: found_last_offset
     logical                                      :: found_last_bytes
     logical                                      :: found_dispatch_count
+    logical                                      :: found_span_root
+    logical                                      :: found_path
+    logical                                      :: found_sample_bytes
     logical                                      :: found_entry
     logical                                      :: has_compact_markers
     logical                                      :: parsed_ok
@@ -516,6 +528,11 @@ contains
       end if
     end if
 
+    pack_usage%span_root = ""
+    path_text = ""
+    call extract_payload_field_text(payload_text, "pack_span_root=", path_text, found_span_root)
+    if (found_span_root) pack_usage%span_root = trim(path_text)
+
     do entry_index = 1_i32, entry_limit
       write(field_text, '("pack_dispatch",I0,"=")') entry_index
       entry_text = ""
@@ -527,6 +544,24 @@ contains
       pack_usage%entry_bytes(entry_index) = entry_bytes
       pack_usage%role_codes(entry_index) = role_code
       pack_usage%layout_codes(entry_index) = layout_code
+
+      if (len_trim(pack_usage%span_root) > 0) then
+        write(field_text, '("pack_span",I0,"=")') entry_index
+        entry_text = ""
+        call extract_payload_field_text(payload_text, trim(field_text), entry_text, found_entry)
+        if (found_entry) then
+          path_text = ""
+          call extract_pipe_field(trim(entry_text), 1_i32, path_text, found_path)
+          field_text = ""
+          call extract_inline_numeric_field(trim(entry_text), "sample_bytes=", field_text, found_sample_bytes)
+          if (found_path) pack_usage%entry_span_paths(entry_index) = trim(path_text)
+          if (found_sample_bytes) then
+            if (parse_i64_text(field_text, parsed_i64)) then
+              pack_usage%entry_span_bytes(entry_index) = max(0_i64, parsed_i64)
+            end if
+          end if
+        end if
+      end if
     end do
 
     if (pack_usage%usage_count > 0_i32 .and. pack_usage%usage_hash == 0_i64) then
@@ -535,6 +570,23 @@ contains
     found_compact = has_compact_markers
     pack_usage%has_usage = (pack_usage%usage_count > 0_i32)
   end subroutine extract_compact_pack_usage_profile
+
+  subroutine hydrate_payload_pack_span_profile(pack_usage)
+    type(cuda_pack_usage_profile), intent(inout) :: pack_usage
+    integer(i32)                                 :: entry_index
+    integer(i64)                                 :: span_hash
+    integer(i64)                                 :: actual_sample_bytes
+
+    if (len_trim(pack_usage%span_root) == 0) return
+
+    do entry_index = 1_i32, MAX_CUDA_PACK_DISPATCH_ENTRIES
+      if (len_trim(pack_usage%entry_span_paths(entry_index)) == 0) cycle
+      call resolve_import_span_hash(trim(pack_usage%span_root), trim(pack_usage%entry_span_paths(entry_index)), &
+        pack_usage%entry_span_bytes(entry_index), span_hash, actual_sample_bytes)
+      pack_usage%entry_span_hashes(entry_index) = span_hash
+      if (actual_sample_bytes > 0_i64) pack_usage%entry_span_bytes(entry_index) = actual_sample_bytes
+    end do
+  end subroutine hydrate_payload_pack_span_profile
 
   subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
     character(len=*), intent(in) :: usage_entry
@@ -609,6 +661,73 @@ contains
     parsed_ok = (pack_bytes > 0_i64 .and. pack_offset >= 0_i64)
   end subroutine extract_payload_dispatch_entry
 
+  subroutine resolve_import_span_hash(span_root, span_path, requested_sample_bytes, span_hash, actual_sample_bytes)
+    character(len=*), intent(in) :: span_root
+    character(len=*), intent(in) :: span_path
+    integer(i64), intent(in)     :: requested_sample_bytes
+    integer(i64), intent(out)    :: span_hash
+    integer(i64), intent(out)    :: actual_sample_bytes
+    character(len=MAX_PATH_LEN)  :: full_path
+    integer(i32)                 :: unit_id
+    integer(i32)                 :: ios
+    integer(i64)                 :: sample_count
+    integer(i64)                 :: file_size
+    logical                      :: exists
+    integer(i8), allocatable     :: sample_buffer(:)
+
+    span_hash = 0_i64
+    actual_sample_bytes = 0_i64
+    if (len_trim(span_root) == 0 .or. len_trim(span_path) == 0) return
+
+    full_path = join_import_span_path(span_root, span_path)
+    span_hash = positive_hash64(trim(full_path))
+    inquire(file=trim(full_path), exist=exists, size=file_size)
+    if (.not. exists) return
+
+    sample_count = max(0_i64, min(max(1_i64, requested_sample_bytes), max(0_i64, file_size)))
+    if (sample_count <= 0_i64) return
+
+    allocate(sample_buffer(sample_count))
+    sample_buffer = 0_i8
+    open(newunit=unit_id, file=trim(full_path), status="old", access="stream", form="unformatted", &
+      action="read", iostat=ios)
+    if (ios /= 0_i32) then
+      deallocate(sample_buffer)
+      return
+    end if
+    read(unit_id, iostat=ios) sample_buffer
+    close(unit_id)
+    if (ios /= 0_i32) then
+      deallocate(sample_buffer)
+      return
+    end if
+
+    actual_sample_bytes = sample_count
+    span_hash = combine_positive_hash64(max(1_i64, span_hash), hash_i8_buffer64(sample_buffer, sample_count))
+    deallocate(sample_buffer)
+  end subroutine resolve_import_span_hash
+
+  pure function join_import_span_path(span_root, span_path) result(full_path)
+    character(len=*), intent(in) :: span_root
+    character(len=*), intent(in) :: span_path
+    character(len=MAX_PATH_LEN)  :: full_path
+    integer(i32)                 :: root_len
+
+    full_path = ""
+    if (len_trim(span_root) == 0 .or. len_trim(span_path) == 0) return
+    if (span_path(1:1) == "/") then
+      full_path = trim(span_path)
+      return
+    end if
+
+    root_len = len_trim(span_root)
+    if (span_root(root_len:root_len) == "/") then
+      full_path = trim(span_root) // trim(span_path)
+    else
+      full_path = trim(span_root) // "/" // trim(span_path)
+    end if
+  end function join_import_span_path
+
   subroutine extract_pipe_field(source_text, field_index, value_text, found)
     character(len=*), intent(in)  :: source_text
     integer(i32), intent(in)      :: field_index
@@ -679,6 +798,18 @@ contains
       layout_code = 0_i32
     end select
   end function pack_layout_code
+
+  integer(i64) function hash_i8_buffer64(buffer, buffer_count) result(hash_value)
+    integer(i8), intent(in)  :: buffer(:)
+    integer(i64), intent(in) :: buffer_count
+    integer(i64)             :: index_byte
+
+    hash_value = positive_hash64("cuda_import_span")
+    if (buffer_count <= 0_i64) return
+    do index_byte = 1_i64, min(buffer_count, int(size(buffer), kind=i64))
+      hash_value = combine_positive_hash64(max(1_i64, hash_value), int(buffer(index_byte), kind=i64) + 257_i64)
+    end do
+  end function hash_i8_buffer64
 
   subroutine extract_inline_numeric_field(source_text, key_text, value_text, found)
     character(len=*), intent(in)  :: source_text

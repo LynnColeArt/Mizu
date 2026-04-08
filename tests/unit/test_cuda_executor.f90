@@ -131,6 +131,7 @@ program test_cuda_executor
   character(len=*), parameter :: decode_path = "artifacts/cuda/cuda/plans/decode/test.plan"
   character(len=*), parameter :: prefill_usage_path = "artifacts/cuda/cuda/plans/prefill/usage.plan"
   character(len=*), parameter :: decode_usage_path = "artifacts/cuda/cuda/plans/decode/usage.plan"
+  character(len=*), parameter :: import_bundle_root = "tests/fixtures/models/fixture_import_bundle_tiny/mizu_import"
 
   token_values_a = [3_i32, 5_i32, 7_i32, 11_i32, 13_i32, 17_i32, 19_i32]
   token_values_b = [2_i32, 4_i32, 6_i32, 8_i32, 10_i32, 12_i32, 14_i32]
@@ -181,28 +182,50 @@ program test_cuda_executor
   open(unit=12, file=trim(cache_root) // "/" // trim(prefill_usage_path), status="replace", action="write")
   write(12, "(A)") "candidate=prefill_usage;stage=3;format=cuda_bf16_prefill_plan_v1;" // &
     "pack_use_kind=cuda_prefill_pack_usage_v1;" // &
+    "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
+    "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
+    "pack_dispatch1=offset=0|bytes=1089994752|role=1|layout=1;" // &
+    "pack_span1=weights/token_embeddings.bin|sample_bytes=64;" // &
     "pack_use2=decoder_blocks|decoder_stack|offset=1089994752|" // &
     "bytes=25690112|layout=packed;" // &
+    "pack_dispatch2=offset=1089994752|bytes=25690112|role=2|layout=2;" // &
+    "pack_span2=weights/decoder_blocks.bin|sample_bytes=64;" // &
     "pack_use3=final_norm|normalization|offset=1115684864|" // &
     "bytes=14336|layout=vector;" // &
-    "pack_use_count=3;pack_use_bytes=1115699200;" // &
+    "pack_dispatch3=offset=1115684864|bytes=14336|role=3|layout=3;" // &
+    "pack_span3=weights/final_norm.bin|sample_bytes=64;" // &
+    "pack_dispatch_count=3;pack_use_count=3;pack_use_bytes=1115699200;" // &
+    "pack_use_first_offset=0;pack_use_last_offset=1115684864;" // &
+    "pack_use_last_bytes=14336;" // &
     "pack_use_hash=1111111111111111"
   close(12)
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
     "pack_use_kind=cuda_decode_pack_usage_v1;" // &
+    "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
+    "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
+    "pack_dispatch1=offset=0|bytes=1089994752|role=1|layout=1;" // &
+    "pack_span1=weights/token_embeddings.bin|sample_bytes=64;" // &
     "pack_use2=decoder_blocks|decoder_stack|offset=1089994752|" // &
     "bytes=25690112|layout=packed;" // &
+    "pack_dispatch2=offset=1089994752|bytes=25690112|role=2|layout=2;" // &
+    "pack_span2=weights/decoder_blocks.bin|sample_bytes=64;" // &
     "pack_use3=final_norm|normalization|offset=1115684864|" // &
     "bytes=14336|layout=vector;" // &
+    "pack_dispatch3=offset=1115684864|bytes=14336|role=3|layout=3;" // &
+    "pack_span3=weights/final_norm.bin|sample_bytes=64;" // &
     "pack_use4=lm_head|token_projection|offset=1115699200|" // &
     "bytes=1089994752|layout=row_major;" // &
-    "pack_use_count=4;pack_use_bytes=2205693952;" // &
+    "pack_dispatch4=offset=1115699200|bytes=1089994752|role=4|layout=1;" // &
+    "pack_span4=weights/lm_head.bin|sample_bytes=64;" // &
+    "pack_dispatch_count=4;pack_use_count=4;pack_use_bytes=2205693952;" // &
+    "pack_use_first_offset=0;pack_use_last_offset=1115699200;" // &
+    "pack_use_last_bytes=1089994752;" // &
     "pack_use_hash=2222222222222222"
   close(13)
 

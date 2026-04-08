@@ -106,6 +106,7 @@ module mod_c_api
 
   integer(i64), parameter :: INITIAL_REGISTRY_CAPACITY = 8_i64
   integer(i32), parameter :: MAX_IMPORT_STAGE_PACK_DISPATCH = 4_i32
+  integer(i64), parameter :: IMPORT_STAGE_SPAN_SAMPLE_BYTES = 64_i64
 
   type, bind(c) :: c_runtime_config
     integer(c_size_t)  :: struct_size
@@ -2123,6 +2124,7 @@ contains
     type(model_state), intent(in)   :: model
     character(len=MAX_PATH_LEN + 160) :: field_text
     character(len=MAX_NAME_LEN)       :: usage_kind
+    character(len=MAX_PATH_LEN)        :: span_root
     integer(i32)                      :: tensor_index
     integer(i32)                      :: usage_index
     integer(i32)                      :: dispatch_index
@@ -2148,6 +2150,12 @@ contains
     field_text = ""
     write(field_text, '(";pack_dispatch_kind=cuda_pack_dispatch_v1")')
     call append_payload_fragment(payload_text, trim(field_text))
+    span_root = build_import_bundle_root_path(model)
+    if (len_trim(span_root) > 0) then
+      field_text = ""
+      write(field_text, '(";pack_span_root=",A)') trim(span_root)
+      call append_payload_fragment(payload_text, trim(field_text))
+    end if
 
     usage_index = 0_i32
     dispatch_index = 0_i32
@@ -2189,6 +2197,12 @@ contains
             dispatch_index, pack_offset, tensor_bytes, role_code, layout_code
           call append_payload_fragment(payload_text, trim(field_text))
           dispatch_hash = ieor(dispatch_hash, hash_text64(trim(field_text)))
+          if (len_trim(model%import_tensors(tensor_index)%source_path) > 0) then
+            field_text = ""
+            write(field_text, '(";pack_span",I0,"=",A,"|sample_bytes=",I0)') dispatch_index, &
+              trim(model%import_tensors(tensor_index)%source_path), IMPORT_STAGE_SPAN_SAMPLE_BYTES
+            call append_payload_fragment(payload_text, trim(field_text))
+          end if
         end if
       end if
 
@@ -2368,6 +2382,23 @@ contains
       layout_code = 0_i32
     end select
   end function import_tensor_layout_code
+
+  function build_import_bundle_root_path(model) result(root_path)
+    type(model_state), intent(in)    :: model
+    character(len=MAX_PATH_LEN)      :: root_path
+    integer(i32)                     :: root_len
+
+    root_path = ""
+    if (.not. model%has_import_bundle) return
+    if (len_trim(model%open_config%model_root) == 0) return
+
+    root_len = len_trim(model%open_config%model_root)
+    if (model%open_config%model_root(root_len:root_len) == "/") then
+      root_path = trim(model%open_config%model_root) // "mizu_import"
+    else
+      root_path = trim(model%open_config%model_root) // "/mizu_import"
+    end if
+  end function build_import_bundle_root_path
 
   pure logical function import_tensor_belongs_to_projector(import_tensor, model) result(is_projector_tensor)
     type(import_tensor_state), intent(in) :: import_tensor

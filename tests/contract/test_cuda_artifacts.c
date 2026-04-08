@@ -380,6 +380,10 @@ int main(void) {
     if (!expect_true("cuda prefill artifact should retain the expected compact dispatch count", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_dispatch1=offset=0|bytes=1089994752|role=1|layout=1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain the first compact dispatch entry", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_span_root=tests/fixtures/models/fixture_import_bundle_tiny/mizu_import\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain the imported bundle root for tensor spans", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_span1=weights/token_embeddings.bin|sample_bytes=64\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain the first imported tensor-span record", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use1=token_embeddings|embedding_table|offset=0|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain the first prefill tensor-usage entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
@@ -390,6 +394,8 @@ int main(void) {
     if (!expect_true("cuda decode artifact should retain the expected decode tensor-usage count", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_dispatch4=offset=1115699200|bytes=1089994752|role=4|layout=1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should retain the final compact dispatch entry", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_span4=weights/lm_head.bin|sample_bytes=64\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should retain the final imported tensor-span record", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use4=lm_head|token_projection|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should retain the final decode tensor-usage entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/sessions -type f | grep -q .");
