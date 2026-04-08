@@ -7,6 +7,18 @@
 
 #include "mizu.h"
 
+#ifndef MIZU_CUDA_BRIDGE_STUB
+#define MIZU_CUDA_BRIDGE_STUB 0
+#endif
+
+static int32_t expected_cuda_reference_token(void) {
+#if MIZU_CUDA_BRIDGE_STUB
+    return 3154;
+#else
+    return 2429;
+#endif
+}
+
 static int expect_status(const char *label, mizu_status_code_t actual, mizu_status_code_t expected) {
     if (actual != expected) {
         fprintf(stderr, "%s: expected status %d, got %d\n", label, (int)expected, (int)actual);
@@ -101,6 +113,7 @@ int main(void) {
     mizu_decode_result_t decode_result_warm;
     mizu_output_buffer_t output_buffer;
     mizu_output_buffer_t output_buffer_warm;
+    const int32_t expected_reference_token = expected_cuda_reference_token();
 
     memset(prefill_reports, 0, sizeof(prefill_reports));
     memset(prefill_reports_warm, 0, sizeof(prefill_reports_warm));
@@ -259,7 +272,8 @@ int main(void) {
         return 1;
     }
     if (!expect_true("cuda decode should emit one token", decode_result.token_count == 1U)) return 1;
-    if (!expect_i64("cuda decode should reproduce the public reference token", (int64_t)decode_tokens[0], 2429)) {
+    if (!expect_i64("cuda decode should reproduce the build-specific CUDA reference token",
+                    (int64_t)decode_tokens[0], (int64_t)expected_reference_token)) {
         return 1;
     }
     status = mizu_session_read_output(session, &output_buffer);

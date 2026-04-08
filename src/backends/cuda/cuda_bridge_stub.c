@@ -1267,7 +1267,8 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                               int32_t *context_byte_count,
                               int64_t *consumed_token_count,
                               int32_t *status_code) {
-    uint64_t seed;
+    uint64_t tensor_seed;
+    uint64_t workspace_seed;
     uint64_t state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES];
     uint64_t summary_word;
     int64_t index;
@@ -1276,23 +1277,24 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
 
     *consumed_token_count = token_count > 0 ? token_count : 0;
     if (*consumed_token_count == 0 && staged_modal_count > 0) *consumed_token_count = 1;
-    seed = mix_u64((uint64_t)token_count);
+    tensor_seed = mix_u64((uint64_t)token_count);
     if (token_values != NULL && token_count > 0) {
         for (index = 0; index < token_count; ++index) {
-            seed = mix_u64(seed ^ (uint64_t)(uint32_t)token_values[index]);
+            tensor_seed = mix_u64(tensor_seed ^ (uint64_t)(uint32_t)token_values[index]);
         }
     }
     if (modal_bytes != NULL && modal_byte_count > 0) {
         for (index = 0; index < modal_byte_count; ++index) {
-            seed = mix_u64(seed ^ (uint64_t)(uint8_t)modal_bytes[index]);
+            tensor_seed = mix_u64(tensor_seed ^ (uint64_t)(uint8_t)modal_bytes[index]);
         }
     }
-    seed = mix_u64((uint64_t)payload_hash ^ seed ^ ((uint64_t)(uint32_t)staged_modal_count << 33));
-    build_prefill_state_block(seed, (uint64_t)artifact_hash, token_count, modal_byte_count, staged_modal_count,
-                              *consumed_token_count, state_lanes, &summary_word);
-    fill_prefill_context_bytes(seed, (uint64_t)artifact_hash, token_values, token_count, modal_byte_count,
-                               staged_modal_count, *consumed_token_count, context_bytes, context_capacity,
-                               context_byte_count);
+    tensor_seed = mix_u64(tensor_seed ^ ((uint64_t)(uint32_t)staged_modal_count << 33));
+    workspace_seed = mix_u64((uint64_t)payload_hash ^ tensor_seed);
+    build_prefill_state_block(workspace_seed, (uint64_t)artifact_hash, token_count, modal_byte_count,
+                              staged_modal_count, *consumed_token_count, state_lanes, &summary_word);
+    fill_prefill_context_bytes(workspace_seed, (uint64_t)artifact_hash, token_values, token_count,
+                               modal_byte_count, staged_modal_count, *consumed_token_count, context_bytes,
+                               context_capacity, context_byte_count);
     stamp_workspace_buffer(workspace_buffer, workspace_bytes, state_lanes[0] ^ state_lanes[3] ^ summary_word,
                            UINT8_C(3));
     *status_code = MIZU_STATUS_OK;

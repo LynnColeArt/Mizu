@@ -101,12 +101,14 @@ $(TEST_DIR):
 ifeq ($(HAVE_NVCC),1)
 CUDA_BRIDGE_SRC := src/backends/cuda/cuda_bridge.cu
 CUDA_BRIDGE_LINK_LIBS := -lcudart -lstdc++
+CUDA_TEST_CPPFLAGS := -DMIZU_CUDA_BRIDGE_STUB=0
 
 $(CUDA_BRIDGE_OBJ): $(CUDA_BRIDGE_SRC) src/backends/cuda/cuda_bridge.h include/mizu.h | $(BUILD_DIR)
 	$(NVCC) $(NVCCFLAGS) -c $< -o $@
 else
 CUDA_BRIDGE_SRC := src/backends/cuda/cuda_bridge_stub.c
 CUDA_BRIDGE_LINK_LIBS :=
+CUDA_TEST_CPPFLAGS := -DMIZU_CUDA_BRIDGE_STUB=1
 
 $(CUDA_BRIDGE_OBJ): $(CUDA_BRIDGE_SRC) src/backends/cuda/cuda_bridge.h include/mizu.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Iinclude -Isrc/backends/cuda -c $< -o $@
@@ -288,7 +290,7 @@ $(TEST_DIR)/test_backend_availability: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $
 		$(CUDA_BRIDGE_LINK_LIBS)
 
 $(TEST_DIR)/test_cuda_artifacts.o: tests/contract/test_cuda_artifacts.c | $(TEST_DIR)
-	$(CC) $(CFLAGS) -Iinclude -c $< -o $@
+	$(CC) $(CFLAGS) $(CUDA_TEST_CPPFLAGS) -Iinclude -c $< -o $@
 
 $(TEST_DIR)/test_cuda_artifacts: $(COMMON_F90) $(MODEL_F90) $(CACHE_F90) $(RUNTIME_F90) $(BACKEND_F90) \
 	$(CAPI_F90) $(TEST_DIR)/test_cuda_artifacts.o $(CUDA_BRIDGE_OBJ) $(APPLE_BRIDGE_OBJ)
