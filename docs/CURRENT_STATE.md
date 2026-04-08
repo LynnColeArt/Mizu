@@ -10,9 +10,10 @@ Last updated: 2026-04-07
   public runtime, with route-aware ANE and Metal placeholder execution, a
   macOS Objective-C bridge seam, a non-Apple stub fallback, and backend-neutral
   session checkpoint restore for Apple live contexts
-- immediate next target: hand the Apple seam to Sam for hardware validation,
-  then decide whether the next Apple slice is capability/error-reporting
-  polish or the first real Metal/ANE-backed execution payloads
+- immediate next target: collect Sam's first hardware-validation pass using
+  `docs/APPLE_VALIDATION_CHECKLIST.md`, then decide whether the next Apple
+  slice is capability/error-reporting polish or the first real
+  Metal/ANE-backed execution payloads
 
 ## Roadmap Status
 

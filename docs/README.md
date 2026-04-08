@@ -8,6 +8,7 @@ Core planning documents live here.
 - [Project Plan](./PROJECT_PLAN.md)
 - [Task List](./TASK_LIST.md)
 - [Current State](./CURRENT_STATE.md)
+- [Apple Validation Checklist](./APPLE_VALIDATION_CHECKLIST.md)
 
 Repository-wide coding and Fortran dialect rules live at:
 

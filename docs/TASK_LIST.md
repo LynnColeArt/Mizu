@@ -211,6 +211,7 @@ These are the highest-leverage next tasks.
 
 ### 4.5 Apple Validation
 
+- [x] Write Apple hardware validation checklist for Sam
 - [ ] Validate one target multimodal flow on Apple
 - [ ] Verify planner reports ANE versus Metal honestly
 - [ ] Verify no silent fallback occurs
