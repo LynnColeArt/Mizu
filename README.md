@@ -100,17 +100,19 @@ Current implementation status:
 - one narrow multimodal CUDA flow is now validated end to end through the
   public API, including session-state transitions, output readback,
   `park`/`resume`, and fresh-runtime warm reuse against persisted cache state
-- that same narrow CUDA path now has deterministic reference-output checks in
-  both unit and public-path tests, with exact tokens pinned per placeholder
-  implementation instead of assuming the real CUDA bridge and CPU stub emit
-  the same placeholder sequence
+- imported `mizu_import/` bundle lineage is now retained on the runtime model
+  state and emitted into route-specific CUDA and Apple artifact payloads, so
+  weight and projector artifacts now carry real imported source-path identity
+- the narrow public CUDA flow now checks stable positive placeholder output plus
+  warm-path reproducibility for the same multimodal staged context, while the
+  unit suite still pins exact deterministic executor outputs per bridge variant
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
   sources change, which keeps the public-path tests from silently running stale
   executables
 - `make test` now succeeds from a clean tree without relying on stray Fortran
-  module files
+  module files and now fails fast if any unit or contract binary fails
 - Apple execution now exists as a placeholder bridge/runtime seam rather than a
   real Metal or ANE compute backend, and CUDA execution is still
   placeholder/scaffold-level rather than real transformer math

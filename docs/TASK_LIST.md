@@ -131,6 +131,8 @@ These are the highest-leverage next tasks.
 - [x] Define importer output layout
 - [x] Define validation rules for imported assets
 - [x] Define failure reporting for bad manifests
+- [x] Retain imported inventory lineage on runtime model state
+- [x] Emit imported tensor and projector lineage into materialized backend artifacts
 
 ## Phase 3: Runtime Skeleton
 

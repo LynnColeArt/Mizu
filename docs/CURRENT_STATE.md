@@ -9,9 +9,12 @@ Last updated: 2026-04-08
   and projector inventories layered on top of the logical root manifest
 - the importer contract is now documented, fixture-backed, and enforced by the
   loader before the runtime accepts imported assets
+- imported tensor and projector lineage is now retained on `model_state`, so
+  materialized backend artifacts can carry real imported source-path identity
+  instead of only generic stage/shape metadata
 - immediate next target: map real Qwen and Gemma assets into this bundle shape
-  and start consuming imported inventories in the first non-placeholder CUDA
-  execution path
+  and use that imported inventory in the first less-placeholder CUDA execution
+  path
 
 ## Roadmap Status
 
@@ -168,13 +171,15 @@ In short:
   - park and resume session state through a persisted checkpoint artifact
   - reopen a fresh runtime and confirm warm cache reuse plus token
     reproducibility for the same multimodal staged context
-- the current CUDA unit and contract suites now also lock exact deterministic
-  reference outputs for that narrow path, with separate pinned expectations
-  for the real CUDA bridge and the CPU CUDA stub:
+- the current CUDA unit suite still locks exact deterministic reference outputs
+  for the executor path, with separate pinned expectations for the real CUDA
+  bridge and the CPU CUDA stub:
   - projector embedding count on the executor fixture
   - decode-token sequence across repeated executor steps
   - alternate-context decode token divergence
-  - public API decode token for the narrow multimodal fixture
+- the public CUDA contract suite now asserts stable positive decode output plus
+  warm-path reproducibility for the narrow multimodal fixture instead of
+  pinning a single build-specific public API token
 
 ### Self-Optimization
 
