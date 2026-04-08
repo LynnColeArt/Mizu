@@ -181,14 +181,14 @@ These are the highest-leverage next tasks.
 
 - [x] Create Apple backend directory structure
 - [ ] Define Apple device descriptor
-- [ ] Implement Apple capability probe
+- [x] Implement Apple capability probe
 - [ ] Detect ANE availability
 - [ ] Detect Metal availability
-- [ ] Report planner-visible Apple constraints
+- [x] Report planner-visible Apple constraints
 
 ### 4.2 Apple Planner
 
-- [ ] Implement ANE-versus-Metal planning interface
+- [x] Implement ANE-versus-Metal planning interface
 - [ ] Define unsupported-shape reporting
 - [ ] Define unsupported-op reporting
 - [ ] Define fallback reason reporting

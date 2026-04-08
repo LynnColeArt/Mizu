@@ -4,14 +4,13 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `10c8ead` (`Document multimodal
-  CUDA flow validation`)
-- current milestone: the narrow multimodal CUDA flow now has deterministic
-  reference-output checks in both unit and public-path tests, so exact
-  projector/decode outputs are locked instead of only being compared for
-  reproducibility
-- immediate next target: compare API-level parity against Apple, or replace
-  more of the compact key/value lane image with a less synthetic tensor-backed
+- latest published baseline before this slice: `ae93c67` (`Document CUDA
+  reference-output coverage`)
+- current milestone: Apple planner parity now exists at the contract level,
+  with route-specific ANE and Metal plan formats, workspace estimates, and
+  materialized Apple artifact payloads wired through the C API metadata path
+- immediate next target: define the Apple bridge boundary, or replace more of
+  the compact CUDA key/value lane image with a less synthetic tensor-backed
   page payload
 
 ## Roadmap Status
@@ -179,6 +178,13 @@ In short:
   - Apple Metal
   - Apple ANE via explicit override
   - CUDA via a real CUDA device bridge, with `nvidia-smi` and override fallback
+- Apple planner scaffolding now exists for:
+  - model-load weight-pack records
+  - projector plan records
+  - prefill plan records
+  - decode plan records
+- route-specific Apple artifact payloads are now materialized through the C API
+  metadata path for both ANE and Metal candidates
 - CUDA planner scaffolding exists for:
   - model load weight-pack records
   - projector plan records
@@ -256,6 +262,7 @@ In short:
 - `test_optimization_store`
 - `test_stage_reports`
 - `test_backend_registry`
+- `test_apple_planner`
 - `test_runtime_workspace`
 - `test_session_staging`
 - `test_cuda_planner`
@@ -265,7 +272,9 @@ In short:
 ## What Is Still Stubbed
 
 - no real Apple backend exists yet
-- no real ANE planner or executor exists yet
+- the Apple planner is still heuristic/scaffold-level rather than
+  hardware-validated
+- no real ANE executor exists yet
 - no real Metal executor exists yet
 - CUDA planner records are still scaffold-level and do not launch kernels
 - model load does not build actual packed weights
@@ -332,17 +341,17 @@ In short:
 - the new reference-output checks lock current placeholder behavior
   intentionally; when the backend math becomes more real, these expectations
   should evolve with the implementation instead of being treated as model truth
+- the Apple planner currently uses route-specific heuristic workspace estimates
+  and format labels; those choices are contract-shaping scaffolds, not measured
+  hardware truths yet
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing
 
 ## Most Useful Next Steps
 
-1. Add reference-output checks for the current narrow CUDA flow wherever the
-   placeholder path is deterministic enough to make that honest.
-2. Compare API-level parity against the Apple planner and capability layer so
-   CUDA bring-up does not drift away from the primary target contract.
-3. Replace the compact CUDA key/value lane image and synthetic page-layout
+1. Define the Apple bridge boundary and ownership/error contracts.
+2. Replace the compact CUDA key/value lane image and synthetic page-layout
    records with a more realistic tensor-backed page record or backend-owned
    KV-state payload.
-4. Start the thin Go binding once the C ABI settles a bit more.
+3. Start the thin Go binding once the C ABI settles a bit more.

@@ -48,6 +48,13 @@ bodies.
   - validates deterministic backend-inventory aggregation independent of local
     hardware
   - validates runtime state retains the aggregated backend mask and descriptors
+- `test_apple_planner.f90`
+  - validates Apple planner route selection across ANE-preferred, Metal-
+    preferred, and invalid-route requests
+  - validates route-specific Apple weight/projector/prefill format labels and
+    payload text
+  - validates Apple workspace estimates are stable for the current planner
+    fixtures
 - `test_runtime_workspace.f90`
   - validates runtime-scoped workspace reservation keeps a reusable high-water
     mark while clearing in-use bytes after release

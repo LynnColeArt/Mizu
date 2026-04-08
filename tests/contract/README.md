@@ -18,6 +18,8 @@ These suites cover the `API-C*` portion of
     route-specific artifact hits for weight, multimodal, and plan stages
   - inspects the persisted artifact cache file to confirm backend-specific
     weight and plan metadata records are written
+  - locks the current Apple planner payload labels for ANE weight/projector/
+    prefill and Metal prefill artifacts
 - `test_cuda_artifacts.c`
   - forces the CUDA route through the public API
   - verifies route-specific CUDA formats are persisted
