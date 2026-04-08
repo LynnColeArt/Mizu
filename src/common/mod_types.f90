@@ -345,6 +345,8 @@ module mod_types
     character(len=MAX_NAME_LEN)       :: source_model_id     = ""
     logical                           :: has_import_bundle   = .false.
     integer(i64)                      :: import_inventory_hash = 0_i64
+    integer(i64)                      :: import_tensor_bytes = 0_i64
+    integer(i64)                      :: import_projector_bytes = 0_i64
     integer(i32)                      :: import_preview_count = 0_i32
     character(len=MAX_PATH_LEN)       :: import_projector_artifact_path = ""
     character(len=MAX_NAME_LEN)       :: import_tensor_names(MAX_MODEL_IMPORT_PREVIEW) = ""

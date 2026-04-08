@@ -64,6 +64,8 @@ contains
     model%source_model_id    = ""
     model%has_import_bundle  = .false.
     model%import_inventory_hash = 0_i64
+    model%import_tensor_bytes = 0_i64
+    model%import_projector_bytes = 0_i64
     model%import_preview_count = 0_i32
     model%import_projector_artifact_path = ""
     model%import_tensor_names = ""
@@ -87,6 +89,8 @@ contains
     model%source_model_id    = ""
     model%has_import_bundle  = .false.
     model%import_inventory_hash = 0_i64
+    model%import_tensor_bytes = 0_i64
+    model%import_projector_bytes = 0_i64
     model%import_preview_count = 0_i32
     model%import_projector_artifact_path = ""
     model%import_tensor_names = ""

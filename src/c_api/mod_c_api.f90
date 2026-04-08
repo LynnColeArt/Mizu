@@ -34,7 +34,8 @@ module mod_c_api
                            MIZU_CACHE_FLAG_PLAN_HIT, MIZU_CACHE_FLAG_SESSION_HIT, &
                            MIZU_CACHE_FLAG_MM_HIT, MIZU_CACHE_FLAG_WINNER_REUSED, &
                            MIZU_MODALITY_KIND_IMAGE, &
-                           MIZU_DTYPE_U8, MIZU_DTYPE_BF16, &
+                           MIZU_DTYPE_U8, MIZU_DTYPE_I32, MIZU_DTYPE_F16, MIZU_DTYPE_BF16, &
+                           MIZU_DTYPE_F32, &
                            SOURCE_FORMAT_MIZU_IMPORT_BUNDLE, runtime_handle, model_handle, &
                            session_handle, runtime_config, model_open_config, session_config, &
                            model_info, session_info, execution_report, runtime_state, &
@@ -1861,6 +1862,8 @@ contains
 
     model%has_import_bundle = (manifest%provenance%source_format == SOURCE_FORMAT_MIZU_IMPORT_BUNDLE)
     model%import_inventory_hash = 0_i64
+    model%import_tensor_bytes = 0_i64
+    model%import_projector_bytes = 0_i64
     model%import_preview_count = 0_i32
     model%import_projector_artifact_path = ""
     model%import_tensor_names = ""
@@ -1877,6 +1880,9 @@ contains
           trim(manifest%tensors(tensor_index)%tensor_role), trim(manifest%tensors(tensor_index)%source_path)
         entry_hash = hash_text64(trim(lineage_entry))
         model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
+        model%import_tensor_bytes = model%import_tensor_bytes + estimate_manifest_tensor_bytes( &
+          manifest%tensors(tensor_index)%dtype, manifest%tensors(tensor_index)%rank, &
+          manifest%tensors(tensor_index)%shape)
 
         if (preview_index >= int(size(model%import_tensor_paths), kind=i32)) cycle
         if (len_trim(manifest%tensors(tensor_index)%source_path) == 0) cycle
@@ -1893,6 +1899,14 @@ contains
       model%import_projector_artifact_path = trim(manifest%projector%artifact_path)
       entry_hash = hash_text64(trim(manifest%projector%artifact_path))
       model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
+      if (allocated(manifest%tensors)) then
+        do tensor_index = 1_i32, int(size(manifest%tensors), kind=i32)
+          if (trim(manifest%tensors(tensor_index)%source_path) /= trim(manifest%projector%artifact_path)) cycle
+          model%import_projector_bytes = model%import_projector_bytes + estimate_manifest_tensor_bytes( &
+            manifest%tensors(tensor_index)%dtype, manifest%tensors(tensor_index)%rank, &
+            manifest%tensors(tensor_index)%shape)
+        end do
+      end if
     end if
 
     if (model%import_inventory_hash == 0_i64) then
@@ -1921,9 +1935,17 @@ contains
     write(field_text, '(";import_hash=",Z16.16)') model%import_inventory_hash
     call append_payload_fragment(payload_text, trim(field_text))
 
+    field_text = ""
+    write(field_text, '(";tensor_bytes=",I0)') model%import_tensor_bytes
+    call append_payload_fragment(payload_text, trim(field_text))
+
     if (len_trim(model%import_projector_artifact_path) > 0) then
       field_text = ""
       write(field_text, '(";projector_artifact=",A)') trim(model%import_projector_artifact_path)
+      call append_payload_fragment(payload_text, trim(field_text))
+
+      field_text = ""
+      write(field_text, '(";projector_bytes=",I0)') model%import_projector_bytes
       call append_payload_fragment(payload_text, trim(field_text))
     end if
 
@@ -1961,6 +1983,68 @@ contains
     if (write_count <= 0_i32) return
     payload_text(start_index:start_index + write_count - 1_i32) = fragment(1:write_count)
   end subroutine append_payload_fragment
+
+  pure integer(i64) function estimate_manifest_tensor_bytes(dtype, rank, shape) result(byte_count)
+    integer(i32), intent(in) :: dtype
+    integer(i32), intent(in) :: rank
+    integer(i64), intent(in) :: shape(:)
+    integer(i32)             :: axis_index
+    integer(i64)             :: element_count
+
+    byte_count = 0_i64
+    if (rank <= 0_i32) return
+
+    element_count = 1_i64
+    do axis_index = 1_i32, min(rank, int(size(shape), kind=i32))
+      if (shape(axis_index) <= 0_i64) return
+      element_count = element_count * shape(axis_index)
+    end do
+
+    byte_count = element_count * dtype_storage_bytes(dtype)
+  end function estimate_manifest_tensor_bytes
+
+  pure integer(i64) function dtype_storage_bytes(dtype) result(byte_count)
+    integer(i32), intent(in) :: dtype
+
+    select case (dtype)
+    case (MIZU_DTYPE_U8)
+      byte_count = 1_i64
+    case (MIZU_DTYPE_F16, MIZU_DTYPE_BF16)
+      byte_count = 2_i64
+    case (MIZU_DTYPE_I32, MIZU_DTYPE_F32)
+      byte_count = 4_i64
+    case default
+      byte_count = 4_i64
+    end select
+  end function dtype_storage_bytes
+
+  pure integer(i64) function import_workspace_hint_bytes(stage_kind, model) result(workspace_bytes)
+    integer(i32), intent(in)      :: stage_kind
+    type(model_state), intent(in) :: model
+
+    workspace_bytes = 0_i64
+    if (.not. model%has_import_bundle) return
+
+    select case (stage_kind)
+    case (MIZU_STAGE_MODEL_LOAD)
+      workspace_bytes = align_import_bytes(model%import_tensor_bytes)
+    case (MIZU_STAGE_PROJECTOR)
+      workspace_bytes = align_import_bytes(model%import_projector_bytes)
+    case default
+      workspace_bytes = 0_i64
+    end select
+  end function import_workspace_hint_bytes
+
+  pure integer(i64) function align_import_bytes(byte_count) result(aligned_bytes)
+    integer(i64), intent(in) :: byte_count
+
+    if (byte_count <= 0_i64) then
+      aligned_bytes = 0_i64
+      return
+    end if
+
+    aligned_bytes = ((byte_count + 255_i64) / 256_i64) * 256_i64
+  end function align_import_bytes
 
   integer(i64) function resolve_weight_cache_flags(runtime, runtime_cache, optimization_store, manifest, &
                                                    model, allowed_backend_mask, elapsed_us, plan_id, &
@@ -2795,6 +2879,8 @@ contains
 
       metadata%artifact_format = trim(planning_result%chosen_plan%pack_format)
       metadata%workspace_bytes = max(0_i64, planning_result%chosen_plan%workspace_bytes)
+      if (present(model)) metadata%workspace_bytes = max(metadata%workspace_bytes, &
+        import_workspace_hint_bytes(stage_kind, model))
       call build_apple_artifact_payload_text(planning_request, planning_result%chosen_plan, trim(candidate_key_text), &
         payload_text, payload_bytes)
       if (present(model)) call append_import_lineage_payload(payload_text, payload_bytes, stage_kind, model)
@@ -2809,6 +2895,8 @@ contains
 
       metadata%artifact_format = trim(planning_result%chosen_plan%pack_format)
       metadata%workspace_bytes = max(0_i64, planning_result%chosen_plan%workspace_bytes)
+      if (present(model)) metadata%workspace_bytes = max(metadata%workspace_bytes, &
+        import_workspace_hint_bytes(stage_kind, model))
       call build_cuda_artifact_payload_text(planning_request, planning_result%chosen_plan, trim(candidate_key_text), &
         payload_text, payload_bytes)
       if (present(model)) call append_import_lineage_payload(payload_text, payload_bytes, stage_kind, model)

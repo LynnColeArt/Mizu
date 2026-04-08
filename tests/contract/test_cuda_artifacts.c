@@ -342,12 +342,16 @@ int main(void) {
     if (!expect_true("cuda weight artifact file should exist", command_status == 0)) return 1;
     command_status = system("grep -R \"weights/token_embeddings.bin\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("cuda weight artifact should retain imported tensor lineage", command_status == 0)) return 1;
+    command_status = system("grep -R \"tensor_bytes=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should retain imported tensor byte estimates", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector -type f | grep -q .");
     if (!expect_true("cuda projector artifact file should exist", command_status == 0)) return 1;
     command_status = system("grep -R \"stage=2;.*shape0=8\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
     if (!expect_true("cuda projector artifact should retain staged modal byte count", command_status == 0)) return 1;
     command_status = system("grep -R \"projector/vision_projector.bin\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
     if (!expect_true("cuda projector artifact should retain imported projector lineage", command_status == 0)) return 1;
+    command_status = system("grep -R \"projector_bytes=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
+    if (!expect_true("cuda projector artifact should retain imported projector byte estimates", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill -type f | grep -q .");
     if (!expect_true("cuda prefill artifact file should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
