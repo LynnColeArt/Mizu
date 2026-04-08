@@ -45,7 +45,8 @@ These suites cover the `API-C*` portion of
     matches the stored route and producer lineage expectations
   - verifies a fresh runtime can replay the same narrow multimodal CUDA flow
     with warm cache reuse and reproduce the same decode token
-  - verifies that narrow public CUDA flow emits the exact current reference
-    token for the fixture instead of only a nonzero token
+  - verifies that narrow public CUDA flow emits the exact current
+    build-specific reference token for the fixture instead of only a nonzero
+    token
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

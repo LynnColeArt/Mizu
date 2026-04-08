@@ -164,7 +164,8 @@ In short:
   - reopen a fresh runtime and confirm warm cache reuse plus token
     reproducibility for the same multimodal staged context
 - the current CUDA unit and contract suites now also lock exact deterministic
-  reference outputs for that narrow path:
+  reference outputs for that narrow path, with separate pinned expectations
+  for the real CUDA bridge and the CPU CUDA stub:
   - projector embedding count on the executor fixture
   - decode-token sequence across repeated executor steps
   - alternate-context decode token divergence

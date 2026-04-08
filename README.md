@@ -2,6 +2,14 @@
 
 Mizu is an experimental local inference runtime for multimodal decoder models.
 
+Current reality:
+
+- the runtime contract, cache/reporting machinery, and session lifecycle are
+  real
+- backend execution is still placeholder/scaffold-level
+- `mizu` does not yet run real Qwen/Gemma inference with real packed weights
+  and real backend math
+
 The project is intentionally narrow:
 
 - Apple ANE is a priority target
@@ -91,8 +99,9 @@ Current implementation status:
   public API, including session-state transitions, output readback,
   `park`/`resume`, and fresh-runtime warm reuse against persisted cache state
 - that same narrow CUDA path now has deterministic reference-output checks in
-  both unit and public-path tests, so exact projector/decode outputs are
-  locked instead of only being compared for reproducibility
+  both unit and public-path tests, with exact tokens pinned per placeholder
+  implementation instead of assuming the real CUDA bridge and CPU stub emit
+  the same placeholder sequence
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
@@ -115,4 +124,5 @@ Documentation:
 - [Project Plan](./docs/PROJECT_PLAN.md)
 - [Task List](./docs/TASK_LIST.md)
 - [Current State](./docs/CURRENT_STATE.md)
+- [Placeholder Runtime Status](./docs/PLACEHOLDER_RUNTIME_STATUS.md)
 - [Style Guide](./STYLE_GUIDE.md)

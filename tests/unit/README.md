@@ -124,7 +124,8 @@ bodies.
   - validates repeated CUDA decode steps preserve layout for untouched pages and
     advance generation only on the decode-owned page
   - validates CUDA projector and decode execution now match exact deterministic
-    reference outputs for the current fixture path
+    reference outputs for the current fixture path, pinned separately for the
+    real CUDA bridge and the CPU stub
   - validates CUDA decode execution varies with direct context-buffer identity
   - validates CUDA decode rejects a context produced by a different decode
     artifact, even when the route stays the same
