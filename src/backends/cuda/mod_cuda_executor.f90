@@ -24,6 +24,7 @@ module mod_cuda_executor
   public :: extract_cuda_context_slot_snapshot
 
   integer(i32), parameter :: MAX_CUDA_PACK_DISPATCH_ENTRIES = 4_i32
+  integer(i32), parameter :: MAX_CUDA_SPAN_SAMPLE_BYTES = 64_i32
 
   type :: cuda_pack_usage_profile
     integer(i64) :: usage_hash = 0_i64
@@ -38,6 +39,8 @@ module mod_cuda_executor
     integer(i32) :: layout_codes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     integer(i64) :: entry_span_hashes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
     integer(i64) :: entry_span_bytes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
+    integer(i32) :: entry_span_sample_sizes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
+    integer(i8)  :: entry_span_samples(MAX_CUDA_SPAN_SAMPLE_BYTES, MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i8
     character(len=MAX_PATH_LEN) :: entry_span_paths(MAX_CUDA_PACK_DISPATCH_ENTRIES) = ""
     character(len=MAX_PATH_LEN) :: span_root = ""
     logical      :: has_usage = .false.
@@ -171,6 +174,7 @@ contains
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
       pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
       pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
       max(0_i64, staged_tokens), staged_modal_count, &
       consumed_token_count, status_code, workspace_buffer_local, workspace_bytes_local, token_values, &
       modal_bytes, context_bytes, context_byte_count)
@@ -261,6 +265,7 @@ contains
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
       pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
       pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
       kv_before, token_budget, emitted_token_count, token_value, &
       stop_reason, status_code, workspace_buffer_local, workspace_bytes_local, context_bytes, &
       context_byte_count, updated_context_bytes, updated_context_byte_count)
@@ -589,15 +594,24 @@ contains
     integer(i32)                                 :: entry_index
     integer(i64)                                 :: span_hash
     integer(i64)                                 :: actual_sample_bytes
+    integer(i8)                                  :: span_sample_bytes(MAX_CUDA_SPAN_SAMPLE_BYTES)
 
     if (len_trim(pack_usage%span_root) == 0) return
 
     do entry_index = 1_i32, MAX_CUDA_PACK_DISPATCH_ENTRIES
       if (len_trim(pack_usage%entry_span_paths(entry_index)) == 0) cycle
-      call resolve_import_span_hash(trim(pack_usage%span_root), trim(pack_usage%entry_span_paths(entry_index)), &
-        pack_usage%entry_span_bytes(entry_index), span_hash, actual_sample_bytes)
+      call resolve_import_span_record(trim(pack_usage%span_root), trim(pack_usage%entry_span_paths(entry_index)), &
+        pack_usage%entry_span_bytes(entry_index), span_hash, actual_sample_bytes, span_sample_bytes)
       pack_usage%entry_span_hashes(entry_index) = span_hash
-      if (actual_sample_bytes > 0_i64) pack_usage%entry_span_bytes(entry_index) = actual_sample_bytes
+      if (actual_sample_bytes > 0_i64) then
+        pack_usage%entry_span_bytes(entry_index) = actual_sample_bytes
+        pack_usage%entry_span_sample_sizes(entry_index) = min(MAX_CUDA_SPAN_SAMPLE_BYTES, int(actual_sample_bytes, kind=i32))
+        pack_usage%entry_span_samples(:, entry_index) = 0_i8
+        if (pack_usage%entry_span_sample_sizes(entry_index) > 0_i32) then
+          pack_usage%entry_span_samples(1:pack_usage%entry_span_sample_sizes(entry_index), entry_index) = &
+            span_sample_bytes(1:pack_usage%entry_span_sample_sizes(entry_index))
+        end if
+      end if
     end do
   end subroutine hydrate_payload_pack_span_profile
 
@@ -650,6 +664,14 @@ contains
       if (found_bytes) then
         if (.not. parse_i64_text(value_text, parsed_i64)) return
         if (parsed_i64 > 0_i64) pack_usage%entry_span_bytes(entry_index) = parsed_i64
+      end if
+
+      write(key_text, '("entry",I0,"_sample_hex=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_bytes)
+      if (found_bytes) then
+        call decode_hex_to_span_bytes(trim(value_text), pack_usage%entry_span_samples(:, entry_index), &
+          pack_usage%entry_span_sample_sizes(entry_index))
       end if
     end do
 
@@ -729,22 +751,26 @@ contains
     parsed_ok = (pack_bytes > 0_i64 .and. pack_offset >= 0_i64)
   end subroutine extract_payload_dispatch_entry
 
-  subroutine resolve_import_span_hash(span_root, span_path, requested_sample_bytes, span_hash, actual_sample_bytes)
+  subroutine resolve_import_span_record(span_root, span_path, requested_sample_bytes, span_hash, actual_sample_bytes, &
+                                        sample_bytes)
     character(len=*), intent(in) :: span_root
     character(len=*), intent(in) :: span_path
     integer(i64), intent(in)     :: requested_sample_bytes
     integer(i64), intent(out)    :: span_hash
     integer(i64), intent(out)    :: actual_sample_bytes
+    integer(i8), intent(out)     :: sample_bytes(:)
     character(len=MAX_PATH_LEN)  :: full_path
     integer(i32)                 :: unit_id
     integer(i32)                 :: ios
     integer(i64)                 :: sample_count
     integer(i64)                 :: file_size
     logical                      :: exists
+    integer(i64)                 :: stored_count
     integer(i8), allocatable     :: sample_buffer(:)
 
     span_hash = 0_i64
     actual_sample_bytes = 0_i64
+    sample_bytes = 0_i8
     if (len_trim(span_root) == 0 .or. len_trim(span_path) == 0) return
 
     full_path = join_import_span_path(span_root, span_path)
@@ -772,8 +798,59 @@ contains
 
     actual_sample_bytes = sample_count
     span_hash = combine_positive_hash64(max(1_i64, span_hash), hash_i8_buffer64(sample_buffer, sample_count))
+    stored_count = min(sample_count, int(size(sample_bytes), kind=i64))
+    if (stored_count > 0_i64) sample_bytes(1:stored_count) = sample_buffer(1:stored_count)
     deallocate(sample_buffer)
-  end subroutine resolve_import_span_hash
+  end subroutine resolve_import_span_record
+
+  subroutine decode_hex_to_span_bytes(hex_text, span_bytes, stored_count)
+    character(len=*), intent(in) :: hex_text
+    integer(i8), intent(out)     :: span_bytes(:)
+    integer(i32), intent(out)    :: stored_count
+    integer(i32)                 :: decode_index
+    integer(i32)                 :: byte_value
+    integer(i32)                 :: high_nibble
+    integer(i32)                 :: low_nibble
+    integer(i32)                 :: hex_count
+
+    span_bytes = 0_i8
+    stored_count = 0_i32
+    if (len_trim(hex_text) <= 1) return
+
+    hex_count = min(len_trim(hex_text) / 2_i32, size(span_bytes))
+    do decode_index = 1_i32, hex_count
+      high_nibble = hex_digit_value(hex_text((2 * decode_index) - 1:(2 * decode_index) - 1))
+      low_nibble = hex_digit_value(hex_text(2 * decode_index:2 * decode_index))
+      if (high_nibble < 0_i32 .or. low_nibble < 0_i32) exit
+      byte_value = (16_i32 * high_nibble) + low_nibble
+      if (byte_value > 127_i32) then
+        span_bytes(decode_index) = int(byte_value - 256_i32, kind=i8)
+      else
+        span_bytes(decode_index) = int(byte_value, kind=i8)
+      end if
+      stored_count = decode_index
+    end do
+  end subroutine decode_hex_to_span_bytes
+
+  pure integer(i32) function hex_digit_value(hex_char) result(digit_value)
+    character(len=*), intent(in) :: hex_char
+    integer(i32)                 :: ascii_code
+
+    digit_value = -1_i32
+    if (len_trim(hex_char) <= 0) return
+
+    ascii_code = iachar(hex_char(1:1))
+    select case (ascii_code)
+    case (iachar("0"):iachar("9"))
+      digit_value = ascii_code - iachar("0")
+    case (iachar("A"):iachar("F"))
+      digit_value = 10_i32 + ascii_code - iachar("A")
+    case (iachar("a"):iachar("f"))
+      digit_value = 10_i32 + ascii_code - iachar("a")
+    case default
+      digit_value = -1_i32
+    end select
+  end function hex_digit_value
 
   pure function join_import_span_path(span_root, span_path) result(full_path)
     character(len=*), intent(in) :: span_root

@@ -37,6 +37,7 @@ constexpr int32_t MIZU_CUDA_CONTEXT_PACK_USAGE_OFFSET = 768;
 constexpr int32_t MIZU_CUDA_CONTEXT_PACK_DISPATCH_OFFSET = 816;
 constexpr int32_t MIZU_CUDA_CONTEXT_PACK_DISPATCH_STRIDE = 24;
 constexpr int32_t MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT = 4;
+constexpr int32_t MIZU_CUDA_PACK_SPAN_SAMPLE_BYTES = 64;
 constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 912;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_COUNT = 4;
 constexpr int32_t MIZU_CUDA_CONTEXT_RECENT_TOKEN_COUNT = 4;
@@ -65,6 +66,28 @@ inline unsigned long long mix_u64_host(unsigned long long value) {
   value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
   value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
   return value ^ (value >> 31);
+}
+
+inline unsigned long long mix_span_sample_bytes(unsigned long long seed,
+                                                const int32_t *pack_entry_span_sample_sizes,
+                                                const int8_t *pack_entry_span_samples,
+                                                int32_t usage_index) {
+  if (pack_entry_span_sample_sizes == nullptr || pack_entry_span_samples == nullptr) return seed;
+
+  const int32_t sample_size =
+      pack_entry_span_sample_sizes[usage_index] < 0 ? 0 :
+      (pack_entry_span_sample_sizes[usage_index] > MIZU_CUDA_PACK_SPAN_SAMPLE_BYTES ?
+       MIZU_CUDA_PACK_SPAN_SAMPLE_BYTES : pack_entry_span_sample_sizes[usage_index]);
+  if (sample_size <= 0) return seed;
+
+  const int32_t sample_base = usage_index * MIZU_CUDA_PACK_SPAN_SAMPLE_BYTES;
+  for (int32_t sample_index = 0; sample_index < sample_size; ++sample_index) {
+    seed = mix_u64_host(seed ^
+      static_cast<unsigned long long>(static_cast<uint8_t>(pack_entry_span_samples[sample_base + sample_index])) ^
+      (static_cast<unsigned long long>(usage_index + 1) << 8) ^
+      (static_cast<unsigned long long>(sample_index + 1) << 24));
+  }
+  return seed;
 }
 
 inline uint32_t compute_context_checksum(const unsigned char *bytes, int32_t stored_count) {
@@ -1336,6 +1359,8 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
                                          const int32_t *pack_layout_codes,
                                          const int64_t *pack_entry_span_hashes,
                                          const int64_t *pack_entry_span_bytes,
+                                         const int32_t *pack_entry_span_sample_sizes,
+                                         const int8_t *pack_entry_span_samples,
                                          const int32_t *token_values,
                                          int64_t token_count,
                                          const int8_t *modal_bytes,
@@ -1432,6 +1457,8 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
           static_cast<unsigned long long>(pack_entry_span_bytes[usage_index]) ^
           (static_cast<unsigned long long>(usage_index + 1) << 16));
       }
+      workspace_seed = mix_span_sample_bytes(workspace_seed, pack_entry_span_sample_sizes,
+                                             pack_entry_span_samples, usage_index);
     }
     build_prefill_state_block(workspace_seed, static_cast<unsigned long long>(artifact_hash), token_count,
                               modal_byte_count, staged_modal_count, *consumed_token_count, state_lanes,
@@ -1506,6 +1533,8 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
                                         const int32_t *pack_layout_codes,
                                         const int64_t *pack_entry_span_hashes,
                                         const int64_t *pack_entry_span_bytes,
+                                        const int32_t *pack_entry_span_sample_sizes,
+                                        const int8_t *pack_entry_span_samples,
                                         int64_t kv_before,
                                         int64_t token_budget,
                                         const int8_t *context_bytes,
@@ -1637,6 +1666,8 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
         static_cast<unsigned long long>(pack_entry_span_bytes[usage_index]) ^
         (static_cast<unsigned long long>(usage_index + 1) << 16));
     }
+    decode_seed = mix_span_sample_bytes(decode_seed, pack_entry_span_sample_sizes,
+                                        pack_entry_span_samples, usage_index);
   }
 
   mizu_decode_kernel<<<1, 1>>>(static_cast<int64_t>(decode_seed), kv_before, token_budget, managed_emitted_token_count,

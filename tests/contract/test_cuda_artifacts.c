@@ -449,6 +449,8 @@ int main(void) {
     if (!expect_true("cuda span-cache sidecar should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"kind=cuda_pack_span_cache_v1\" {} +");
     if (!expect_true("cuda span-cache sidecar should store the expected format marker", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_sample_hex=\" {} +");
+    if (!expect_true("cuda span-cache sidecar should store staged sample bytes", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/sessions -type f | grep -q .");
     if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
 

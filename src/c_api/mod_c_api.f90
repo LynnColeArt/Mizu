@@ -3484,14 +3484,15 @@ contains
     type(artifact_metadata_record), intent(in) :: metadata
     character(len=*), intent(inout)           :: payload_text
     integer(i64), intent(inout)               :: payload_bytes
-    character(len=(MAX_PATH_LEN * 6) + 512)   :: sidecar_payload
+    character(len=(MAX_PATH_LEN * 6) + 2048)  :: sidecar_payload
     character(len=MAX_PATH_LEN)               :: sidecar_path
     character(len=MAX_PATH_LEN)               :: full_path
     character(len=MAX_PATH_LEN)               :: parent_dir
     character(len=MAX_PATH_LEN)               :: span_root
     character(len=MAX_PATH_LEN)               :: path_text
     character(len=MAX_PATH_LEN + 96)          :: entry_text
-    character(len=128)                        :: field_text
+    character(len=128)                        :: hex_text
+    character(len=320)                        :: field_text
     integer(i32)                              :: entry_index
     integer(i32)                              :: entry_limit
     integer(i32)                              :: unit_id
@@ -3499,6 +3500,7 @@ contains
     integer(i64)                              :: parsed_i64
     integer(i64)                              :: span_hash
     integer(i64)                              :: actual_sample_bytes
+    integer(i8)                               :: sample_bytes(64)
     logical                                   :: exists
     logical                                   :: found_count
     logical                                   :: found_root
@@ -3561,7 +3563,8 @@ contains
         if (.not. parse_i64_text_cache(field_text, parsed_i64)) parsed_i64 = 0_i64
       end if
 
-      call resolve_import_span_hash_cache(trim(span_root), trim(path_text), parsed_i64, span_hash, actual_sample_bytes)
+      call resolve_import_span_record_cache(trim(span_root), trim(path_text), parsed_i64, span_hash, &
+        actual_sample_bytes, sample_bytes)
       if (span_hash <= 0_i64) cycle
 
       field_text = ""
@@ -3570,6 +3573,14 @@ contains
       field_text = ""
       write(field_text, '(";entry",I0,"_bytes=",I0)') entry_index, actual_sample_bytes
       call append_payload_fragment(sidecar_payload, trim(field_text))
+      if (actual_sample_bytes > 0_i64) then
+        hex_text = ""
+        call encode_bytes_as_hex(sample_bytes, int(min(actual_sample_bytes, int(size(sample_bytes), kind=i64)), kind=i32), &
+          hex_text)
+        field_text = ""
+        write(field_text, '(";entry",I0,"_sample_hex=",A)') entry_index, trim(hex_text)
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+      end if
       has_entries = .true.
     end do
 
@@ -3847,23 +3858,26 @@ contains
     call execute_command_line(trim(command_text), exitstat=exit_status)
   end subroutine ensure_directory_exists
 
-  subroutine resolve_import_span_hash_cache(span_root, span_path, requested_sample_bytes, span_hash, &
-                                            actual_sample_bytes)
+  subroutine resolve_import_span_record_cache(span_root, span_path, requested_sample_bytes, span_hash, &
+                                              actual_sample_bytes, sample_bytes)
     character(len=*), intent(in) :: span_root
     character(len=*), intent(in) :: span_path
     integer(i64), intent(in)     :: requested_sample_bytes
     integer(i64), intent(out)    :: span_hash
     integer(i64), intent(out)    :: actual_sample_bytes
+    integer(i8), intent(out)     :: sample_bytes(:)
     character(len=MAX_PATH_LEN)  :: full_path
     integer(i32)                 :: unit_id
     integer(i32)                 :: ios
     integer(i64)                 :: sample_count
     integer(i64)                 :: file_size
     logical                      :: exists
+    integer(i64)                 :: stored_count
     integer(i8), allocatable     :: sample_buffer(:)
 
     span_hash = 0_i64
     actual_sample_bytes = 0_i64
+    sample_bytes = 0_i8
     if (len_trim(span_root) == 0 .or. len_trim(span_path) == 0) return
 
     full_path = join_import_span_path_cache(span_root, span_path)
@@ -3892,8 +3906,10 @@ contains
     actual_sample_bytes = sample_count
     span_hash = combine_positive_hash64_cache(max(1_i64, span_hash), &
       hash_i8_buffer64_cache(sample_buffer, sample_count))
+    stored_count = min(sample_count, int(size(sample_bytes), kind=i64))
+    if (stored_count > 0_i64) sample_bytes(1:stored_count) = sample_buffer(1:stored_count)
     deallocate(sample_buffer)
-  end subroutine resolve_import_span_hash_cache
+  end subroutine resolve_import_span_record_cache
 
   pure function join_import_span_path_cache(span_root, span_path) result(full_path)
     character(len=*), intent(in) :: span_root
