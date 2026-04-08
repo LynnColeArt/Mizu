@@ -4,14 +4,14 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `e4b8185` (`Document CUDA page
-  layout checkpoint`)
-- current milestone: CUDA live-context payloads now widen to 640 bytes and add
-  an explicit per-page control table for owner kind, usable capacity,
-  committed rows, free rows, epochs, logical page ids, and flags
-- immediate next target: replace the compact CUDA key/value lane image plus
-  synthetic page-layout and page-control records with a more realistic
-  tensor-backed page record or backend-native KV-state payload
+- latest published baseline before this slice: `76ceb61` (`Document CUDA page
+  recycle validation`)
+- current milestone: CUDA live-context payloads now widen to 768 bytes and add
+  an explicit per-page tensor descriptor table for storage offsets, committed
+  byte spans, capacity byte spans, and row strides
+- immediate next target: validate one narrow multimodal CUDA flow end to end,
+  or replace more of the compact key/value lane image with a less synthetic
+  tensor-backed page payload
 
 ## Roadmap Status
 
@@ -128,6 +128,21 @@ In short:
 - the CUDA executor tests now drive the compact page table through window
   overflow, which validates logical page rotation and recycled-slot marking
   instead of only cold page allocation and append behavior
+- the CUDA live-context payload now reserves 768 bytes instead of 640 so it
+  can carry a compact per-page tensor descriptor block after the control table
+- those tensor descriptor records now capture:
+  - key storage offset
+  - key committed byte span
+  - key capacity byte span
+  - key row stride
+  - value storage offset
+  - value committed byte span
+  - value capacity byte span
+  - value row stride
+- the runtime can now read those tensor descriptor records back through a
+  fourth Fortran-side extractor, which makes the compact page image inspectable
+  as a small tensor-backed page record rather than only a lane image plus page
+  metadata
 
 ### Self-Optimization
 

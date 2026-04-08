@@ -70,6 +70,10 @@ Current implementation status:
   explicit per-page control table for owner kind, usable capacity, committed
   rows, free rows, epochs, logical page ids, and flags, so decode state now
   looks more like a compact page table than layout metadata alone
+- that CUDA live-context image now widens again to 768 bytes and carries an
+  explicit per-page tensor descriptor table for storage offsets, committed
+  byte spans, capacity byte spans, and row strides, so the compact page image
+  now looks more like a tiny tensor-backed page record than a pure summary
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran

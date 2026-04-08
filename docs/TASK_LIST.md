@@ -249,6 +249,8 @@ These are the highest-leverage next tasks.
   generation on the page that changes
 - [x] Add explicit per-page control records to CUDA KV images for owner,
   capacity, epochs, logical ids, and page flags
+- [x] Add per-page tensor descriptor records to CUDA KV images for storage
+  offsets, byte spans, and row strides
 
 ### 5.3 CUDA Validation
 

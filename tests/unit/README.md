@@ -81,6 +81,9 @@ bodies.
   - validates CUDA page-control snapshots expose owner kind, capacity,
     committed rows, free rows, epochs, logical page ids, and flags across
     prefill and decode transitions
+  - validates CUDA page tensor descriptors expose storage offsets, committed
+    byte spans, capacity byte spans, and row strides across prefill, decode,
+    and recycled-page transitions
   - validates compact CUDA page tables rotate correctly under decode-window
     overflow and mark recycled physical slots explicitly
   - validates the fixed-size CUDA context payload now carries semantic token
