@@ -55,6 +55,15 @@ bodies.
     payload text
   - validates Apple workspace estimates are stable for the current planner
     fixtures
+- `test_apple_executor.f90`
+  - validates Apple projector, prefill, and decode execute through the bridge
+    seam for both ANE and Metal routes
+  - validates Apple live-context bytes retain route-aware lineage and semantic
+    snapshot data across prefill and decode
+  - validates decode rejects cross-route reuse once a decode-produced Apple
+    context exists
+  - validates corrupted Apple context payloads fail validation instead of
+    being consumed
 - `test_runtime_workspace.f90`
   - validates runtime-scoped workspace reservation keeps a reusable high-water
     mark while clearing in-use bytes after release
@@ -67,8 +76,9 @@ bodies.
     advances it while retaining emitted tokens
   - validates a backend-owned live-context byte buffer can be stored and
     updated in session state
-  - validates an offloaded CUDA live-context buffer makes direct decode invalid
-    until the runtime restores residency
+  - validates an offloaded backend live-context buffer makes direct decode
+    invalid until the runtime restores residency, including Apple placeholder
+    contexts
 - `test_cuda_planner.f90`
   - validates stage-specific CUDA plan candidates for weight-pack, projector,
     prefill, and decode records

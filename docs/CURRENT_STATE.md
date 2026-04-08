@@ -4,14 +4,15 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `ae93c67` (`Document CUDA
-  reference-output coverage`)
-- current milestone: Apple planner parity now exists at the contract level,
-  with route-specific ANE and Metal plan formats, workspace estimates, and
-  materialized Apple artifact payloads wired through the C API metadata path
-- immediate next target: define the Apple bridge boundary, or replace more of
-  the compact CUDA key/value lane image with a less synthetic tensor-backed
-  page payload
+- latest published baseline before this slice: `bbacddc` (`Document Apple
+  planner parity checkpoint`)
+- current milestone: Apple bridge and execution basics now exist through the
+  public runtime, with route-aware ANE and Metal placeholder execution, a
+  macOS Objective-C bridge seam, a non-Apple stub fallback, and backend-neutral
+  session checkpoint restore for Apple live contexts
+- immediate next target: hand the Apple seam to Sam for hardware validation,
+  then decide whether the next Apple slice is capability/error-reporting
+  polish or the first real Metal/ANE-backed execution payloads
 
 ## Roadmap Status
 
@@ -28,16 +29,20 @@ Last updated: 2026-04-07
   - backend-owned session state survives prefill, decode, park, and resume
 - the cache and self-optimization layers have real shape, but backend-native
   weight and plan caches are still ahead of us
-- Apple is still mostly at the scaffolding stage and remains the biggest
-  hardware-validation gap
+- Apple is now beyond pure scaffolding:
+  - capability probing uses the Apple bridge
+  - planner parity exists for ANE and Metal
+  - projector, prefill, and decode run through placeholder Apple execution
+  - Apple live contexts use the same park/resume checkpoint path as CUDA
+  - hardware validation is still the biggest Apple gap
 - model import and target-asset mapping are still only partially done
 
 In short:
 
 - the control plane and runtime contract are in good shape
 - the CUDA backend is credible as a bring-up path
-- real inference math, real packed weights, and Apple execution are still major
-  milestones ahead
+- real inference math, real packed weights, and Apple hardware validation are
+  still major milestones ahead
 
 ## What Exists
 
@@ -61,13 +66,14 @@ In short:
 - live session context identity now survives prefill and advances after decode,
   so later decode steps can depend on prior staged and emitted content
 - live sessions now also retain a persisted backend-owned context byte buffer
-  for the active route, starting with CUDA
+  for the active route, starting with CUDA and now including Apple placeholder
+  contexts
 - `park` and `resume` now materialize and reload a small session-checkpoint
   payload when `cache_root` is configured and route-specific context state
   exists
-- parked CUDA sessions now offload that resident context buffer after the
-  checkpoint is safely materialized, and `resume` restores it before the
-  session becomes live again
+- parked sessions with backend-owned live contexts now offload that resident
+  context buffer after the checkpoint is safely materialized, and `resume`
+  restores it before the session becomes live again
 - CUDA live-context payloads now include a small versioned, checksummed
   header, and both `resume` and CUDA decode validate header plus payload
   integrity before treating restored bytes as usable backend state
@@ -175,8 +181,8 @@ In short:
   - `src/backends/apple/`
   - `src/backends/cuda/`
 - initial capability probes exist for:
-  - Apple Metal
-  - Apple ANE via explicit override
+  - Apple Metal through the Apple bridge seam on macOS
+  - Apple ANE through the Apple bridge seam on macOS
   - CUDA via a real CUDA device bridge, with `nvidia-smi` and override fallback
 - Apple planner scaffolding now exists for:
   - model-load weight-pack records
@@ -185,6 +191,21 @@ In short:
   - decode plan records
 - route-specific Apple artifact payloads are now materialized through the C API
   metadata path for both ANE and Metal candidates
+- Apple bridge basics now exist through:
+  - `src/backends/apple/apple_bridge.h`
+  - `src/backends/apple/apple_bridge.m`
+  - `src/backends/apple/apple_bridge_stub.c`
+  - `src/backends/apple/mod_apple_bridge.f90`
+- Apple placeholder execution now exists for:
+  - projector
+  - prefill
+  - decode
+- Apple execution now supports a no-`cache_root` virtual-payload path, so
+  low-ceremony runtimes can still execute Apple placeholder stages without
+  forcing artifact materialization to disk
+- Apple live-context bytes now carry route-aware lineage and are accepted by
+  the shared session checkpoint path, so parked Apple sessions can be restored
+  through the same runtime/cache machinery as CUDA
 - CUDA planner scaffolding exists for:
   - model load weight-pack records
   - projector plan records
@@ -263,6 +284,7 @@ In short:
 - `test_stage_reports`
 - `test_backend_registry`
 - `test_apple_planner`
+- `test_apple_executor`
 - `test_runtime_workspace`
 - `test_session_staging`
 - `test_cuda_planner`
@@ -271,7 +293,9 @@ In short:
 
 ## What Is Still Stubbed
 
-- no real Apple backend exists yet
+- no real Apple Metal or ANE compute backend exists yet
+- the Apple bridge currently executes deterministic placeholder projector,
+  prefill, and decode paths rather than real transformer math
 - the Apple planner is still heuristic/scaffold-level rather than
   hardware-validated
 - no real ANE executor exists yet

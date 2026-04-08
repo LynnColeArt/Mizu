@@ -21,6 +21,13 @@ Current implementation status:
 - Apple planner scaffolding now exists for ANE and Metal, with route-specific
   plan formats, workspace estimates, and materialized Apple artifact payloads
   behind the current C API metadata path
+- Apple now also has a real bridge seam through a compile-safe Objective-C
+  implementation on macOS and a non-Apple stub elsewhere, so the public API
+  can execute placeholder ANE and Metal projector, prefill, and decode stages
+  instead of only emitting Apple planner metadata
+- Apple session contexts now use the same live-context and park/resume
+  checkpoint path as CUDA, including backend-neutral offload and restore rules
+  for resident execution state
 - CUDA planner scaffolding now emits route-specific plan and weight-pack records
   and materializes stub payload files under `cache_root`
 - CUDA capability probing now prefers a real device bridge when available and
@@ -90,7 +97,8 @@ Current implementation status:
   executables
 - `make test` now succeeds from a clean tree without relying on stray Fortran
   module files
-- no real Apple execution backend exists yet, and CUDA execution is still
+- Apple execution now exists as a placeholder bridge/runtime seam rather than a
+  real Metal or ANE compute backend, and CUDA execution is still
   placeholder/scaffold-level rather than real transformer math
 
 Build and test:

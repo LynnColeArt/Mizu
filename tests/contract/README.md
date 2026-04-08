@@ -16,6 +16,8 @@ These suites cover the `API-C*` portion of
     and verifies nonzero report plan IDs, route-honest stage reports, in-process
     cache-hit flags, persisted winner reuse across runtimes, and persisted
     route-specific artifact hits for weight, multimodal, and plan stages
+  - verifies the Apple public path can execute with no configured `cache_root`
+    by using the virtual-payload bridge path for projector, prefill, and decode
   - inspects the persisted artifact cache file to confirm backend-specific
     weight and plan metadata records are written
   - locks the current Apple planner payload labels for ANE weight/projector/

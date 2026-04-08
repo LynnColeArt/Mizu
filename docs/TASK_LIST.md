@@ -180,10 +180,10 @@ These are the highest-leverage next tasks.
 ### 4.1 Apple Capability Layer
 
 - [x] Create Apple backend directory structure
-- [ ] Define Apple device descriptor
+- [x] Define Apple device descriptor
 - [x] Implement Apple capability probe
-- [ ] Detect ANE availability
-- [ ] Detect Metal availability
+- [x] Detect ANE availability
+- [x] Detect Metal availability
 - [x] Report planner-visible Apple constraints
 
 ### 4.2 Apple Planner
@@ -196,18 +196,18 @@ These are the highest-leverage next tasks.
 
 ### 4.3 Apple Bridge Boundary
 
-- [ ] Create Apple bridge header surface
-- [ ] Create Objective-C bridge source
+- [x] Create Apple bridge header surface
+- [x] Create Objective-C bridge source
 - [ ] Define bridge ownership rules
 - [ ] Define bridge error translation rules
 
 ### 4.4 Apple Execution
 
-- [ ] Implement projector execution path on Apple
-- [ ] Implement prefill execution path on Apple
-- [ ] Implement decode execution path on Apple
-- [ ] Implement Apple workspace handoff
-- [ ] Implement Apple plan cache integration
+- [x] Implement projector execution path on Apple
+- [x] Implement prefill execution path on Apple
+- [x] Implement decode execution path on Apple
+- [x] Implement Apple workspace handoff
+- [x] Implement Apple plan cache integration
 
 ### 4.5 Apple Validation
 
