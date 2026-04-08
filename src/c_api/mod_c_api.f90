@@ -3373,6 +3373,7 @@ contains
         payload_text, payload_bytes)
       if (present(model)) call append_import_lineage_payload(payload_text, payload_bytes, stage_kind, model)
       if (present(cache_root)) then
+        call append_cuda_pack_span_cache_payload(trim(cache_root), metadata, payload_text, payload_bytes)
         call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
       end if
     end select
@@ -3477,6 +3478,124 @@ contains
     metadata%is_materialized = .true.
     metadata%payload_bytes = max(1_i64, payload_bytes)
   end subroutine materialize_artifact_payload
+
+  subroutine append_cuda_pack_span_cache_payload(cache_root, metadata, payload_text, payload_bytes)
+    character(len=*), intent(in)              :: cache_root
+    type(artifact_metadata_record), intent(in) :: metadata
+    character(len=*), intent(inout)           :: payload_text
+    integer(i64), intent(inout)               :: payload_bytes
+    character(len=(MAX_PATH_LEN * 6) + 512)   :: sidecar_payload
+    character(len=MAX_PATH_LEN)               :: sidecar_path
+    character(len=MAX_PATH_LEN)               :: full_path
+    character(len=MAX_PATH_LEN)               :: parent_dir
+    character(len=MAX_PATH_LEN)               :: span_root
+    character(len=MAX_PATH_LEN)               :: path_text
+    character(len=MAX_PATH_LEN + 96)          :: entry_text
+    character(len=128)                        :: field_text
+    integer(i32)                              :: entry_index
+    integer(i32)                              :: entry_limit
+    integer(i32)                              :: unit_id
+    integer(i32)                              :: ios
+    integer(i64)                              :: parsed_i64
+    integer(i64)                              :: span_hash
+    integer(i64)                              :: actual_sample_bytes
+    logical                                   :: exists
+    logical                                   :: found_count
+    logical                                   :: found_root
+    logical                                   :: found_entry
+    logical                                   :: found_path
+    logical                                   :: found_sample_bytes
+    logical                                   :: found_sidecar
+    logical                                   :: has_entries
+
+    if (metadata%backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
+    if (len_trim(cache_root) == 0) return
+    if (len_trim(metadata%payload_path) == 0) return
+
+    span_root = ""
+    call extract_payload_field_text_cache(payload_text, "pack_span_root=", span_root, found_root)
+    if (.not. found_root) return
+
+    field_text = ""
+    call extract_payload_field_text_cache(payload_text, "pack_dispatch_count=", field_text, found_count)
+    if (.not. found_count) return
+    if (.not. parse_i64_text_cache(field_text, parsed_i64)) return
+    entry_limit = max(0_i32, min(MAX_IMPORT_STAGE_PACK_DISPATCH, int(parsed_i64, kind=i32)))
+    if (entry_limit <= 0_i32) return
+
+    sidecar_path = build_cuda_pack_span_cache_path(metadata%payload_path)
+    if (len_trim(sidecar_path) == 0) return
+
+    path_text = ""
+    call extract_payload_field_text_cache(payload_text, "pack_span_cache=", path_text, found_sidecar)
+    if (.not. found_sidecar) then
+      field_text = ""
+      write(field_text, '(";pack_span_cache=",A)') trim(sidecar_path)
+      call append_payload_fragment(payload_text, trim(field_text))
+    end if
+
+    payload_bytes = int(len_trim(payload_text) + 1_i64, kind=i64)
+
+    full_path = join_cache_root_with_payload_path(cache_root, sidecar_path)
+    if (len_trim(full_path) == 0) return
+    inquire(file=trim(full_path), exist=exists)
+    if (exists) return
+
+    sidecar_payload = "kind=cuda_pack_span_cache_v1"
+    has_entries = .false.
+
+    do entry_index = 1_i32, entry_limit
+      write(field_text, '("pack_span",I0,"=")') entry_index
+      entry_text = ""
+      call extract_payload_field_text_cache(payload_text, trim(field_text), entry_text, found_entry)
+      if (.not. found_entry) cycle
+
+      path_text = ""
+      call extract_pipe_field_cache(trim(entry_text), 1_i32, path_text, found_path)
+      if (.not. found_path) cycle
+
+      field_text = ""
+      call extract_inline_numeric_field_cache(trim(entry_text), "sample_bytes=", field_text, found_sample_bytes)
+      parsed_i64 = 0_i64
+      if (found_sample_bytes) then
+        if (.not. parse_i64_text_cache(field_text, parsed_i64)) parsed_i64 = 0_i64
+      end if
+
+      call resolve_import_span_hash_cache(trim(span_root), trim(path_text), parsed_i64, span_hash, actual_sample_bytes)
+      if (span_hash <= 0_i64) cycle
+
+      field_text = ""
+      write(field_text, '(";entry",I0,"_hash=",I0)') entry_index, span_hash
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+      field_text = ""
+      write(field_text, '(";entry",I0,"_bytes=",I0)') entry_index, actual_sample_bytes
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+      has_entries = .true.
+    end do
+
+    if (.not. has_entries) return
+
+    field_text = ""
+    write(field_text, '(";entry_count=",I0)') entry_limit
+    call append_payload_fragment(sidecar_payload, trim(field_text))
+
+    parent_dir = parent_directory_path(full_path)
+    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+
+    open(newunit=unit_id, file=trim(full_path), status="replace", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+    write(unit_id, "(A)", iostat=ios) trim(sidecar_payload)
+    close(unit_id)
+  end subroutine append_cuda_pack_span_cache_payload
+
+  function build_cuda_pack_span_cache_path(payload_path) result(sidecar_path)
+    character(len=*), intent(in) :: payload_path
+    character(len=MAX_PATH_LEN)  :: sidecar_path
+
+    sidecar_path = ""
+    if (len_trim(payload_path) == 0) return
+    write(sidecar_path, '(A,".spancache")') trim(payload_path)
+  end function build_cuda_pack_span_cache_path
 
   function join_cache_root_with_payload_path(cache_root, payload_path) result(full_path)
     character(len=*), intent(in) :: cache_root
@@ -3727,6 +3846,225 @@ contains
     command_text = "mkdir -p " // trim(shell_quote_text(trim(directory_path)))
     call execute_command_line(trim(command_text), exitstat=exit_status)
   end subroutine ensure_directory_exists
+
+  subroutine resolve_import_span_hash_cache(span_root, span_path, requested_sample_bytes, span_hash, &
+                                            actual_sample_bytes)
+    character(len=*), intent(in) :: span_root
+    character(len=*), intent(in) :: span_path
+    integer(i64), intent(in)     :: requested_sample_bytes
+    integer(i64), intent(out)    :: span_hash
+    integer(i64), intent(out)    :: actual_sample_bytes
+    character(len=MAX_PATH_LEN)  :: full_path
+    integer(i32)                 :: unit_id
+    integer(i32)                 :: ios
+    integer(i64)                 :: sample_count
+    integer(i64)                 :: file_size
+    logical                      :: exists
+    integer(i8), allocatable     :: sample_buffer(:)
+
+    span_hash = 0_i64
+    actual_sample_bytes = 0_i64
+    if (len_trim(span_root) == 0 .or. len_trim(span_path) == 0) return
+
+    full_path = join_import_span_path_cache(span_root, span_path)
+    span_hash = positive_hash64_cache(trim(full_path))
+    inquire(file=trim(full_path), exist=exists, size=file_size)
+    if (.not. exists) return
+
+    sample_count = max(0_i64, min(max(1_i64, requested_sample_bytes), max(0_i64, file_size)))
+    if (sample_count <= 0_i64) return
+
+    allocate(sample_buffer(sample_count))
+    sample_buffer = 0_i8
+    open(newunit=unit_id, file=trim(full_path), status="old", access="stream", form="unformatted", &
+      action="read", iostat=ios)
+    if (ios /= 0_i32) then
+      deallocate(sample_buffer)
+      return
+    end if
+    read(unit_id, iostat=ios) sample_buffer
+    close(unit_id)
+    if (ios /= 0_i32) then
+      deallocate(sample_buffer)
+      return
+    end if
+
+    actual_sample_bytes = sample_count
+    span_hash = combine_positive_hash64_cache(max(1_i64, span_hash), &
+      hash_i8_buffer64_cache(sample_buffer, sample_count))
+    deallocate(sample_buffer)
+  end subroutine resolve_import_span_hash_cache
+
+  pure function join_import_span_path_cache(span_root, span_path) result(full_path)
+    character(len=*), intent(in) :: span_root
+    character(len=*), intent(in) :: span_path
+    character(len=MAX_PATH_LEN)  :: full_path
+    integer(i32)                 :: root_len
+
+    full_path = ""
+    if (len_trim(span_root) == 0 .or. len_trim(span_path) == 0) return
+    if (span_path(1:1) == "/") then
+      full_path = trim(span_path)
+      return
+    end if
+
+    root_len = len_trim(span_root)
+    if (span_root(root_len:root_len) == "/") then
+      full_path = trim(span_root) // trim(span_path)
+    else
+      full_path = trim(span_root) // "/" // trim(span_path)
+    end if
+  end function join_import_span_path_cache
+
+  integer(i64) function positive_hash64_cache(text) result(hash_value)
+    character(len=*), intent(in) :: text
+
+    hash_value = iand(hash_text64(text), int(z'7FFFFFFFFFFFFFFF', kind=i64))
+    if (hash_value == 0_i64) hash_value = 1_i64
+  end function positive_hash64_cache
+
+  integer(i64) function combine_positive_hash64_cache(base_hash, content_hash) result(hash_value)
+    integer(i64), intent(in) :: base_hash
+    integer(i64), intent(in) :: content_hash
+    integer(i64)             :: mixed_hash
+
+    mixed_hash = ieor(max(1_i64, base_hash), content_hash + int(z'9E3779B97F4A7C15', kind=i64))
+    mixed_hash = ieor(mixed_hash, shiftr(mixed_hash, 30))
+    mixed_hash = mixed_hash * int(z'BF58476D1CE4E5B9', kind=i64)
+    mixed_hash = ieor(mixed_hash, shiftr(mixed_hash, 27))
+    mixed_hash = mixed_hash * int(z'94D049BB133111EB', kind=i64)
+    hash_value = iand(ieor(mixed_hash, shiftr(mixed_hash, 31)), int(z'7FFFFFFFFFFFFFFF', kind=i64))
+    if (hash_value == 0_i64) hash_value = 1_i64
+  end function combine_positive_hash64_cache
+
+  integer(i64) function hash_i8_buffer64_cache(buffer, buffer_count) result(hash_value)
+    integer(i8), intent(in)  :: buffer(:)
+    integer(i64), intent(in) :: buffer_count
+    integer(i64)             :: index_byte
+
+    hash_value = positive_hash64_cache("cuda_import_span")
+    if (buffer_count <= 0_i64) return
+    do index_byte = 1_i64, min(buffer_count, int(size(buffer), kind=i64))
+      hash_value = combine_positive_hash64_cache(max(1_i64, hash_value), int(buffer(index_byte), kind=i64) + 257_i64)
+    end do
+  end function hash_i8_buffer64_cache
+
+  subroutine extract_inline_numeric_field_cache(source_text, key_text, value_text, found)
+    character(len=*), intent(in)  :: source_text
+    character(len=*), intent(in)  :: key_text
+    character(len=*), intent(out) :: value_text
+    logical, intent(out)          :: found
+    integer(i32)                  :: start_index
+    integer(i32)                  :: value_start
+    integer(i32)                  :: remaining_len
+    integer(i32)                  :: separator_index
+    integer(i32)                  :: copy_len
+
+    value_text = ""
+    found = .false.
+    if (len_trim(source_text) == 0 .or. len_trim(key_text) == 0) return
+
+    start_index = index(source_text, trim(key_text))
+    if (start_index <= 0) return
+
+    value_start = start_index + len_trim(key_text)
+    if (value_start > len_trim(source_text)) return
+
+    remaining_len = len_trim(source_text) - value_start + 1_i32
+    separator_index = index(source_text(value_start:value_start + remaining_len - 1_i32), "|")
+    if (separator_index <= 0) then
+      copy_len = min(len_trim(source_text) - value_start + 1_i32, len(value_text))
+    else
+      copy_len = min(separator_index - 1_i32, len(value_text))
+    end if
+    if (copy_len <= 0_i32) return
+
+    value_text(1:copy_len) = source_text(value_start:value_start + copy_len - 1_i32)
+    found = (len_trim(value_text) > 0)
+  end subroutine extract_inline_numeric_field_cache
+
+  logical function parse_i64_text_cache(text, value_out) result(parsed_ok)
+    character(len=*), intent(in) :: text
+    integer(i64), intent(out)    :: value_out
+    integer(i32)                 :: ios
+
+    value_out = 0_i64
+    parsed_ok = .false.
+    if (len_trim(text) == 0) return
+    read(text, *, iostat=ios) value_out
+    parsed_ok = (ios == 0_i32)
+  end function parse_i64_text_cache
+
+  subroutine extract_payload_field_text_cache(payload_text, key_text, value_text, found)
+    character(len=*), intent(in)  :: payload_text
+    character(len=*), intent(in)  :: key_text
+    character(len=*), intent(out) :: value_text
+    logical, intent(out)          :: found
+    integer(i32)                  :: start_index
+    integer(i32)                  :: value_start
+    integer(i32)                  :: remaining_len
+    integer(i32)                  :: separator_index
+    integer(i32)                  :: copy_len
+
+    value_text = ""
+    found = .false.
+    if (len_trim(payload_text) == 0 .or. len_trim(key_text) == 0) return
+
+    start_index = index(payload_text, trim(key_text))
+    if (start_index <= 0) return
+
+    value_start = start_index + len_trim(key_text)
+    if (value_start > len_trim(payload_text)) return
+
+    remaining_len = len_trim(payload_text) - value_start + 1_i32
+    separator_index = index(payload_text(value_start:value_start + remaining_len - 1_i32), ";")
+    if (separator_index <= 0) then
+      copy_len = min(len_trim(payload_text) - value_start + 1_i32, len(value_text))
+    else
+      copy_len = min(separator_index - 1_i32, len(value_text))
+    end if
+    if (copy_len <= 0_i32) return
+
+    value_text(1:copy_len) = payload_text(value_start:value_start + copy_len - 1_i32)
+    found = (len_trim(value_text) > 0)
+  end subroutine extract_payload_field_text_cache
+
+  subroutine extract_pipe_field_cache(source_text, field_index, value_text, found)
+    character(len=*), intent(in)  :: source_text
+    integer(i32), intent(in)      :: field_index
+    character(len=*), intent(out) :: value_text
+    logical, intent(out)          :: found
+    integer(i32)                  :: start_index
+    integer(i32)                  :: pipe_index
+    integer(i32)                  :: current_field
+    integer(i32)                  :: value_len
+
+    value_text = ""
+    found = .false.
+    if (len_trim(source_text) == 0 .or. field_index <= 0_i32) return
+
+    start_index = 1_i32
+    current_field = 1_i32
+    do
+      pipe_index = index(source_text(start_index:len_trim(source_text)), "|")
+      if (current_field == field_index) then
+        if (pipe_index <= 0) then
+          value_len = min(len_trim(source_text) - start_index + 1_i32, len(value_text))
+        else
+          value_len = min(pipe_index - 1_i32, len(value_text))
+        end if
+        if (value_len > 0_i32) then
+          value_text(1:value_len) = source_text(start_index:start_index + value_len - 1_i32)
+          found = (len_trim(value_text) > 0)
+        end if
+        return
+      end if
+      if (pipe_index <= 0) exit
+      start_index = start_index + pipe_index
+      current_field = current_field + 1_i32
+      if (start_index > len_trim(source_text)) exit
+    end do
+  end subroutine extract_pipe_field_cache
 
   function shell_quote_text(text) result(quoted_text)
     character(len=*), intent(in) :: text

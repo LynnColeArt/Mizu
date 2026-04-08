@@ -119,6 +119,7 @@ contains
     integer(i64)                 :: workspace_bytes_local
     type(cuda_pack_usage_profile) :: pack_usage
     logical                      :: loaded_ok
+    logical                      :: loaded_cached_spans
     logical                      :: has_pack_dependency
     type(c_ptr)                  :: workspace_buffer_local
 
@@ -156,7 +157,8 @@ contains
     artifact_hash = positive_hash64(trim(payload_text))
     call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
     call extract_payload_pack_usage_profile(payload_text, pack_usage)
-    call hydrate_payload_pack_span_profile(pack_usage)
+    call hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached_spans)
+    if (.not. loaded_cached_spans) call hydrate_payload_pack_span_profile(pack_usage)
     if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
     payload_hash = artifact_hash
     payload_hash = combine_positive_hash64(payload_hash, token_content_hash)
@@ -203,6 +205,7 @@ contains
     integer(i32)                 :: current_context_stage
     type(cuda_pack_usage_profile) :: pack_usage
     logical                      :: loaded_ok
+    logical                      :: loaded_cached_spans
     logical                      :: lineage_known
     logical                      :: has_pack_dependency
     type(c_ptr)                  :: workspace_buffer_local
@@ -238,7 +241,8 @@ contains
     artifact_hash = positive_hash64(trim(payload_text))
     call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
     call extract_payload_pack_usage_profile(payload_text, pack_usage)
-    call hydrate_payload_pack_span_profile(pack_usage)
+    call hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached_spans)
+    if (.not. loaded_cached_spans) call hydrate_payload_pack_span_profile(pack_usage)
     if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
     payload_hash = artifact_hash
     call extract_cuda_context_lineage(context_bytes, context_byte_count, current_context_stage, &
@@ -307,6 +311,15 @@ contains
       full_path = trim(cache_root) // "/" // trim(artifact_path)
     end if
   end function join_cache_root_with_payload_path
+
+  function build_pack_span_cache_artifact_path(artifact_path) result(cache_path)
+    character(len=*), intent(in) :: artifact_path
+    character(len=MAX_PATH_LEN)  :: cache_path
+
+    cache_path = ""
+    if (len_trim(artifact_path) == 0) return
+    write(cache_path, '(A,".spancache")') trim(artifact_path)
+  end function build_pack_span_cache_artifact_path
 
   integer(i64) function positive_hash64(text) result(hash_value)
     character(len=*), intent(in) :: text
@@ -587,6 +600,61 @@ contains
       if (actual_sample_bytes > 0_i64) pack_usage%entry_span_bytes(entry_index) = actual_sample_bytes
     end do
   end subroutine hydrate_payload_pack_span_profile
+
+  subroutine hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached)
+    character(len=*), intent(in)                 :: cache_root
+    character(len=*), intent(in)                 :: artifact_path
+    character(len=*), intent(in)                 :: payload_text
+    type(cuda_pack_usage_profile), intent(inout) :: pack_usage
+    logical, intent(out)                         :: loaded_cached
+    character(len=1024)                          :: cache_text
+    character(len=MAX_PATH_LEN)                  :: cache_path
+    character(len=64)                            :: key_text
+    character(len=64)                            :: value_text
+    integer(i32)                                 :: entry_index
+    integer(i64)                                 :: parsed_i64
+    logical                                      :: found_cache_path
+    logical                                      :: found_hash
+    logical                                      :: found_bytes
+    logical                                      :: loaded_ok
+    logical                                      :: required_entry_found
+
+    loaded_cached = .false.
+    if (len_trim(cache_root) == 0) return
+
+    cache_path = ""
+    call extract_payload_field_text(payload_text, "pack_span_cache=", cache_path, found_cache_path)
+    if (.not. found_cache_path) cache_path = build_pack_span_cache_artifact_path(artifact_path)
+    if (len_trim(cache_path) == 0) return
+
+    call load_cuda_artifact_payload(cache_root, trim(cache_path), cache_text, loaded_ok)
+    if (.not. loaded_ok) return
+    if (index(cache_text, "kind=cuda_pack_span_cache_v1") <= 0) return
+
+    required_entry_found = .false.
+    do entry_index = 1_i32, MAX_CUDA_PACK_DISPATCH_ENTRIES
+      if (len_trim(pack_usage%entry_span_paths(entry_index)) == 0) cycle
+      required_entry_found = .true.
+
+      write(key_text, '("entry",I0,"_hash=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_hash)
+      if (.not. found_hash) return
+      if (.not. parse_i64_text(value_text, parsed_i64)) return
+      if (parsed_i64 <= 0_i64) return
+      pack_usage%entry_span_hashes(entry_index) = parsed_i64
+
+      write(key_text, '("entry",I0,"_bytes=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_bytes)
+      if (found_bytes) then
+        if (.not. parse_i64_text(value_text, parsed_i64)) return
+        if (parsed_i64 > 0_i64) pack_usage%entry_span_bytes(entry_index) = parsed_i64
+      end if
+    end do
+
+    loaded_cached = required_entry_found
+  end subroutine hydrate_cached_pack_span_profile
 
   subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
     character(len=*), intent(in) :: usage_entry

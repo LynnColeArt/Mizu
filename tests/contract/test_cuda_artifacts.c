@@ -59,35 +59,57 @@ static int file_contains_substring(const char *path, const char *needle) {
     return 0;
 }
 
+static int overwrite_file_prefix(const char *path, const uint8_t *bytes, size_t byte_count) {
+    FILE *file = fopen(path, "r+b");
+    size_t bytes_written;
+
+    if (file == NULL) return 0;
+    bytes_written = fwrite(bytes, 1, byte_count, file);
+    fclose(file);
+    return bytes_written == byte_count;
+}
+
 int main(void) {
     mizu_runtime_t *runtime = NULL;
     mizu_runtime_t *runtime_warm = NULL;
+    mizu_runtime_t *runtime_fallback = NULL;
     mizu_model_t *model = NULL;
     mizu_model_t *model_warm = NULL;
+    mizu_model_t *model_fallback = NULL;
     mizu_session_t *session = NULL;
     mizu_session_t *session_warm = NULL;
+    mizu_session_t *session_fallback = NULL;
     mizu_status_code_t status;
     int command_status;
     int32_t tokens[3] = {11, 22, 33};
     uint8_t image_bytes[8] = {9, 8, 7, 6, 5, 4, 3, 2};
+    uint8_t mutated_prefix[64];
     int32_t decode_tokens[1] = {0};
     int32_t output_tokens[1] = {0};
     int32_t decode_tokens_warm[1] = {0};
     int32_t output_tokens_warm[1] = {0};
+    int32_t decode_tokens_fallback[1] = {0};
+    int32_t output_tokens_fallback[1] = {0};
     const char *persist_root = "/tmp/mizu_cuda_artifacts";
     const char *artifact_cache_path = "/tmp/mizu_cuda_artifacts/artifact_cache_v1.txt";
+    const char *fixture_source_root = "tests/fixtures/models/fixture_import_bundle_tiny";
     mizu_execution_report_t prefill_reports[2];
     mizu_execution_report_t prefill_reports_warm[2];
+    mizu_execution_report_t prefill_reports_fallback[2];
     mizu_execution_report_t decode_reports[1];
     mizu_execution_report_t decode_reports_warm[1];
+    mizu_execution_report_t decode_reports_fallback[1];
     mizu_execution_report_t park_reports[1];
     mizu_execution_report_t resume_reports[1];
     mizu_execution_report_t model_report;
     mizu_execution_report_t model_report_warm;
+    mizu_execution_report_t model_report_fallback;
     mizu_report_buffer_t prefill_buffer;
     mizu_report_buffer_t prefill_buffer_warm;
+    mizu_report_buffer_t prefill_buffer_fallback;
     mizu_report_buffer_t decode_buffer;
     mizu_report_buffer_t decode_buffer_warm;
+    mizu_report_buffer_t decode_buffer_fallback;
     mizu_report_buffer_t park_buffer;
     mizu_report_buffer_t resume_buffer;
     mizu_runtime_config_t runtime_config;
@@ -95,25 +117,43 @@ int main(void) {
     mizu_session_config_t session_config;
     mizu_session_info_t session_info;
     mizu_session_info_t session_info_warm;
+    mizu_session_info_t session_info_fallback;
     mizu_modal_input_desc_t modal_input;
     mizu_decode_options_t decode_options;
     mizu_decode_result_t decode_result;
     mizu_decode_result_t decode_result_warm;
+    mizu_decode_result_t decode_result_fallback;
     mizu_output_buffer_t output_buffer;
     mizu_output_buffer_t output_buffer_warm;
+    mizu_output_buffer_t output_buffer_fallback;
+    char command_buffer[2048];
+    char fixture_runtime_root[512];
+    char fixture_bundle_root[640];
+    char mutated_weight_path[768];
     memset(prefill_reports, 0, sizeof(prefill_reports));
     memset(prefill_reports_warm, 0, sizeof(prefill_reports_warm));
+    memset(prefill_reports_fallback, 0, sizeof(prefill_reports_fallback));
     memset(decode_reports, 0, sizeof(decode_reports));
     memset(decode_reports_warm, 0, sizeof(decode_reports_warm));
+    memset(decode_reports_fallback, 0, sizeof(decode_reports_fallback));
     memset(park_reports, 0, sizeof(park_reports));
     memset(resume_reports, 0, sizeof(resume_reports));
     memset(&model_report, 0, sizeof(model_report));
     memset(&model_report_warm, 0, sizeof(model_report_warm));
+    memset(&model_report_fallback, 0, sizeof(model_report_fallback));
     memset(&session_info, 0, sizeof(session_info));
     memset(&session_info_warm, 0, sizeof(session_info_warm));
+    memset(&session_info_fallback, 0, sizeof(session_info_fallback));
 
     command_status = system("rm -rf /tmp/mizu_cuda_artifacts && mkdir -p /tmp/mizu_cuda_artifacts");
     if (!expect_true("cuda persist root setup should succeed", command_status == 0)) return 1;
+
+    snprintf(fixture_runtime_root, sizeof(fixture_runtime_root), "%s/runtime_fixture_model", persist_root);
+    snprintf(fixture_bundle_root, sizeof(fixture_bundle_root), "%s/mizu_import", fixture_runtime_root);
+    snprintf(mutated_weight_path, sizeof(mutated_weight_path), "%s/weights/token_embeddings.bin", fixture_bundle_root);
+    snprintf(command_buffer, sizeof(command_buffer), "cp -R %s %s", fixture_source_root, fixture_runtime_root);
+    command_status = system(command_buffer);
+    if (!expect_true("cuda fixture model copy should succeed", command_status == 0)) return 1;
 
     if (setenv("MIZU_FORCE_CUDA_AVAILABLE", "1", 1) != 0) {
         fprintf(stderr, "failed to set MIZU_FORCE_CUDA_AVAILABLE\n");
@@ -132,7 +172,7 @@ int main(void) {
 
     model_config.struct_size = sizeof(model_config);
     model_config.abi_version = mizu_get_abi_version();
-    model_config.model_root_z = "tests/fixtures/models/fixture_import_bundle_tiny";
+    model_config.model_root_z = fixture_runtime_root;
     model_config.allowed_backend_mask = MIZU_BACKEND_MASK_CUDA;
     model_config.model_flags = MIZU_MODEL_FLAG_NONE;
 
@@ -380,10 +420,15 @@ int main(void) {
     if (!expect_true("cuda prefill artifact should retain the expected compact dispatch count", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_dispatch1=offset=0|bytes=1089994752|role=1|layout=1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain the first compact dispatch entry", command_status == 0)) return 1;
-    command_status = system("grep -R \"pack_span_root=tests/fixtures/models/fixture_import_bundle_tiny/mizu_import\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    snprintf(command_buffer, sizeof(command_buffer),
+             "grep -R \"pack_span_root=%s/mizu_import\" %s/artifacts/cuda/cuda/plans/prefill >/dev/null",
+             fixture_runtime_root, persist_root);
+    command_status = system(command_buffer);
     if (!expect_true("cuda prefill artifact should retain the imported bundle root for tensor spans", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_span1=weights/token_embeddings.bin|sample_bytes=64\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain the first imported tensor-span record", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_span_cache=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain a span-cache sidecar reference", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use1=token_embeddings|embedding_table|offset=0|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain the first prefill tensor-usage entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
@@ -396,10 +441,24 @@ int main(void) {
     if (!expect_true("cuda decode artifact should retain the final compact dispatch entry", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_span4=weights/lm_head.bin|sample_bytes=64\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should retain the final imported tensor-span record", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_span_cache=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should retain a span-cache sidecar reference", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use4=lm_head|token_projection|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should retain the final decode tensor-usage entry", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' | grep -q .");
+    if (!expect_true("cuda span-cache sidecar should exist", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"kind=cuda_pack_span_cache_v1\" {} +");
+    if (!expect_true("cuda span-cache sidecar should store the expected format marker", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/sessions -type f | grep -q .");
     if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
+
+    for (size_t byte_index = 0; byte_index < sizeof(mutated_prefix); ++byte_index) {
+        mutated_prefix[byte_index] = (uint8_t)(0xF0u - (uint8_t)byte_index);
+    }
+    if (!expect_true("cuda imported tensor span mutation should succeed",
+                     overwrite_file_prefix(mutated_weight_path, mutated_prefix, sizeof(mutated_prefix)))) {
+        return 1;
+    }
 
     status = mizu_runtime_create(&runtime_config, &runtime_warm);
     if (!expect_status("cuda warm runtime create", status, MIZU_STATUS_OK)) return 1;
@@ -497,6 +556,87 @@ int main(void) {
     if (!expect_status("cuda warm model close", status, MIZU_STATUS_OK)) return 1;
     status = mizu_runtime_destroy(runtime_warm);
     if (!expect_status("cuda warm runtime destroy", status, MIZU_STATUS_OK)) return 1;
+    runtime_warm = NULL;
+    model_warm = NULL;
+    session_warm = NULL;
+
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -delete");
+    if (!expect_true("cuda span-cache sidecar removal should succeed", command_status == 0)) return 1;
+
+    status = mizu_runtime_create(&runtime_config, &runtime_fallback);
+    if (!expect_status("cuda fallback runtime create", status, MIZU_STATUS_OK)) return 1;
+    status = mizu_model_open(runtime_fallback, &model_config, &model_fallback);
+    if (!expect_status("cuda fallback model open", status, MIZU_STATUS_OK)) return 1;
+    status = mizu_model_get_last_report(model_fallback, &model_report_fallback);
+    if (!expect_status("cuda fallback model report", status, MIZU_STATUS_OK)) return 1;
+    if (!expect_true("cuda fallback model load should still hit weight cache",
+                     (model_report_fallback.cache_flags & MIZU_CACHE_FLAG_WEIGHT_HIT) != 0)) {
+        return 1;
+    }
+
+    status = mizu_session_open(model_fallback, &session_config, &session_fallback);
+    if (!expect_status("cuda fallback session open", status, MIZU_STATUS_OK)) return 1;
+    status = mizu_session_attach_tokens(session_fallback, tokens, 3, MIZU_ATTACH_FLAG_NONE);
+    if (!expect_status("cuda fallback attach tokens", status, MIZU_STATUS_OK)) return 1;
+    status = mizu_session_attach_modal_input(session_fallback, &modal_input);
+    if (!expect_status("cuda fallback attach modal", status, MIZU_STATUS_OK)) return 1;
+
+    prefill_buffer_fallback.struct_size = sizeof(prefill_buffer_fallback);
+    prefill_buffer_fallback.reports = prefill_reports_fallback;
+    prefill_buffer_fallback.report_capacity = 2;
+    prefill_buffer_fallback.report_count = 0;
+
+    status = mizu_session_prefill(session_fallback, &prefill_buffer_fallback);
+    if (!expect_status("cuda fallback prefill", status, MIZU_STATUS_OK)) return 1;
+    status = mizu_session_get_info(session_fallback, &session_info_fallback);
+    if (!expect_status("cuda fallback session info after prefill", status, MIZU_STATUS_OK)) return 1;
+    if (!expect_i64("cuda fallback session should advance kv count after prefill", session_info_fallback.kv_token_count, 3)) {
+        return 1;
+    }
+
+    decode_result_fallback.struct_size = sizeof(decode_result_fallback);
+    decode_result_fallback.token_buffer = decode_tokens_fallback;
+    decode_result_fallback.token_capacity = 1;
+    decode_result_fallback.token_count = 0;
+    decode_result_fallback.stop_reason = MIZU_STOP_REASON_NONE;
+    decode_result_fallback.result_flags = 0;
+
+    output_buffer_fallback.struct_size = sizeof(output_buffer_fallback);
+    output_buffer_fallback.output_kind = MIZU_OUTPUT_KIND_TOKEN_IDS;
+    output_buffer_fallback.data = output_tokens_fallback;
+    output_buffer_fallback.byte_capacity = sizeof(output_tokens_fallback);
+    output_buffer_fallback.bytes_written = 0;
+    output_buffer_fallback.output_flags = 0;
+
+    decode_buffer_fallback.struct_size = sizeof(decode_buffer_fallback);
+    decode_buffer_fallback.reports = decode_reports_fallback;
+    decode_buffer_fallback.report_capacity = 1;
+    decode_buffer_fallback.report_count = 0;
+
+    status = mizu_session_decode_step(session_fallback, &decode_options, &decode_result_fallback,
+                                      &decode_buffer_fallback);
+    if (!expect_status("cuda fallback decode", status, MIZU_STATUS_OK)) return 1;
+    status = mizu_session_read_output(session_fallback, &output_buffer_fallback);
+    if (!expect_status("cuda fallback read output", status, MIZU_STATUS_OK)) return 1;
+    if (!expect_true("cuda fallback output should match fallback decode token",
+                     output_tokens_fallback[0] == decode_tokens_fallback[0])) {
+        return 1;
+    }
+
+    park_buffer.struct_size = sizeof(park_buffer);
+    park_buffer.reports = park_reports;
+    park_buffer.report_capacity = 1;
+    park_buffer.report_count = 0;
+
+    status = mizu_session_park(session_fallback, &park_buffer);
+    if (!expect_status("cuda fallback park", status, MIZU_STATUS_OK)) return 1;
+
+    status = mizu_session_close(session_fallback);
+    if (!expect_status("cuda fallback session close", status, MIZU_STATUS_OK)) return 1;
+    status = mizu_model_close(model_fallback);
+    if (!expect_status("cuda fallback model close", status, MIZU_STATUS_OK)) return 1;
+    status = mizu_runtime_destroy(runtime_fallback);
+    if (!expect_status("cuda fallback runtime destroy", status, MIZU_STATUS_OK)) return 1;
 
     command_status = system("rm -rf /tmp/mizu_cuda_artifacts");
     if (!expect_true("cuda persist root cleanup should succeed", command_status == 0)) return 1;
