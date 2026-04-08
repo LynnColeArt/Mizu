@@ -106,8 +106,9 @@ bodies.
     layout records for row counts, lane counts, head blocks, and generations
   - validates repeated CUDA decode steps preserve layout for untouched pages and
     advance generation only on the decode-owned page
-  - validates CUDA decode execution produces a deterministic token from a
-    materialized decode payload and varies with direct context-buffer identity
+  - validates CUDA projector and decode execution now match exact deterministic
+    reference outputs for the current fixture path
+  - validates CUDA decode execution varies with direct context-buffer identity
   - validates CUDA decode rejects a context produced by a different decode
     artifact, even when the route stays the same
   - validates CUDA decode rejects a corrupted context payload instead of

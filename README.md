@@ -77,6 +77,9 @@ Current implementation status:
 - one narrow multimodal CUDA flow is now validated end to end through the
   public API, including session-state transitions, output readback,
   `park`/`resume`, and fresh-runtime warm reuse against persisted cache state
+- that same narrow CUDA path now has deterministic reference-output checks in
+  both unit and public-path tests, so exact projector/decode outputs are
+  locked instead of only being compared for reproducibility
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran

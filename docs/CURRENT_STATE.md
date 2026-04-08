@@ -4,15 +4,15 @@ Last updated: 2026-04-07
 
 ## Latest Checkpoint
 
-- latest published baseline before this slice: `b5deebd` (`Document CUDA
-  tensor descriptor checkpoint`)
-- current milestone: one narrow multimodal CUDA flow is now validated end to
-  end through the public API, including session-state transitions, output
-  readback, `park`/`resume`, and fresh-runtime warm reuse against persisted
-  cache state
-- immediate next target: add reference-output checks where feasible, compare
-  API-level parity against Apple, or replace more of the compact key/value
-  lane image with a less synthetic tensor-backed page payload
+- latest published baseline before this slice: `10c8ead` (`Document multimodal
+  CUDA flow validation`)
+- current milestone: the narrow multimodal CUDA flow now has deterministic
+  reference-output checks in both unit and public-path tests, so exact
+  projector/decode outputs are locked instead of only being compared for
+  reproducibility
+- immediate next target: compare API-level parity against Apple, or replace
+  more of the compact key/value lane image with a less synthetic tensor-backed
+  page payload
 
 ## Roadmap Status
 
@@ -153,6 +153,12 @@ In short:
   - park and resume session state through a persisted checkpoint artifact
   - reopen a fresh runtime and confirm warm cache reuse plus token
     reproducibility for the same multimodal staged context
+- the current CUDA unit and contract suites now also lock exact deterministic
+  reference outputs for that narrow path:
+  - projector embedding count on the executor fixture
+  - decode-token sequence across repeated executor steps
+  - alternate-context decode token divergence
+  - public API decode token for the narrow multimodal fixture
 
 ### Self-Optimization
 
@@ -323,6 +329,9 @@ In short:
 - the end-to-end multimodal CUDA contract coverage proves lifecycle and cache
   reuse behavior, but it still validates placeholder execution paths rather
   than true model outputs
+- the new reference-output checks lock current placeholder behavior
+  intentionally; when the backend math becomes more real, these expectations
+  should evolve with the implementation instead of being treated as model truth
 - Apple ANE detection is still conservative and scaffold-level; it currently
   relies on an explicit environment override instead of validated hardware
   probing

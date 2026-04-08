@@ -258,7 +258,7 @@ These are the highest-leverage next tasks.
   decode window overflow
 - [x] Validate one target multimodal flow on CUDA
 - [ ] Compare API-level parity against Apple
-- [ ] Add reference-output checks where feasible
+- [x] Add reference-output checks where feasible
 
 ## Phase 6: Cache Hierarchy and Self-Optimization
 
