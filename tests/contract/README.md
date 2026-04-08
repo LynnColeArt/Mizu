@@ -45,6 +45,8 @@ These suites cover the `API-C*` portion of
     `pack_dispatch*` records for the first selected packed tensors
   - verifies CUDA prefill and decode artifacts now also retain importer-rooted
     `pack_span*` records for the first selected packed tensors
+  - verifies CUDA prefill and decode artifacts now also retain `pack_span_cache`
+    references to persisted `.spancache` sidecars under `cache_root`
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
   - verifies session-state transitions across staging, prefill, decode,
     `park`, and `resume`
@@ -58,6 +60,12 @@ These suites cover the `API-C*` portion of
     matches the stored route and producer lineage expectations
   - verifies a fresh runtime can replay the same narrow multimodal CUDA flow
     with warm cache reuse and reproduce the same decode token
+  - verifies that warm replay still reproduces the same decode token even
+    after imported tensor bytes are mutated, as long as the persisted
+    `.spancache` sidecars are present
+  - verifies the same public CUDA flow still executes cleanly after those
+    `.spancache` sidecars are removed, exercising the direct importer-span
+    fallback path
   - verifies that narrow public CUDA flow emits a stable positive placeholder
     token and reproduces it for the same staged multimodal context
 - `test_go_binding_smoke.go`

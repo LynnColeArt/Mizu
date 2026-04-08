@@ -125,6 +125,10 @@ Current implementation status:
   `pack_span*` records, and the CUDA executor now resolves those bundle files,
   hashes real sampled span bytes plus source paths, and feeds that span data
   into both the real CUDA bridge and the CPU stub
+- CUDA prefill and decode plan artifacts now also materialize tiny
+  `.spancache` sidecars under `cache_root`, and the executor prefers those
+  cached span hashes/byte counts on warm runs before falling back to importer
+  bundle reads
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside payload

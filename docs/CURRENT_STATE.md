@@ -36,6 +36,10 @@ Last updated: 2026-04-08
   executor now resolves those bundle files, hashes real sampled span bytes plus
   source paths, and feeds that span data into both the real CUDA bridge and
   the CPU stub
+- CUDA prefill and decode plan artifacts now also materialize tiny
+  `.spancache` sidecars under `cache_root`, and the CUDA executor now prefers
+  those cached span hashes and sample-byte counts on warm runs before falling
+  back to importer bundle reads
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact
@@ -276,6 +280,10 @@ In short:
   and the CUDA executor now resolves those bundle files directly so bridge
   execution depends on sampled imported tensor spans instead of only artifact
   text and numeric dispatch identity
+- those same CUDA prefill and decode plans now also materialize tiny
+  `.spancache` sidecars under `cache_root`, and the CUDA executor prefers
+  those persisted span hashes plus sample-byte counts on warm runs before
+  falling back to importer bundle reads
 - CUDA live-context payloads now also retain an explicit pack-usage snapshot
   with usage hash, byte total, and first/last packed tensor spans, so session
   state carries selected imported tensor profile data directly
