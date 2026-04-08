@@ -2019,6 +2019,7 @@ contains
     else if (stage_kind == MIZU_STAGE_PROJECTOR .or. stage_kind == MIZU_STAGE_PREFILL .or. &
              stage_kind == MIZU_STAGE_DECODE) then
       call append_import_weight_pack_dependency_payload(payload_text, model)
+      call append_import_stage_pack_usage_payload(payload_text, stage_kind, model)
     end if
 
     if (stage_kind == MIZU_STAGE_MODEL_LOAD .or. stage_kind == MIZU_STAGE_PROJECTOR) then
@@ -2114,6 +2115,171 @@ contains
     write(field_text, '(";pack_ref_bytes=",I0)') model%import_weight_pack_bytes
     call append_payload_fragment(payload_text, trim(field_text))
   end subroutine append_import_weight_pack_dependency_payload
+
+  subroutine append_import_stage_pack_usage_payload(payload_text, stage_kind, model)
+    character(len=*), intent(inout) :: payload_text
+    integer(i32), intent(in)        :: stage_kind
+    type(model_state), intent(in)   :: model
+    character(len=MAX_PATH_LEN + 160) :: field_text
+    character(len=MAX_NAME_LEN)       :: usage_kind
+    integer(i32)                      :: tensor_index
+    integer(i32)                      :: usage_index
+    integer(i64)                      :: tensor_bytes
+    integer(i64)                      :: pack_offset
+    integer(i64)                      :: usage_hash
+    integer(i64)                      :: usage_total_bytes
+
+    if (.not. allocated(model%import_tensors)) return
+    usage_kind = stage_pack_usage_kind_token(stage_kind)
+    if (len_trim(usage_kind) == 0) return
+
+    field_text = ""
+    write(field_text, '(";pack_use_kind=",A)') trim(usage_kind)
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    usage_index = 0_i32
+    usage_hash = 0_i64
+    usage_total_bytes = 0_i64
+    pack_offset = 0_i64
+
+    do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
+      if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
+
+      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
+        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      if (tensor_bytes <= 0_i64) cycle
+
+      if (import_stage_uses_tensor(stage_kind, model%import_tensors(tensor_index))) then
+        usage_index = usage_index + 1_i32
+        usage_total_bytes = usage_total_bytes + tensor_bytes
+        field_text = ""
+        write(field_text, '(";pack_use",I0,"=",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+          usage_index, trim(model%import_tensors(tensor_index)%tensor_name), &
+          trim(model%import_tensors(tensor_index)%tensor_role), pack_offset, tensor_bytes, &
+          trim(model%import_tensors(tensor_index)%layout_name)
+        call append_payload_fragment(payload_text, trim(field_text))
+        usage_hash = ieor(usage_hash, hash_text64(trim(field_text)))
+      end if
+
+      pack_offset = align_import_bytes(pack_offset + tensor_bytes)
+    end do
+
+    if (usage_index > 0_i32 .and. usage_hash == 0_i64) then
+      usage_hash = hash_text64(trim(usage_kind) // ":" // trim(model%source_model_id))
+    end if
+
+    field_text = ""
+    write(field_text, '(";pack_use_count=",I0)') usage_index
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_use_bytes=",I0)') usage_total_bytes
+    call append_payload_fragment(payload_text, trim(field_text))
+
+    field_text = ""
+    write(field_text, '(";pack_use_hash=",Z16.16)') usage_hash
+    call append_payload_fragment(payload_text, trim(field_text))
+  end subroutine append_import_stage_pack_usage_payload
+
+  function append_import_stage_usage_identity(base_key_text, stage_kind, model) result(key_text)
+    character(len=*), intent(in) :: base_key_text
+    integer(i32), intent(in)     :: stage_kind
+    type(model_state), intent(in) :: model
+    character(len=MAX_CACHE_KEY_LEN) :: key_text
+    integer(i32)                    :: usage_count
+    integer(i64)                    :: usage_bytes
+    integer(i64)                    :: usage_hash
+
+    key_text = ""
+    if (len_trim(base_key_text) == 0) return
+
+    call summarize_import_stage_usage(stage_kind, model, usage_hash, usage_count, usage_bytes)
+    if (usage_count <= 0_i32) then
+      key_text = trim(base_key_text)
+      return
+    end if
+
+    write(key_text, '(A,":usehash=",Z16.16,":usecount=",I0,":usebytes=",I0)') trim(base_key_text), &
+      usage_hash, usage_count, usage_bytes
+  end function append_import_stage_usage_identity
+
+  subroutine summarize_import_stage_usage(stage_kind, model, usage_hash, usage_count, usage_bytes)
+    integer(i32), intent(in)      :: stage_kind
+    type(model_state), intent(in) :: model
+    integer(i64), intent(out)     :: usage_hash
+    integer(i32), intent(out)     :: usage_count
+    integer(i64), intent(out)     :: usage_bytes
+    character(len=MAX_PATH_LEN + 160) :: usage_entry
+    integer(i32)                    :: tensor_index
+    integer(i64)                    :: tensor_bytes
+    integer(i64)                    :: pack_offset
+
+    usage_hash = 0_i64
+    usage_count = 0_i32
+    usage_bytes = 0_i64
+    if (.not. allocated(model%import_tensors)) return
+
+    pack_offset = 0_i64
+    do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
+      if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
+
+      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
+        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      if (tensor_bytes <= 0_i64) cycle
+
+      if (import_stage_uses_tensor(stage_kind, model%import_tensors(tensor_index))) then
+        usage_count = usage_count + 1_i32
+        usage_bytes = usage_bytes + tensor_bytes
+        usage_entry = ""
+        write(usage_entry, '(A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+          trim(model%import_tensors(tensor_index)%tensor_name), &
+          trim(model%import_tensors(tensor_index)%tensor_role), pack_offset, tensor_bytes, &
+          trim(model%import_tensors(tensor_index)%layout_name)
+        usage_hash = ieor(usage_hash, hash_text64(trim(usage_entry)))
+      end if
+
+      pack_offset = align_import_bytes(pack_offset + tensor_bytes)
+    end do
+
+    if (usage_count > 0_i32 .and. usage_hash == 0_i64) then
+      usage_hash = hash_text64(trim(stage_pack_usage_kind_token(stage_kind)) // ":" // trim(model%source_model_id))
+    end if
+  end subroutine summarize_import_stage_usage
+
+  function stage_pack_usage_kind_token(stage_kind) result(kind_token)
+    integer(i32), intent(in)    :: stage_kind
+    character(len=MAX_NAME_LEN) :: kind_token
+
+    kind_token = ""
+    select case (stage_kind)
+    case (MIZU_STAGE_PREFILL)
+      kind_token = "cuda_prefill_pack_usage_v1"
+    case (MIZU_STAGE_DECODE)
+      kind_token = "cuda_decode_pack_usage_v1"
+    case default
+      kind_token = ""
+    end select
+  end function stage_pack_usage_kind_token
+
+  pure logical function import_stage_uses_tensor(stage_kind, import_tensor) result(is_used)
+    integer(i32), intent(in)         :: stage_kind
+    type(import_tensor_state), intent(in) :: import_tensor
+    character(len=MAX_NAME_LEN)      :: tensor_role
+
+    tensor_role = trim(import_tensor%tensor_role)
+    is_used = .false.
+
+    select case (trim(tensor_role))
+    case ("embedding_table")
+      is_used = (stage_kind == MIZU_STAGE_PREFILL .or. stage_kind == MIZU_STAGE_DECODE)
+    case ("decoder_stack", "normalization")
+      is_used = (stage_kind == MIZU_STAGE_PREFILL .or. stage_kind == MIZU_STAGE_DECODE)
+    case ("token_projection")
+      is_used = (stage_kind == MIZU_STAGE_DECODE)
+    case default
+      is_used = .false.
+    end select
+  end function import_stage_uses_tensor
 
   pure logical function import_tensor_belongs_to_projector(import_tensor, model) result(is_projector_tensor)
     type(import_tensor_state), intent(in) :: import_tensor
@@ -2673,12 +2839,14 @@ contains
     optimization_key_text = append_allowed_mask_identity(trim(optimization_key%key_text), &
       model%info%allowed_backend_mask)
     optimization_key_text = append_import_pack_identity(trim(optimization_key_text), model)
+    optimization_key_text = append_import_stage_usage_identity(trim(optimization_key_text), stage_kind, model)
 
     do candidate_index = 1_i32, candidate_count
       call build_plan_cache_key(manifest, "unbound", "logical", stage_kind, &
         candidate_backend_families(candidate_index), candidate_execution_routes(candidate_index), &
         MIZU_DTYPE_BF16, 3_i32, shape, candidate_key)
       candidate_key_text = append_import_pack_identity(trim(candidate_key%key_text), model)
+      candidate_key_text = append_import_stage_usage_identity(trim(candidate_key_text), stage_kind, model)
       candidate_plan_ids(candidate_index) = hash_text64(trim(candidate_key_text))
       candidate_key_texts(candidate_index) = trim(candidate_key_text)
     end do

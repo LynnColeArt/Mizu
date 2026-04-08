@@ -370,8 +370,22 @@ int main(void) {
     if (!expect_true("cuda prefill artifact file should exist", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_ref_bytes=2205693952\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain the packed tensor byte dependency", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_use_kind=cuda_prefill_pack_usage_v1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain a prefill tensor-usage record", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_use_count=3\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain the expected prefill tensor-usage count", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_use_bytes=1115699200\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain the expected prefill tensor-usage bytes", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_use1=token_embeddings|embedding_table|offset=0|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain the first prefill tensor-usage entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
     if (!expect_true("cuda decode artifact file should exist", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_use_kind=cuda_decode_pack_usage_v1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should retain a decode tensor-usage record", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_use_count=4\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should retain the expected decode tensor-usage count", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_use4=lm_head|token_projection|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should retain the final decode tensor-usage entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/sessions -type f | grep -q .");
     if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
 

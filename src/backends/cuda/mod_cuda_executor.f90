@@ -299,18 +299,30 @@ contains
     logical, intent(out)         :: has_dependency
     character(len=64)            :: pack_hash_text
     character(len=64)            :: pack_bytes_text
+    character(len=64)            :: pack_use_hash_text
+    character(len=64)            :: pack_use_bytes_text
+    character(len=64)            :: pack_use_count_text
     logical                      :: found_hash
     logical                      :: found_bytes
+    logical                      :: found_use_hash
+    logical                      :: found_use_bytes
+    logical                      :: found_use_count
 
     dependency_hash = 0_i64
     has_dependency = .false.
     pack_hash_text = ""
     pack_bytes_text = ""
+    pack_use_hash_text = ""
+    pack_use_bytes_text = ""
+    pack_use_count_text = ""
 
     call extract_payload_field_text(payload_text, "pack_ref_hash=", pack_hash_text, found_hash)
     if (.not. found_hash) call extract_payload_field_text(payload_text, "weight_pack_hash=", pack_hash_text, found_hash)
     call extract_payload_field_text(payload_text, "pack_ref_bytes=", pack_bytes_text, found_bytes)
     if (.not. found_bytes) call extract_payload_field_text(payload_text, "weight_pack_bytes=", pack_bytes_text, found_bytes)
+    call extract_payload_field_text(payload_text, "pack_use_hash=", pack_use_hash_text, found_use_hash)
+    call extract_payload_field_text(payload_text, "pack_use_bytes=", pack_use_bytes_text, found_use_bytes)
+    call extract_payload_field_text(payload_text, "pack_use_count=", pack_use_count_text, found_use_count)
 
     if (found_hash) then
       dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_hash_text)))
@@ -318,6 +330,18 @@ contains
     end if
     if (found_bytes) then
       dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_bytes_text)))
+      has_dependency = .true.
+    end if
+    if (found_use_hash) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_use_hash_text)))
+      has_dependency = .true.
+    end if
+    if (found_use_bytes) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_use_bytes_text)))
+      has_dependency = .true.
+    end if
+    if (found_use_count) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_use_count_text)))
       has_dependency = .true.
     end if
   end subroutine extract_payload_pack_dependency_hash
