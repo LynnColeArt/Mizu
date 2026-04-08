@@ -34,6 +34,8 @@ These suites cover the `API-C*` portion of
   - verifies CUDA artifact payload files are materialized under `cache_root`
   - verifies those materialized CUDA weight and projector artifacts retain
     imported `mizu_import/` source-path lineage
+  - verifies the CUDA weight artifact now carries a deterministic import-driven
+    pack table with exact packed tensor count, byte total, and stable offsets
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
   - verifies session-state transitions across staging, prefill, decode,
     `park`, and `resume`

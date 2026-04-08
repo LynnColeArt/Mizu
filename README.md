@@ -106,6 +106,9 @@ Current implementation status:
 - imported tensor shapes and dtypes now also produce byte-budget estimates on
   the runtime model state, and those estimates feed backend artifact payloads
   plus weight/projector workspace hints
+- CUDA model-load artifacts now go one step further and materialize a narrow
+  import-driven weight-pack record with deterministic per-tensor offsets and
+  packed-byte totals derived from the imported tensor inventory
 - the narrow public CUDA flow now checks stable positive placeholder output plus
   warm-path reproducibility for the same multimodal staged context, while the
   unit suite still pins exact deterministic executor outputs per bridge variant

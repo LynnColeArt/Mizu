@@ -15,6 +15,9 @@ Last updated: 2026-04-08
 - imported tensor shapes and dtypes now also fold into runtime byte-budget
   estimates for model and projector assets, and those estimates now feed
   materialized artifact payloads plus backend workspace hints
+- CUDA model-load artifact materialization now uses the imported tensor
+  inventory directly to emit a narrow weight-pack layout with deterministic
+  packed offsets and packed-byte totals for non-projector tensors
 - immediate next target: map real Qwen and Gemma assets into this bundle shape
   and use that imported inventory in the first less-placeholder CUDA execution
   path

@@ -134,6 +134,7 @@ These are the highest-leverage next tasks.
 - [x] Retain imported inventory lineage on runtime model state
 - [x] Emit imported tensor and projector lineage into materialized backend artifacts
 - [x] Derive imported byte-budget hints for backend artifact materialization
+- [x] Materialize a deterministic CUDA import-driven weight-pack layout
 
 ## Phase 3: Runtime Skeleton
 
