@@ -38,6 +38,9 @@ These suites cover the `API-C*` portion of
     pack table with exact packed tensor count, byte total, and stable offsets
   - verifies CUDA projector and prefill artifacts now retain explicit
     dependency on that packed model layout
+  - verifies CUDA prefill and decode artifacts now retain stage-specific
+    `pack_use_*` records with selected imported tensor names, offsets, and
+    byte spans
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
   - verifies session-state transitions across staging, prefill, decode,
     `park`, and `resume`

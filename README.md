@@ -113,6 +113,10 @@ Current implementation status:
   packed layout through `pack_ref_*` metadata, and CUDA execution now reads
   that dependency back instead of treating the artifact payload as an opaque
   stage-only blob
+- CUDA prefill and decode artifacts now also carry stage-specific
+  `pack_use_*` records that name the exact imported tensors selected from the
+  packed layout, and CUDA execution now reads those usage summaries back into
+  its placeholder execution identity
 - the narrow public CUDA flow now checks stable positive placeholder output plus
   warm-path reproducibility for the same multimodal staged context, while the
   unit suite still pins exact deterministic executor outputs per bridge variant

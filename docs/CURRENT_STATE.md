@@ -22,9 +22,13 @@ Last updated: 2026-04-08
   cache identity plus artifact payload dependencies, so those stage artifacts
   rotate when the packed model layout changes and the CUDA executor now reads
   the declared pack dependency back into its placeholder execution identity
+- CUDA prefill and decode artifact materialization now also emits
+  stage-specific `pack_use_*` records with exact imported tensor names, roles,
+  packed offsets, and byte spans for the tensors each stage declares it uses,
+  and those usage records now feed plan identity plus CUDA placeholder
+  execution identity
 - immediate next target: map real Qwen and Gemma assets into this bundle shape
-  and use that imported inventory in the first less-placeholder CUDA execution
-  path
+  and use that imported inventory in a more structural CUDA execution path
 
 ## Roadmap Status
 
@@ -242,6 +246,10 @@ In short:
 - CUDA-selected projector, prefill, and decode stages now execute through a
   backend-owned CUDA bridge that launches minimal real kernels on NVIDIA
   hardware
+- CUDA weight, projector, prefill, and decode artifact payloads now retain
+  imported pack dependency lineage, and prefill/decode now also retain
+  stage-specific `pack_use_*` usage records that name the exact imported
+  tensors selected from the packed layout
 - CUDA placeholder projector and prefill execution now incorporate staged-input
   content hashes instead of relying on counts alone
 - CUDA prefill now also receives copied staged token buffers and modal byte
