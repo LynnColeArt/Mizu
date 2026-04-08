@@ -12,6 +12,9 @@ Last updated: 2026-04-08
 - imported tensor and projector lineage is now retained on `model_state`, so
   materialized backend artifacts can carry real imported source-path identity
   instead of only generic stage/shape metadata
+- imported tensor shapes and dtypes now also fold into runtime byte-budget
+  estimates for model and projector assets, and those estimates now feed
+  materialized artifact payloads plus backend workspace hints
 - immediate next target: map real Qwen and Gemma assets into this bundle shape
   and use that imported inventory in the first less-placeholder CUDA execution
   path

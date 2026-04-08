@@ -103,6 +103,9 @@ Current implementation status:
 - imported `mizu_import/` bundle lineage is now retained on the runtime model
   state and emitted into route-specific CUDA and Apple artifact payloads, so
   weight and projector artifacts now carry real imported source-path identity
+- imported tensor shapes and dtypes now also produce byte-budget estimates on
+  the runtime model state, and those estimates feed backend artifact payloads
+  plus weight/projector workspace hints
 - the narrow public CUDA flow now checks stable positive placeholder output plus
   warm-path reproducibility for the same multimodal staged context, while the
   unit suite still pins exact deterministic executor outputs per bridge variant
