@@ -128,8 +128,16 @@ static int is_binary_sidecar_redundant_fragment(const char *fragment) {
     if (fragment_has_indexed_prefix(fragment, "pack_dispatch")) return 1;
     if (fragment_has_indexed_prefix(fragment, "pack_span")) return 1;
 
+    if (strncmp(fragment, "pack_use_hash=", 14) == 0) return 1;
     if (strncmp(fragment, "pack_use_kind=", 14) == 0) return 1;
+    if (strncmp(fragment, "pack_use_bytes=", 15) == 0) return 1;
+    if (strncmp(fragment, "pack_use_count=", 15) == 0) return 1;
+    if (strncmp(fragment, "pack_use_first_offset=", 22) == 0) return 1;
+    if (strncmp(fragment, "pack_use_last_offset=", 21) == 0) return 1;
+    if (strncmp(fragment, "pack_use_last_bytes=", 20) == 0) return 1;
+    if (strncmp(fragment, "pack_dispatch_hash=", 19) == 0) return 1;
     if (strncmp(fragment, "pack_dispatch_kind=", 19) == 0) return 1;
+    if (strncmp(fragment, "pack_dispatch_count=", 20) == 0) return 1;
 
     return 0;
 }
@@ -695,8 +703,22 @@ int main(void) {
                      !file_contains_substring(decode_plan_path, "pack_use4="))) {
         return 1;
     }
+    if (!expect_true("cuda binary-only decode plan should drop textual usage summary fields",
+                     !file_contains_substring(decode_plan_path, "pack_use_count=") &&
+                     !file_contains_substring(decode_plan_path, "pack_use_bytes=") &&
+                     !file_contains_substring(decode_plan_path, "pack_use_hash=") &&
+                     !file_contains_substring(decode_plan_path, "pack_use_first_offset=") &&
+                     !file_contains_substring(decode_plan_path, "pack_use_last_offset=") &&
+                     !file_contains_substring(decode_plan_path, "pack_use_last_bytes="))) {
+        return 1;
+    }
     if (!expect_true("cuda binary-only decode plan should drop textual dispatch markers",
                      !file_contains_substring(decode_plan_path, "pack_dispatch_kind="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual dispatch summary fields",
+                     !file_contains_substring(decode_plan_path, "pack_dispatch_hash=") &&
+                     !file_contains_substring(decode_plan_path, "pack_dispatch_count="))) {
         return 1;
     }
     if (!expect_true("cuda binary-only decode plan should drop textual per-entry dispatch records",

@@ -3663,7 +3663,7 @@ contains
     field_text = ""
     call extract_payload_field_text_cache(payload_text, "pack_use_hash=", field_text, found_usage_hash)
     if (found_usage_hash) then
-      if (.not. parse_i64_text_cache(field_text, usage_hash)) usage_hash = 0_i64
+      usage_hash = positive_hash64_cache(trim(field_text))
     end if
     field_text = ""
     call extract_payload_field_text_cache(payload_text, "pack_use_count=", field_text, found_usage_count)
