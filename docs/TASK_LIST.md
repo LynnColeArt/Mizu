@@ -143,6 +143,7 @@ These are the highest-leverage next tasks.
 - [x] Persist staged CUDA tensor-tile records beside cached tensor spans
 - [x] Materialize dedicated CUDA `.tilecache` payloads under `cache_root`
 - [x] Materialize pack-owned CUDA `.packtiles` payloads under `cache_root`
+- [x] Materialize dedicated CUDA `.packpayload` siblings for pack-owned page/tile bytes
 - [x] Address CUDA warm pack tiles by explicit packed entry index
 - [x] Derive CUDA `.packtiles` page/tile records from weight-pack materialization instead of sampled span previews
 - [x] Prefer CUDA `.packtiles` materialized hash identity during warm execution when pack-owned cache is available

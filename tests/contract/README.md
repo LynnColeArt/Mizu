@@ -56,6 +56,8 @@ These suites cover the `API-C*` portion of
   - verifies those pack-owned `.packtiles` payloads now derive their staged
     page/tile records from weight-pack materialization metadata rather than
     sampled importer preview bytes
+  - verifies those pack-owned `.packtiles` payloads now also reference a
+    dedicated `.packpayload` sibling carrying the staged page/tile bytes
   - verifies compact CUDA `pack_dispatch*` records now carry explicit packed
     entry indices and that the `.spancache` sidecars retain those pack indices
   - verifies those `.spancache` sidecars now also reference dedicated

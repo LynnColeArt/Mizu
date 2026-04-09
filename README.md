@@ -146,6 +146,10 @@ Current implementation status:
   weight-pack metadata and pack identity instead of sampled importer preview
   bytes, so warm replay is leaning more on backend-owned materialization than
   span reconstruction
+- those same CUDA weight-pack caches now also materialize a dedicated
+  `.packpayload` sibling carrying the staged page/tile bytes themselves, and
+  the CUDA executor now hydrates that payload directly instead of depending on
+  embedded `.packtiles` previews
 - when those pack-owned `.packtiles` payloads are available, CUDA execution now
   prefers their materialized hash identity over raw importer-span identity, and
   the direct executor path now allocates enough artifact text capacity to carry

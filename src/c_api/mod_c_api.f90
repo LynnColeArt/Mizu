@@ -3750,6 +3750,15 @@ contains
     write(tile_path, '(A,".packtiles")') trim(payload_path)
   end function build_cuda_weight_pack_tile_cache_path
 
+  function build_cuda_weight_pack_tile_payload_path(payload_path) result(tile_path)
+    character(len=*), intent(in) :: payload_path
+    character(len=MAX_PATH_LEN)  :: tile_path
+
+    tile_path = ""
+    if (len_trim(payload_path) == 0) return
+    write(tile_path, '(A,".packpayload")') trim(payload_path)
+  end function build_cuda_weight_pack_tile_payload_path
+
   function build_cuda_weight_pack_payload_path(model, execution_route) result(payload_path)
     type(model_state), intent(in) :: model
     integer(i32), intent(in)      :: execution_route
@@ -3817,8 +3826,11 @@ contains
     type(artifact_metadata_record), intent(in)   :: metadata
     type(model_state), intent(in)                :: model
     character(len=(MAX_PATH_LEN * 3) + 8192)     :: tile_payload
+    character(len=(MAX_PATH_LEN * 3) + 12288)    :: pack_payload
     character(len=MAX_PATH_LEN)                  :: tile_path
+    character(len=MAX_PATH_LEN)                  :: pack_payload_path
     character(len=MAX_PATH_LEN)                  :: tile_full_path
+    character(len=MAX_PATH_LEN)                  :: pack_payload_full_path
     character(len=MAX_PATH_LEN)                  :: parent_dir
     character(len=MAX_PATH_LEN + 96)             :: field_text
     character(len=128)                           :: hex_text
@@ -3853,13 +3865,22 @@ contains
     if (len_trim(tile_path) == 0) return
     tile_full_path = join_cache_root_with_payload_path(cache_root, tile_path)
     if (len_trim(tile_full_path) == 0) return
+    pack_payload_path = build_cuda_weight_pack_tile_payload_path(metadata%payload_path)
+    if (len_trim(pack_payload_path) == 0) return
+    pack_payload_full_path = join_cache_root_with_payload_path(cache_root, pack_payload_path)
+    if (len_trim(pack_payload_full_path) == 0) return
     inquire(file=trim(tile_full_path), exist=exists)
     if (exists) return
 
-    tile_payload = "kind=cuda_weight_pack_tile_cache_v2"
+    tile_payload = "kind=cuda_weight_pack_tile_cache_v3"
+    pack_payload = "kind=cuda_weight_pack_payload_v1"
     pack_index = 0_i32
     pack_offset = 0_i64
     pack_total_bytes = 0_i64
+
+    field_text = ""
+    write(field_text, '(";pack_payload=",A)') trim(pack_payload_path)
+    call append_payload_fragment(tile_payload, trim(field_text))
 
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
@@ -3937,7 +3958,7 @@ contains
           call encode_i32_words_as_hex_cache(page_words, page_word_count, hex_text)
           field_text = ""
           write(field_text, '(";pack",I0,"_page_hex=",A)') pack_index, trim(hex_text)
-          call append_payload_fragment(tile_payload, trim(field_text))
+          call append_payload_fragment(pack_payload, trim(field_text))
         end if
 
         call build_cuda_materialized_pack_tile_record_cache(pack_index, pack_offset, tensor_bytes, role_code, &
@@ -3954,7 +3975,7 @@ contains
           call encode_bytes_as_hex(tile_bytes, tile_byte_count, hex_text)
           field_text = ""
           write(field_text, '(";pack",I0,"_tile_hex=",A)') pack_index, trim(hex_text)
-          call append_payload_fragment(tile_payload, trim(field_text))
+          call append_payload_fragment(pack_payload, trim(field_text))
         end if
       end if
 
@@ -3965,12 +3986,20 @@ contains
     field_text = ""
     write(field_text, '(";pack_count=",I0)') pack_index
     call append_payload_fragment(tile_payload, trim(field_text))
+    call append_payload_fragment(pack_payload, trim(field_text))
 
     parent_dir = parent_directory_path(tile_full_path)
     if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
     open(newunit=unit_id, file=trim(tile_full_path), status="replace", action="write", iostat=ios)
     if (ios /= 0_i32) return
     write(unit_id, "(A)", iostat=ios) trim(tile_payload)
+    close(unit_id)
+
+    parent_dir = parent_directory_path(pack_payload_full_path)
+    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+    open(newunit=unit_id, file=trim(pack_payload_full_path), status="replace", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+    write(unit_id, "(A)", iostat=ios) trim(pack_payload)
     close(unit_id)
   end subroutine materialize_cuda_weight_pack_tile_cache
 

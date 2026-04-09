@@ -136,6 +136,9 @@ bodies.
     identity from `.packtiles` caches when available, and that removing the
     pack-owned reference changes the decode result for the same staged usage
     profile
+  - validates those same usage artifacts can now hydrate a dedicated
+    `.packpayload` sibling for pack-owned page/tile bytes, and that rewriting
+    that payload changes decode behavior for the same staged usage profile
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub

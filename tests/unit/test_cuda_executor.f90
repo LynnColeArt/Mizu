@@ -134,6 +134,7 @@ program test_cuda_executor
   character(len=*), parameter :: prefill_usage_path = "artifacts/cuda/cuda/plans/prefill/usage.plan"
   character(len=*), parameter :: decode_usage_path = "artifacts/cuda/cuda/plans/decode/usage.plan"
   character(len=*), parameter :: pack_tile_cache_path = "artifacts/cuda/cuda/weights/usage.pack.packtiles"
+  character(len=*), parameter :: pack_tile_payload_path = "artifacts/cuda/cuda/weights/usage.pack.packpayload"
   character(len=*), parameter :: import_bundle_root = "tests/fixtures/models/fixture_import_bundle_tiny/mizu_import"
 
   token_values_a = [3_i32, 5_i32, 7_i32, 11_i32, 13_i32, 17_i32, 19_i32]
@@ -183,13 +184,30 @@ program test_cuda_executor
   close(11)
 
   open(unit=14, file=trim(cache_root) // "/" // trim(pack_tile_cache_path), status="replace", action="write")
-  write(14, "(A)") "kind=cuda_weight_pack_tile_cache_v2;" // &
+  write(14, "(A)") "kind=cuda_weight_pack_tile_cache_v3;pack_payload=" // pack_tile_payload_path // ";" // &
     "pack1_offset=0;pack1_bytes=1089994752;pack1_materialized_hash=9010000000000001;" // &
+    "pack1_page_hash=9100000000000001;pack1_page_words=8;pack1_tile_hash=9200000000000001;pack1_tile_bytes=32;" // &
     "pack2_offset=1089994752;pack2_bytes=25690112;pack2_materialized_hash=9010000000000002;" // &
+    "pack2_page_hash=9100000000000002;pack2_page_words=8;pack2_tile_hash=9200000000000002;pack2_tile_bytes=32;" // &
     "pack3_offset=1115684864;pack3_bytes=14336;pack3_materialized_hash=9010000000000003;" // &
+    "pack3_page_hash=9100000000000003;pack3_page_words=8;pack3_tile_hash=9200000000000003;pack3_tile_bytes=32;" // &
     "pack4_offset=1115699200;pack4_bytes=1089994752;pack4_materialized_hash=9010000000000004;" // &
+    "pack4_page_hash=9100000000000004;pack4_page_words=8;pack4_tile_hash=9200000000000004;pack4_tile_bytes=32;" // &
     "pack_count=4"
   close(14)
+
+  open(unit=15, file=trim(cache_root) // "/" // trim(pack_tile_payload_path), status="replace", action="write")
+  write(15, "(A)") "kind=cuda_weight_pack_payload_v1;" // &
+    "pack1_page_hex=00112233445566778899AABBCCDDEEFF0123456789ABCDEFFEDCBA9876543210;" // &
+    "pack1_tile_hex=102132435465768798A9BACBDCEDFE0F1E2D3C4B5A69788796A5B4C3D2E1F001;" // &
+    "pack2_page_hex=112233445566778899AABBCCDDEEFF00123456789ABCDEFF0FEDCBA987654321;" // &
+    "pack2_tile_hex=2132435465768798A9BACBDCEDFE0F102F3E4D5C6B7A8998A7B6C5D4E3F20110;" // &
+    "pack3_page_hex=2233445566778899AABBCCDDEEFF001223456789ABCDEFF01FEDCBA987654322;" // &
+    "pack3_tile_hex=32435465768798A9BACBDCEDFE0F1021404F5E6D7C8B9AA9B8C7D6E5F4031221;" // &
+    "pack4_page_hex=33445566778899AABBCCDDEEFF0011223456789ABCDEFF012FEDCBA987654323;" // &
+    "pack4_tile_hex=435465768798A9BACBDCEDFE0F10213251606F7E8D9CABBAC9D8E7F605142332;" // &
+    "pack_count=4"
+  close(15)
 
   open(unit=12, file=trim(cache_root) // "/" // trim(prefill_usage_path), status="replace", action="write")
   write(12, "(A)") "candidate=prefill_usage;stage=3;format=cuda_bf16_prefill_plan_v1;" // &
@@ -819,6 +837,27 @@ program test_cuda_executor
   call expect_equal_i32("cuda decode pack-dispatch snapshot should label the token projection layout", &
     pack_dispatch_layout_codes(4), 1_i32)
 
+  open(unit=15, file=trim(cache_root) // "/" // trim(pack_tile_payload_path), status="replace", action="write")
+  write(15, "(A)") "kind=cuda_weight_pack_payload_v1;" // &
+    "pack1_page_hex=FFEEDDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEF;" // &
+    "pack1_tile_hex=F0E1D2C3B4A5968778695A4B3C2D1E0F00112233445566778899AABBCCDDEEFF;" // &
+    "pack2_page_hex=EEDDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF0;" // &
+    "pack2_tile_hex=E1D2C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F10;" // &
+    "pack3_page_hex=DDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF001;" // &
+    "pack3_tile_hex=D2C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F1021;" // &
+    "pack4_page_hex=CCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF00112;" // &
+    "pack4_tile_hex=C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F102132;" // &
+    "pack_count=4"
+  close(15)
+
+  call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
+    token_value_without_pack_cache, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
+  call expect_equal_i32("cuda decode with rewritten pack-owned payload should still succeed", status_code, &
+    MIZU_STATUS_OK)
+  call expect_true("cuda decode should reflect direct pack-owned payload bytes", &
+    token_value_without_pack_cache /= token_value_with_pack_cache)
+
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
     "pack_use_kind=cuda_decode_pack_usage_v1;" // &
@@ -847,11 +886,11 @@ program test_cuda_executor
   close(13)
 
   call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
-    token_value_without_pack_cache, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    token_value_with_other_context, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
     usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
   call expect_equal_i32("cuda decode without pack-owned tile cache should still succeed", status_code, MIZU_STATUS_OK)
   call expect_true("cuda decode should reflect pack-owned materialized identity when available", &
-    token_value_without_pack_cache /= token_value_with_pack_cache)
+    token_value_with_other_context /= token_value_with_pack_cache)
 
   open(unit=12, file=trim(cache_root) // "/" // trim(decode_path), status="replace", action="write")
   write(12, "(A)") "candidate=decode;stage=4;format=cuda_bf16_decode_plan_v2"
