@@ -185,20 +185,20 @@ program test_cuda_executor
   close(11)
 
   open(unit=14, file=trim(cache_root) // "/" // trim(pack_tile_cache_path), status="replace", action="write")
-  write(14, "(A)") "kind=cuda_weight_pack_tile_cache_v3;pack_payload=" // pack_tile_payload_path // ";" // &
+  write(14, "(A)") "kind=cuda_weight_pack_tile_cache_v4;pack_payload=" // pack_tile_payload_path // ";" // &
     "pack_buffer=" // pack_tile_buffer_path // ";" // &
     "pack1_offset=0;pack1_bytes=1089994752;pack1_materialized_hash=9010000000000001;" // &
-    "pack1_page_hash=9100000000000001;pack1_page_words=8;pack1_page_data_offset=0;pack1_page_data_bytes=32;" // &
-    "pack1_tile_hash=9200000000000001;pack1_tile_bytes=32;pack1_tile_data_offset=32;pack1_tile_data_bytes=32;" // &
+    "pack1_page_hash=9100000000000001;pack1_page_words=8;" // &
+    "pack1_tile_hash=9200000000000001;pack1_tile_bytes=32;" // &
     "pack2_offset=1089994752;pack2_bytes=25690112;pack2_materialized_hash=9010000000000002;" // &
-    "pack2_page_hash=9100000000000002;pack2_page_words=8;pack2_page_data_offset=64;pack2_page_data_bytes=32;" // &
-    "pack2_tile_hash=9200000000000002;pack2_tile_bytes=32;pack2_tile_data_offset=96;pack2_tile_data_bytes=32;" // &
+    "pack2_page_hash=9100000000000002;pack2_page_words=8;" // &
+    "pack2_tile_hash=9200000000000002;pack2_tile_bytes=32;" // &
     "pack3_offset=1115684864;pack3_bytes=14336;pack3_materialized_hash=9010000000000003;" // &
-    "pack3_page_hash=9100000000000003;pack3_page_words=8;pack3_page_data_offset=128;pack3_page_data_bytes=32;" // &
-    "pack3_tile_hash=9200000000000003;pack3_tile_bytes=32;pack3_tile_data_offset=160;pack3_tile_data_bytes=32;" // &
+    "pack3_page_hash=9100000000000003;pack3_page_words=8;" // &
+    "pack3_tile_hash=9200000000000003;pack3_tile_bytes=32;" // &
     "pack4_offset=1115699200;pack4_bytes=1089994752;pack4_materialized_hash=9010000000000004;" // &
-    "pack4_page_hash=9100000000000004;pack4_page_words=8;pack4_page_data_offset=192;pack4_page_data_bytes=32;" // &
-    "pack4_tile_hash=9200000000000004;pack4_tile_bytes=32;pack4_tile_data_offset=224;pack4_tile_data_bytes=32;" // &
+    "pack4_page_hash=9100000000000004;pack4_page_words=8;" // &
+    "pack4_tile_hash=9200000000000004;pack4_tile_bytes=32;" // &
     "pack_count=4"
   close(14)
 
@@ -946,11 +946,24 @@ contains
   subroutine write_pack_tile_buffer_fixture(full_path, use_rewritten_bytes)
     character(len=*), intent(in) :: full_path
     logical, intent(in)          :: use_rewritten_bytes
+    integer(i32), parameter      :: CUDA_PACK_BUFFER_MAGIC = int(z'42505A4D', kind=i32)
+    integer(i32), parameter      :: CUDA_PACK_BUFFER_VERSION = 1_i32
+    integer(i32), parameter      :: CUDA_PACK_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter      :: CUDA_PACK_BUFFER_ENTRY_BYTES = 96_i32
     character(len=64)            :: hex_records(8)
-    integer(i8)                  :: buffer_bytes(256)
+    integer(i8)                  :: buffer_bytes(1024)
+    integer(i8)                  :: decoded_bytes(32)
+    integer(i64)                 :: pack_offsets(4)
+    integer(i64)                 :: pack_bytes(4)
+    integer(i64)                 :: page_hashes(4)
+    integer(i64)                 :: tile_hashes(4)
+    integer(i64)                 :: materialized_hashes(4)
+    integer(i32)                 :: role_codes(4)
+    integer(i32)                 :: layout_codes(4)
     integer(i32)                 :: record_index
     integer(i32)                 :: byte_count
-    integer(i32)                 :: offset
+    integer(i32)                 :: data_offset
+    integer(i32)                 :: record_offset
     integer                      :: unit_id
 
     if (use_rewritten_bytes) then
@@ -975,15 +988,56 @@ contains
         "435465768798A9BACBDCEDFE0F10213251606F7E8D9CABBAC9D8E7F605142332" ]
     end if
 
+    pack_offsets = [0_i64, 1089994752_i64, 1115684864_i64, 1115699200_i64]
+    pack_bytes = [1089994752_i64, 25690112_i64, 14336_i64, 1089994752_i64]
+    role_codes = [1_i32, 2_i32, 3_i32, 4_i32]
+    layout_codes = [1_i32, 2_i32, 3_i32, 1_i32]
+    page_hashes = [9100000000000001_i64, 9100000000000002_i64, 9100000000000003_i64, 9100000000000004_i64]
+    tile_hashes = [9200000000000001_i64, 9200000000000002_i64, 9200000000000003_i64, 9200000000000004_i64]
+    materialized_hashes = [9010000000000001_i64, 9010000000000002_i64, 9010000000000003_i64, 9010000000000004_i64]
+
     buffer_bytes = 0_i8
-    offset = 0_i32
-    do record_index = 1_i32, size(hex_records)
-      call decode_fixture_hex(hex_records(record_index), buffer_bytes(offset + 1_i32:), byte_count)
-      offset = offset + byte_count
+    data_offset = CUDA_PACK_BUFFER_HEADER_BYTES + (4_i32 * CUDA_PACK_BUFFER_ENTRY_BYTES)
+
+    do record_index = 1_i32, 4_i32
+      record_offset = CUDA_PACK_BUFFER_HEADER_BYTES + ((record_index - 1_i32) * CUDA_PACK_BUFFER_ENTRY_BYTES)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 0_i32, record_index)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 4_i32, role_codes(record_index))
+      call write_fixture_i32_le(buffer_bytes, record_offset + 8_i32, layout_codes(record_index))
+      call write_fixture_i32_le(buffer_bytes, record_offset + 12_i32, 8_i32)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 16_i32, data_offset)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 20_i32, 32_i32)
+      call decode_fixture_hex(hex_records((record_index - 1_i32) * 2_i32 + 1_i32), decoded_bytes, byte_count)
+      buffer_bytes(data_offset + 1_i32:data_offset + byte_count) = decoded_bytes(1:byte_count)
+      data_offset = data_offset + byte_count
+      call write_fixture_i32_le(buffer_bytes, record_offset + 24_i32, 32_i32)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 28_i32, data_offset)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 32_i32, 32_i32)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 36_i32, 0_i32)
+      call decode_fixture_hex(hex_records((record_index - 1_i32) * 2_i32 + 2_i32), decoded_bytes, byte_count)
+      buffer_bytes(data_offset + 1_i32:data_offset + byte_count) = decoded_bytes(1:byte_count)
+      data_offset = data_offset + byte_count
+      call write_fixture_i64_le(buffer_bytes, record_offset + 40_i32, pack_offsets(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 48_i32, pack_bytes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 56_i32, 0_i64)
+      call write_fixture_i64_le(buffer_bytes, record_offset + 64_i32, pack_bytes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 72_i32, page_hashes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 80_i32, tile_hashes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 88_i32, materialized_hashes(record_index))
     end do
 
+    call write_fixture_i32_le(buffer_bytes, 0_i32, CUDA_PACK_BUFFER_MAGIC)
+    call write_fixture_i32_le(buffer_bytes, 4_i32, CUDA_PACK_BUFFER_VERSION)
+    call write_fixture_i32_le(buffer_bytes, 8_i32, CUDA_PACK_BUFFER_HEADER_BYTES + (4_i32 * CUDA_PACK_BUFFER_ENTRY_BYTES))
+    call write_fixture_i32_le(buffer_bytes, 12_i32, CUDA_PACK_BUFFER_ENTRY_BYTES)
+    call write_fixture_i32_le(buffer_bytes, 16_i32, 4_i32)
+    call write_fixture_i32_le(buffer_bytes, 20_i32, data_offset - &
+      (CUDA_PACK_BUFFER_HEADER_BYTES + (4_i32 * CUDA_PACK_BUFFER_ENTRY_BYTES)))
+    call write_fixture_i32_le(buffer_bytes, 24_i32, 0_i32)
+    call write_fixture_i32_le(buffer_bytes, 28_i32, 0_i32)
+
     open(newunit=unit_id, file=trim(full_path), status="replace", access="stream", form="unformatted", action="write")
-    write(unit_id) buffer_bytes(1:offset)
+    write(unit_id) buffer_bytes(1:data_offset)
     close(unit_id)
   end subroutine write_pack_tile_buffer_fixture
 
@@ -1011,6 +1065,30 @@ contains
     end do
     byte_count = pair_count
   end subroutine decode_fixture_hex
+
+  subroutine write_fixture_i32_le(buffer_bytes, byte_offset, value)
+    integer(i8), intent(inout) :: buffer_bytes(:)
+    integer(i32), intent(in)   :: byte_offset
+    integer(i32), intent(in)   :: value
+    integer(i32)               :: byte_index
+
+    do byte_index = 0_i32, 3_i32
+      buffer_bytes(byte_offset + byte_index + 1_i32) = &
+        int(iand(shiftr(value, 8 * byte_index), int(z'FF', kind=i32)), kind=i8)
+    end do
+  end subroutine write_fixture_i32_le
+
+  subroutine write_fixture_i64_le(buffer_bytes, byte_offset, value)
+    integer(i8), intent(inout) :: buffer_bytes(:)
+    integer(i32), intent(in)   :: byte_offset
+    integer(i64), intent(in)   :: value
+    integer(i32)               :: byte_index
+
+    do byte_index = 0_i32, 7_i32
+      buffer_bytes(byte_offset + byte_index + 1_i32) = &
+        int(iand(shiftr(value, 8 * byte_index), int(z'FF', kind=i64)), kind=i8)
+    end do
+  end subroutine write_fixture_i64_le
 
   pure integer(i32) function fixture_hex_digit_value(hex_char) result(digit_value)
     character(len=*), intent(in) :: hex_char

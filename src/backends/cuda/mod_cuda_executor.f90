@@ -841,7 +841,8 @@ contains
       if (loaded_pack_tile_cache) then
         if (index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v1") <= 0 .and. &
             index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v2") <= 0 .and. &
-            index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v3") <= 0) then
+            index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v3") <= 0 .and. &
+            index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v4") <= 0) then
           loaded_pack_tile_cache = .false.
           pack_tile_cache_text = ""
         end if
@@ -1113,6 +1114,12 @@ contains
     found_materialized_hash = .false.
     found_record = .false.
     if (len_trim(cache_text) == 0) return
+    if (buffer_loaded) then
+      call extract_weight_pack_tile_buffer_record(buffer_bytes, buffer_count, pack_index, pack_offset, pack_bytes, &
+        span_hash, span_bytes, page_hash, page_word_count, page_words, tile_hash, tile_byte_count, tile_bytes, &
+        materialized_hash, found_materialized_hash, found_record)
+      if (found_record) return
+    end if
 
     value_text = ""
     call extract_payload_field_text(cache_text, "pack_count=", value_text, found_count)
@@ -1280,6 +1287,163 @@ contains
       return
     end do
   end subroutine extract_weight_pack_tile_cache_record
+
+  subroutine extract_weight_pack_tile_buffer_record(buffer_bytes, buffer_count, pack_index, pack_offset, pack_bytes, &
+                                                    span_hash, span_bytes, page_hash, page_word_count, page_words, &
+                                                    tile_hash, tile_byte_count, tile_bytes, materialized_hash, &
+                                                    found_materialized_hash, found_record)
+    integer(i32), parameter    :: CUDA_PACK_BUFFER_MAGIC = int(z'42505A4D', kind=i32)
+    integer(i32), parameter    :: CUDA_PACK_BUFFER_VERSION = 1_i32
+    integer(i32), parameter    :: CUDA_PACK_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter    :: CUDA_PACK_BUFFER_ENTRY_BYTES = 96_i32
+    integer(i8), intent(in)    :: buffer_bytes(:)
+    integer(i32), intent(in)   :: buffer_count
+    integer(i32), intent(in)   :: pack_index
+    integer(i64), intent(in)   :: pack_offset
+    integer(i64), intent(in)   :: pack_bytes
+    integer(i64), intent(out)  :: span_hash
+    integer(i64), intent(out)  :: span_bytes
+    integer(i64), intent(out)  :: page_hash
+    integer(i32), intent(out)  :: page_word_count
+    integer(i32), intent(out)  :: page_words(:)
+    integer(i64), intent(out)  :: tile_hash
+    integer(i32), intent(out)  :: tile_byte_count
+    integer(i8), intent(out)   :: tile_bytes(:)
+    integer(i64), intent(out)  :: materialized_hash
+    logical, intent(out)       :: found_materialized_hash
+    logical, intent(out)       :: found_record
+    integer(i32)               :: parsed_magic
+    integer(i32)               :: parsed_version
+    integer(i32)               :: parsed_header_bytes
+    integer(i32)               :: parsed_entry_bytes
+    integer(i32)               :: parsed_pack_count
+    integer(i32)               :: entry_index
+    integer(i32)               :: entry_offset
+    integer(i32)               :: candidate_pack_index
+    integer(i32)               :: candidate_role_code
+    integer(i32)               :: candidate_layout_code
+    integer(i32)               :: candidate_page_word_count
+    integer(i32)               :: candidate_page_data_offset
+    integer(i32)               :: candidate_page_data_bytes
+    integer(i32)               :: candidate_tile_byte_count
+    integer(i32)               :: candidate_tile_data_offset
+    integer(i32)               :: candidate_tile_data_bytes
+    integer(i32)               :: candidate_reserved
+    integer(i32)               :: decoded_page_word_count
+    integer(i32)               :: decoded_tile_byte_count
+    integer(i64)               :: candidate_pack_offset
+    integer(i64)               :: candidate_pack_bytes
+    integer(i64)               :: candidate_span_hash
+    integer(i64)               :: candidate_span_bytes
+    integer(i64)               :: candidate_page_hash
+    integer(i64)               :: candidate_tile_hash
+    integer(i64)               :: candidate_materialized_hash
+    logical                    :: read_ok
+
+    span_hash = 0_i64
+    span_bytes = 0_i64
+    page_hash = 0_i64
+    page_word_count = 0_i32
+    page_words = 0_i32
+    tile_hash = 0_i64
+    tile_byte_count = 0_i32
+    tile_bytes = 0_i8
+    materialized_hash = 0_i64
+    found_materialized_hash = .false.
+    found_record = .false.
+    if (buffer_count < CUDA_PACK_BUFFER_HEADER_BYTES) return
+
+    call read_buffer_i32(buffer_bytes, buffer_count, 0_i32, parsed_magic, read_ok)
+    if (.not. read_ok) return
+    if (parsed_magic /= CUDA_PACK_BUFFER_MAGIC) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 4_i32, parsed_version, read_ok)
+    if (.not. read_ok) return
+    if (parsed_version /= CUDA_PACK_BUFFER_VERSION) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 8_i32, parsed_header_bytes, read_ok)
+    if (.not. read_ok) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 12_i32, parsed_entry_bytes, read_ok)
+    if (.not. read_ok) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 16_i32, parsed_pack_count, read_ok)
+    if (.not. read_ok) return
+    if (parsed_header_bytes < CUDA_PACK_BUFFER_HEADER_BYTES) return
+    if (parsed_entry_bytes < CUDA_PACK_BUFFER_ENTRY_BYTES) return
+    if (parsed_pack_count <= 0_i32) return
+    if (parsed_header_bytes > buffer_count) return
+    if ((CUDA_PACK_BUFFER_HEADER_BYTES + ((parsed_pack_count - 1_i32) * parsed_entry_bytes) + &
+         CUDA_PACK_BUFFER_ENTRY_BYTES) > buffer_count) return
+
+    do entry_index = 1_i32, parsed_pack_count
+      entry_offset = CUDA_PACK_BUFFER_HEADER_BYTES + ((entry_index - 1_i32) * parsed_entry_bytes)
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 0_i32, candidate_pack_index, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 4_i32, candidate_role_code, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 8_i32, candidate_layout_code, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 12_i32, candidate_page_word_count, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 16_i32, candidate_page_data_offset, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 20_i32, candidate_page_data_bytes, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 24_i32, candidate_tile_byte_count, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 28_i32, candidate_tile_data_offset, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 32_i32, candidate_tile_data_bytes, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 36_i32, candidate_reserved, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 40_i32, candidate_pack_offset, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 48_i32, candidate_pack_bytes, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 56_i32, candidate_span_hash, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 64_i32, candidate_span_bytes, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 72_i32, candidate_page_hash, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 80_i32, candidate_tile_hash, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 88_i32, candidate_materialized_hash, read_ok)
+      if (.not. read_ok) cycle
+      if (candidate_role_code < 0_i32 .or. candidate_layout_code < 0_i32 .or. candidate_reserved < 0_i32) cycle
+
+      if (pack_index > 0_i32) then
+        if (candidate_pack_index /= pack_index) cycle
+      else if (candidate_pack_offset /= pack_offset .or. candidate_pack_bytes /= pack_bytes) then
+        cycle
+      end if
+
+      page_words = 0_i32
+      tile_bytes = 0_i8
+      decoded_page_word_count = max(0_i32, min(candidate_page_word_count, MAX_CUDA_PACK_PAGE_WORDS))
+      if (decoded_page_word_count > 0_i32) then
+        call decode_buffer_to_page_words(buffer_bytes, buffer_count, candidate_page_data_offset, candidate_page_data_bytes, &
+          page_words, decoded_page_word_count)
+        if (decoded_page_word_count <= 0_i32) cycle
+      end if
+
+      decoded_tile_byte_count = max(0_i32, min(candidate_tile_byte_count, MAX_CUDA_PACK_TILE_BYTES))
+      if (decoded_tile_byte_count > 0_i32) then
+        call decode_buffer_to_tile_bytes(buffer_bytes, buffer_count, candidate_tile_data_offset, candidate_tile_data_bytes, &
+          tile_bytes, decoded_tile_byte_count)
+        if (decoded_tile_byte_count <= 0_i32) cycle
+      end if
+
+      span_hash = candidate_span_hash
+      span_bytes = max(0_i64, candidate_span_bytes)
+      page_hash = candidate_page_hash
+      page_word_count = decoded_page_word_count
+      tile_hash = candidate_tile_hash
+      tile_byte_count = decoded_tile_byte_count
+      materialized_hash = candidate_materialized_hash
+      found_materialized_hash = (candidate_materialized_hash > 0_i64)
+      found_record = .true.
+      return
+    end do
+  end subroutine extract_weight_pack_tile_buffer_record
 
   subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
     character(len=*), intent(in) :: usage_entry
@@ -1683,6 +1847,36 @@ contains
     stored_count = decoded_count
   end subroutine decode_buffer_to_tile_bytes
 
+  subroutine read_buffer_i32(buffer_bytes, buffer_count, data_offset, value, read_ok)
+    integer(i8), intent(in)   :: buffer_bytes(:)
+    integer(i32), intent(in)  :: buffer_count
+    integer(i32), intent(in)  :: data_offset
+    integer(i32), intent(out) :: value
+    logical, intent(out)      :: read_ok
+
+    value = 0_i32
+    read_ok = .false.
+    if (data_offset < 0_i32) return
+    if ((data_offset + 4_i32) > buffer_count) return
+    value = unpack_le_i32(buffer_bytes(data_offset + 1_i32:data_offset + 4_i32))
+    read_ok = .true.
+  end subroutine read_buffer_i32
+
+  subroutine read_buffer_i64(buffer_bytes, buffer_count, data_offset, value, read_ok)
+    integer(i8), intent(in)   :: buffer_bytes(:)
+    integer(i32), intent(in)  :: buffer_count
+    integer(i32), intent(in)  :: data_offset
+    integer(i64), intent(out) :: value
+    logical, intent(out)      :: read_ok
+
+    value = 0_i64
+    read_ok = .false.
+    if (data_offset < 0_i32) return
+    if ((data_offset + 8_i32) > buffer_count) return
+    value = unpack_le_i64(buffer_bytes(data_offset + 1_i32:data_offset + 8_i32))
+    read_ok = .true.
+  end subroutine read_buffer_i64
+
   pure integer(i32) function unpack_le_i32(byte_values) result(word_value)
     integer(i8), intent(in) :: byte_values(:)
     integer(i32)            :: byte_index
@@ -1695,6 +1889,19 @@ contains
       word_value = ior(word_value, ishft(byte_value, 8 * (byte_index - 1_i32)))
     end do
   end function unpack_le_i32
+
+  pure integer(i64) function unpack_le_i64(byte_values) result(word_value)
+    integer(i8), intent(in) :: byte_values(:)
+    integer(i32)            :: byte_index
+    integer(i64)            :: byte_value
+
+    word_value = 0_i64
+    do byte_index = 1_i32, min(8_i32, int(size(byte_values), kind=i32))
+      byte_value = int(byte_values(byte_index), kind=i64)
+      if (byte_value < 0_i64) byte_value = byte_value + 256_i64
+      word_value = ior(word_value, ishft(byte_value, 8 * (byte_index - 1_i32)))
+    end do
+  end function unpack_le_i64
 
   pure integer(i32) function hex_digit_value(hex_char) result(digit_value)
     character(len=*), intent(in) :: hex_char
