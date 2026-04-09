@@ -27,6 +27,7 @@ module mod_cuda_executor
   integer(i32), parameter :: MAX_CUDA_SPAN_SAMPLE_BYTES = 64_i32
   integer(i32), parameter :: MAX_CUDA_PACK_PAGE_WORDS = 8_i32
   integer(i32), parameter :: MAX_CUDA_PACK_TILE_BYTES = 32_i32
+  integer(i32), parameter :: CUDA_ARTIFACT_TEXT_CAPACITY = 8192_i32
 
   type :: cuda_pack_usage_profile
     integer(i64) :: usage_hash = 0_i64
@@ -69,7 +70,7 @@ contains
     integer(i32), intent(out)    :: status_code
     type(c_ptr), intent(in), optional :: workspace_buffer
     integer(i64), intent(in), optional :: workspace_bytes
-    character(len=1024)          :: payload_text
+    character(len=CUDA_ARTIFACT_TEXT_CAPACITY) :: payload_text
     integer(i64)                 :: payload_hash
     integer(i64)                 :: pack_dependency_hash
     integer(i64)                 :: workspace_bytes_local
@@ -124,7 +125,7 @@ contains
     integer(i8), intent(out)           :: context_bytes(:)
     integer(i32), intent(out)          :: context_byte_count
     integer(i64), intent(out), optional :: context_artifact_hash
-    character(len=1024)          :: payload_text
+    character(len=CUDA_ARTIFACT_TEXT_CAPACITY) :: payload_text
     integer(i64)                 :: artifact_hash
     integer(i64)                 :: payload_hash
     integer(i64)                 :: pack_dependency_hash
@@ -211,7 +212,7 @@ contains
     integer(i8), intent(out)           :: updated_context_bytes(:)
     integer(i32), intent(out)          :: updated_context_byte_count
     integer(i64), intent(out), optional :: context_artifact_hash
-    character(len=1024)          :: payload_text
+    character(len=CUDA_ARTIFACT_TEXT_CAPACITY) :: payload_text
     integer(i64)                 :: artifact_hash
     integer(i64)                 :: payload_hash
     integer(i64)                 :: pack_dependency_hash
@@ -681,7 +682,7 @@ contains
     character(len=*), intent(in)                 :: payload_text
     type(cuda_pack_usage_profile), intent(inout) :: pack_usage
     logical, intent(out)                         :: loaded_cached
-    character(len=1024)                          :: cache_text
+    character(len=CUDA_ARTIFACT_TEXT_CAPACITY)  :: cache_text
     character(len=8192)                          :: pack_tile_cache_text
     character(len=4096)                          :: tile_cache_text
     character(len=MAX_PATH_LEN)                  :: cache_path
@@ -708,12 +709,14 @@ contains
     logical                                      :: loaded_tile_cache
     logical                                      :: required_entry_found
     logical                                      :: found_pack_record
+    logical                                      :: found_materialized_hash
     integer(i64)                                 :: page_hash
     integer(i32)                                 :: page_word_count
     integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
     integer(i64)                                 :: tile_hash
     integer(i32)                                 :: tile_byte_count
     integer(i8)                                  :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
+    integer(i64)                                 :: materialized_hash
 
     loaded_cached = .false.
     if (len_trim(cache_root) == 0) return
@@ -836,9 +839,15 @@ contains
         call extract_weight_pack_tile_cache_record(pack_tile_cache_text, pack_usage%entry_pack_indices(entry_index), &
           pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), pack_usage%entry_span_hashes(entry_index), &
           pack_usage%entry_span_bytes(entry_index), page_hash, page_word_count, page_words, tile_hash, tile_byte_count, &
-          tile_bytes, found_pack_record)
+          tile_bytes, materialized_hash, found_materialized_hash, found_pack_record)
       end if
       if (found_pack_record) then
+        if (found_materialized_hash .and. materialized_hash > 0_i64) then
+          pack_usage%entry_span_hashes(entry_index) = materialized_hash
+          if (pack_usage%entry_bytes(entry_index) > 0_i64) then
+            pack_usage%entry_span_bytes(entry_index) = pack_usage%entry_bytes(entry_index)
+          end if
+        end if
         found_tile_hash = .true.
         found_tile_bytes = .true.
         found_tile_hex = (tile_byte_count > 0_i32)
@@ -919,7 +928,8 @@ contains
 
   subroutine extract_weight_pack_tile_cache_record(cache_text, pack_index, pack_offset, pack_bytes, span_hash, &
                                                    span_bytes, page_hash, page_word_count, page_words, tile_hash, &
-                                                   tile_byte_count, tile_bytes, found_record)
+                                                   tile_byte_count, tile_bytes, materialized_hash, &
+                                                   found_materialized_hash, found_record)
     character(len=*), intent(in) :: cache_text
     integer(i32), intent(in)     :: pack_index
     integer(i64), intent(in)     :: pack_offset
@@ -932,6 +942,8 @@ contains
     integer(i64), intent(out)    :: tile_hash
     integer(i32), intent(out)    :: tile_byte_count
     integer(i8), intent(out)     :: tile_bytes(:)
+    integer(i64), intent(out)    :: materialized_hash
+    logical, intent(out)         :: found_materialized_hash
     logical, intent(out)         :: found_record
     character(len=64)            :: key_text
     character(len=64)            :: value_text
@@ -951,6 +963,7 @@ contains
     logical                      :: found_tile_hash
     logical                      :: found_tile_bytes
     logical                      :: found_tile_hex
+    logical                      :: found_materialized
 
     span_hash = 0_i64
     span_bytes = 0_i64
@@ -960,6 +973,8 @@ contains
     tile_hash = 0_i64
     tile_byte_count = 0_i32
     tile_bytes = 0_i8
+    materialized_hash = 0_i64
+    found_materialized_hash = .false.
     found_record = .false.
     if (len_trim(cache_text) == 0) return
 
@@ -1046,6 +1061,17 @@ contains
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hex)
       if (found_tile_bytes .and. found_tile_hex .and. tile_byte_count > 0_i32) then
         call decode_hex_to_tile_bytes(trim(value_text), tile_bytes, tile_byte_count)
+      end if
+
+      write(key_text, '("pack",I0,"_materialized_hash=")') candidate_pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_materialized)
+      if (found_materialized) then
+        if (parse_i64_text(value_text, materialized_hash)) then
+          found_materialized_hash = (materialized_hash > 0_i64)
+        else
+          materialized_hash = 0_i64
+        end if
       end if
 
       found_record = .true.

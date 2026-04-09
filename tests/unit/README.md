@@ -132,6 +132,10 @@ bodies.
   - validates CUDA usage artifacts can now resolve compact importer-rooted
     tensor-span records from the fixture bundle and feed those sampled spans
     into executor behavior
+  - validates CUDA usage artifacts now also prefer pack-owned materialized hash
+    identity from `.packtiles` caches when available, and that removing the
+    pack-owned reference changes the decode result for the same staged usage
+    profile
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub
