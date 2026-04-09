@@ -143,6 +143,7 @@ These are the highest-leverage next tasks.
 - [x] Persist staged CUDA tensor-tile records beside cached tensor spans
 - [x] Materialize dedicated CUDA `.tilecache` payloads under `cache_root`
 - [x] Materialize pack-owned CUDA `.packtiles` payloads under `cache_root`
+- [x] Address CUDA warm pack tiles by explicit packed entry index
 - [x] Persist CUDA pack-usage snapshots in live context state
 - [x] Persist CUDA pack-dispatch snapshots in live context state
 

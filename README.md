@@ -142,6 +142,10 @@ Current implementation status:
   that weight-pack cache so the CUDA executor can prefer pack-owned page/tile
   records before falling back to plan-local `.tilecache` payloads or raw span
   samples
+- CUDA projector, prefill, and decode artifacts now also stamp explicit
+  `pack=` indices into compact dispatch records, so warm execution can address
+  the weight-pack tile cache by packed entry identity instead of relying only
+  on offset/byte matching
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside payload

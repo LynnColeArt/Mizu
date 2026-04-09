@@ -53,6 +53,8 @@ These suites cover the `API-C*` portion of
     pack-page records for the selected imported tensor spans
   - verifies those `.spancache` sidecars now also reference pack-owned
     `.packtiles` payloads materialized beside the CUDA weight-pack artifact
+  - verifies compact CUDA `pack_dispatch*` records now carry explicit packed
+    entry indices and that the `.spancache` sidecars retain those pack indices
   - verifies those `.spancache` sidecars now also reference dedicated
     `.tilecache` payloads for the selected imported tensor spans
   - verifies those `.tilecache` payloads retain staged tensor-tile records for
