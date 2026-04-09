@@ -347,6 +347,15 @@ contains
     write(cache_path, '(A,".tilecache")') trim(artifact_path)
   end function build_pack_tile_cache_artifact_path
 
+  function build_weight_pack_tile_cache_artifact_path(artifact_path) result(cache_path)
+    character(len=*), intent(in) :: artifact_path
+    character(len=MAX_PATH_LEN)  :: cache_path
+
+    cache_path = ""
+    if (len_trim(artifact_path) == 0) return
+    write(cache_path, '(A,".packtiles")') trim(artifact_path)
+  end function build_weight_pack_tile_cache_artifact_path
+
   integer(i64) function positive_hash64(text) result(hash_value)
     character(len=*), intent(in) :: text
 
@@ -669,14 +678,17 @@ contains
     type(cuda_pack_usage_profile), intent(inout) :: pack_usage
     logical, intent(out)                         :: loaded_cached
     character(len=1024)                          :: cache_text
+    character(len=8192)                          :: pack_tile_cache_text
     character(len=4096)                          :: tile_cache_text
     character(len=MAX_PATH_LEN)                  :: cache_path
+    character(len=MAX_PATH_LEN)                  :: pack_tile_cache_path
     character(len=MAX_PATH_LEN)                  :: tile_cache_path
     character(len=64)                            :: key_text
     character(len=64)                            :: value_text
     integer(i32)                                 :: entry_index
     integer(i64)                                 :: parsed_i64
     logical                                      :: found_cache_path
+    logical                                      :: found_pack_tile_cache_path
     logical                                      :: found_tile_cache_path
     logical                                      :: found_hash
     logical                                      :: found_bytes
@@ -687,8 +699,10 @@ contains
     logical                                      :: found_tile_bytes
     logical                                      :: found_tile_hex
     logical                                      :: loaded_ok
+    logical                                      :: loaded_pack_tile_cache
     logical                                      :: loaded_tile_cache
     logical                                      :: required_entry_found
+    logical                                      :: found_pack_record
     integer(i64)                                 :: page_hash
     integer(i32)                                 :: page_word_count
     integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
@@ -710,6 +724,27 @@ contains
         index(cache_text, "kind=cuda_pack_span_cache_v2") <= 0 .and. &
         index(cache_text, "kind=cuda_pack_span_cache_v3") <= 0 .and. &
         index(cache_text, "kind=cuda_pack_span_cache_v4") <= 0) return
+
+    pack_tile_cache_text = ""
+    pack_tile_cache_path = ""
+    loaded_pack_tile_cache = .false.
+    call extract_payload_field_text(cache_text, "pack_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
+    if (.not. found_pack_tile_cache_path) then
+      call extract_payload_field_text(payload_text, "pack_ref_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
+    end if
+    if (.not. found_pack_tile_cache_path) then
+      call extract_payload_field_text(payload_text, "pack_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
+    end if
+    if (.not. found_pack_tile_cache_path) pack_tile_cache_path = build_weight_pack_tile_cache_artifact_path(artifact_path)
+    if (len_trim(pack_tile_cache_path) > 0) then
+      call load_cuda_artifact_payload(cache_root, trim(pack_tile_cache_path), pack_tile_cache_text, loaded_pack_tile_cache)
+      if (loaded_pack_tile_cache) then
+        if (index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v1") <= 0) then
+          loaded_pack_tile_cache = .false.
+          pack_tile_cache_text = ""
+        end if
+      end if
+    end if
 
     tile_cache_text = ""
     tile_cache_path = ""
@@ -776,7 +811,20 @@ contains
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hex)
       page_words = 0_i32
-      if (found_page_words .and. found_page_hex .and. page_word_count > 0_i32) then
+      tile_hash = 0_i64
+      tile_byte_count = 0_i32
+      tile_bytes = 0_i8
+      found_pack_record = .false.
+      if (loaded_pack_tile_cache) then
+        call extract_weight_pack_tile_cache_record(pack_tile_cache_text, pack_usage%entry_offsets(entry_index), &
+          pack_usage%entry_bytes(entry_index), page_hash, page_word_count, page_words, tile_hash, tile_byte_count, &
+          tile_bytes, found_pack_record)
+      end if
+      if (found_pack_record) then
+        found_tile_hash = .true.
+        found_tile_bytes = .true.
+        found_tile_hex = (tile_byte_count > 0_i32)
+      else if (found_page_words .and. found_page_hex .and. page_word_count > 0_i32) then
         call decode_hex_to_page_words(trim(value_text), page_words, page_word_count)
       else if (pack_usage%entry_span_sample_sizes(entry_index) > 0_i32) then
         call build_cuda_pack_page_record(pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), &
@@ -794,40 +842,46 @@ contains
 
       write(key_text, '("entry",I0,"_tile_hash=")') entry_index
       value_text = ""
-      if (loaded_tile_cache) then
+      if (found_pack_record) then
+        found_tile_hash = .true.
+      else if (loaded_tile_cache) then
         call extract_payload_field_text(tile_cache_text, trim(key_text), value_text, found_tile_hash)
       else
         call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hash)
       end if
-      tile_hash = 0_i64
-      if (found_tile_hash) then
+      if (.not. found_pack_record) tile_hash = 0_i64
+      if (.not. found_pack_record .and. found_tile_hash) then
         if (.not. parse_i64_text(value_text, tile_hash)) return
       end if
 
       write(key_text, '("entry",I0,"_tile_bytes=")') entry_index
       value_text = ""
-      if (loaded_tile_cache) then
+      if (found_pack_record) then
+        found_tile_bytes = .true.
+      else if (loaded_tile_cache) then
         call extract_payload_field_text(tile_cache_text, trim(key_text), value_text, found_tile_bytes)
       else
         call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_bytes)
       end if
-      tile_byte_count = 0_i32
-      if (found_tile_bytes) then
+      if (.not. found_pack_record) tile_byte_count = 0_i32
+      if (.not. found_pack_record .and. found_tile_bytes) then
         if (.not. parse_i64_text(value_text, parsed_i64)) return
         tile_byte_count = max(0_i32, min(MAX_CUDA_PACK_TILE_BYTES, int(parsed_i64, kind=i32)))
       end if
 
       write(key_text, '("entry",I0,"_tile_hex=")') entry_index
       value_text = ""
-      if (loaded_tile_cache) then
+      if (found_pack_record) then
+        found_tile_hex = (tile_byte_count > 0_i32)
+      else if (loaded_tile_cache) then
         call extract_payload_field_text(tile_cache_text, trim(key_text), value_text, found_tile_hex)
       else
         call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hex)
       end if
-      tile_bytes = 0_i8
-      if (found_tile_bytes .and. found_tile_hex .and. tile_byte_count > 0_i32) then
+      if (.not. found_pack_record) tile_bytes = 0_i8
+      if (.not. found_pack_record .and. found_tile_bytes .and. found_tile_hex .and. tile_byte_count > 0_i32) then
         call decode_hex_to_tile_bytes(trim(value_text), tile_bytes, tile_byte_count)
-      else if (pack_usage%entry_span_sample_sizes(entry_index) > 0_i32) then
+      else if (.not. found_pack_record .and. pack_usage%entry_span_sample_sizes(entry_index) > 0_i32) then
         call build_cuda_pack_tile_record(pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), &
           pack_usage%role_codes(entry_index), pack_usage%layout_codes(entry_index), &
           pack_usage%entry_span_samples(:, entry_index), int(pack_usage%entry_span_sample_sizes(entry_index), kind=i64), &
@@ -844,6 +898,116 @@ contains
 
     loaded_cached = required_entry_found
   end subroutine hydrate_cached_pack_span_profile
+
+  subroutine extract_weight_pack_tile_cache_record(cache_text, pack_offset, pack_bytes, page_hash, page_word_count, &
+                                                   page_words, tile_hash, tile_byte_count, tile_bytes, found_record)
+    character(len=*), intent(in) :: cache_text
+    integer(i64), intent(in)     :: pack_offset
+    integer(i64), intent(in)     :: pack_bytes
+    integer(i64), intent(out)    :: page_hash
+    integer(i32), intent(out)    :: page_word_count
+    integer(i32), intent(out)    :: page_words(:)
+    integer(i64), intent(out)    :: tile_hash
+    integer(i32), intent(out)    :: tile_byte_count
+    integer(i8), intent(out)     :: tile_bytes(:)
+    logical, intent(out)         :: found_record
+    character(len=64)            :: key_text
+    character(len=64)            :: value_text
+    integer(i32)                 :: pack_index
+    integer(i32)                 :: pack_count
+    integer(i64)                 :: parsed_i64
+    integer(i64)                 :: candidate_offset
+    integer(i64)                 :: candidate_bytes
+    logical                      :: found_count
+    logical                      :: found_offset
+    logical                      :: found_bytes
+    logical                      :: found_page_hash
+    logical                      :: found_page_words
+    logical                      :: found_page_hex
+    logical                      :: found_tile_hash
+    logical                      :: found_tile_bytes
+    logical                      :: found_tile_hex
+
+    page_hash = 0_i64
+    page_word_count = 0_i32
+    page_words = 0_i32
+    tile_hash = 0_i64
+    tile_byte_count = 0_i32
+    tile_bytes = 0_i8
+    found_record = .false.
+    if (len_trim(cache_text) == 0) return
+
+    value_text = ""
+    call extract_payload_field_text(cache_text, "pack_count=", value_text, found_count)
+    if (.not. found_count) return
+    if (.not. parse_i64_text(value_text, parsed_i64)) return
+    pack_count = max(0_i32, int(parsed_i64, kind=i32))
+
+    do pack_index = 1_i32, pack_count
+      write(key_text, '("pack",I0,"_offset=")') pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_offset)
+      if (.not. found_offset) cycle
+      if (.not. parse_i64_text(value_text, candidate_offset)) cycle
+
+      write(key_text, '("pack",I0,"_bytes=")') pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_bytes)
+      if (.not. found_bytes) cycle
+      if (.not. parse_i64_text(value_text, candidate_bytes)) cycle
+
+      if (candidate_offset /= pack_offset .or. candidate_bytes /= pack_bytes) cycle
+
+      write(key_text, '("pack",I0,"_page_hash=")') pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hash)
+      if (found_page_hash) then
+        if (.not. parse_i64_text(value_text, page_hash)) page_hash = 0_i64
+      end if
+
+      write(key_text, '("pack",I0,"_page_words=")') pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_words)
+      if (found_page_words) then
+        if (parse_i64_text(value_text, parsed_i64)) then
+          page_word_count = max(0_i32, min(MAX_CUDA_PACK_PAGE_WORDS, int(parsed_i64, kind=i32)))
+        end if
+      end if
+
+      write(key_text, '("pack",I0,"_page_hex=")') pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hex)
+      if (found_page_words .and. found_page_hex .and. page_word_count > 0_i32) then
+        call decode_hex_to_page_words(trim(value_text), page_words, page_word_count)
+      end if
+
+      write(key_text, '("pack",I0,"_tile_hash=")') pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hash)
+      if (found_tile_hash) then
+        if (.not. parse_i64_text(value_text, tile_hash)) tile_hash = 0_i64
+      end if
+
+      write(key_text, '("pack",I0,"_tile_bytes=")') pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_bytes)
+      if (found_tile_bytes) then
+        if (parse_i64_text(value_text, parsed_i64)) then
+          tile_byte_count = max(0_i32, min(MAX_CUDA_PACK_TILE_BYTES, int(parsed_i64, kind=i32)))
+        end if
+      end if
+
+      write(key_text, '("pack",I0,"_tile_hex=")') pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hex)
+      if (found_tile_bytes .and. found_tile_hex .and. tile_byte_count > 0_i32) then
+        call decode_hex_to_tile_bytes(trim(value_text), tile_bytes, tile_byte_count)
+      end if
+
+      found_record = .true.
+      return
+    end do
+  end subroutine extract_weight_pack_tile_cache_record
 
   subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
     character(len=*), intent(in) :: usage_entry

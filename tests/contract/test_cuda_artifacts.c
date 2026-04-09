@@ -394,6 +394,14 @@ int main(void) {
     if (!expect_true("cuda weight artifact should retain the first packed tensor entry", command_status == 0)) return 1;
     command_status = system("grep -R \"pack4=lm_head|token_projection|weights/lm_head.bin|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("cuda weight artifact should retain the final packed tensor entry", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' | grep -q .");
+    if (!expect_true("cuda weight pack tile cache should exist", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"kind=cuda_weight_pack_tile_cache_v1\" {} +");
+    if (!expect_true("cuda weight pack tile cache should store the expected format marker", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"pack1_tile_hex=\" {} +");
+    if (!expect_true("cuda weight pack tile cache should store staged tensor tiles", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"pack1_page_hex=\" {} +");
+    if (!expect_true("cuda weight pack tile cache should store staged page records", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector -type f | grep -q .");
     if (!expect_true("cuda projector artifact file should exist", command_status == 0)) return 1;
     command_status = system("grep -R \"stage=2;.*shape0=8\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
@@ -449,6 +457,8 @@ int main(void) {
     if (!expect_true("cuda span-cache sidecar should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"kind=cuda_pack_span_cache_v4\" {} +");
     if (!expect_true("cuda span-cache sidecar should store the expected format marker", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"pack_tile_cache=\" {} +");
+    if (!expect_true("cuda span-cache sidecar should reference the weight pack tile cache", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"tile_cache=\" {} +");
     if (!expect_true("cuda span-cache sidecar should reference a staged tile cache payload", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_sample_hex=\" {} +");

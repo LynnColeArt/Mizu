@@ -3374,7 +3374,14 @@ contains
       call build_cuda_artifact_payload_text(planning_request, planning_result%chosen_plan, trim(candidate_key_text), &
         payload_text, payload_bytes)
       if (present(model)) call append_import_lineage_payload(payload_text, payload_bytes, stage_kind, model)
+      if (present(model)) then
+        call append_cuda_weight_pack_reference_payload(payload_text, payload_bytes, stage_kind, execution_route, &
+          model, metadata%payload_path)
+      end if
       if (present(cache_root)) then
+        if (present(model)) then
+          call materialize_cuda_weight_pack_tile_cache(trim(cache_root), metadata, model)
+        end if
         call append_cuda_pack_span_cache_payload(trim(cache_root), metadata, payload_text, payload_bytes)
         call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
       end if
@@ -3490,6 +3497,7 @@ contains
     character(len=(MAX_PATH_LEN * 2) + 4096)  :: tile_payload
     character(len=MAX_PATH_LEN)               :: sidecar_path
     character(len=MAX_PATH_LEN)               :: tile_path
+    character(len=MAX_PATH_LEN)               :: pack_tile_path
     character(len=MAX_PATH_LEN)               :: full_path
     character(len=MAX_PATH_LEN)               :: tile_full_path
     character(len=MAX_PATH_LEN)               :: parent_dir
@@ -3523,6 +3531,7 @@ contains
     logical                                   :: found_path
     logical                                   :: found_sample_bytes
     logical                                   :: found_sidecar
+    logical                                   :: found_pack_tile
     logical                                   :: has_entries
     logical                                   :: has_tiles
     logical                                   :: parsed_dispatch
@@ -3565,6 +3574,16 @@ contains
     has_entries = .false.
     tile_payload = "kind=cuda_pack_tile_cache_v1"
     has_tiles = .false.
+    pack_tile_path = ""
+    call extract_payload_field_text_cache(payload_text, "pack_ref_tile_cache=", pack_tile_path, found_pack_tile)
+    if (.not. found_pack_tile) then
+      call extract_payload_field_text_cache(payload_text, "pack_tile_cache=", pack_tile_path, found_pack_tile)
+    end if
+    if (found_pack_tile .and. len_trim(pack_tile_path) > 0) then
+      field_text = ""
+      write(field_text, '(";pack_tile_cache=",A)') trim(pack_tile_path)
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+    end if
     if (len_trim(tile_path) > 0) then
       field_text = ""
       write(field_text, '(";tile_cache=",A)') trim(tile_path)
@@ -3711,6 +3730,201 @@ contains
     if (len_trim(payload_path) == 0) return
     write(tile_path, '(A,".tilecache")') trim(payload_path)
   end function build_cuda_pack_tile_cache_path
+
+  function build_cuda_weight_pack_tile_cache_path(payload_path) result(tile_path)
+    character(len=*), intent(in) :: payload_path
+    character(len=MAX_PATH_LEN)  :: tile_path
+
+    tile_path = ""
+    if (len_trim(payload_path) == 0) return
+    write(tile_path, '(A,".packtiles")') trim(payload_path)
+  end function build_cuda_weight_pack_tile_cache_path
+
+  function build_cuda_weight_pack_payload_path(model, execution_route) result(payload_path)
+    type(model_state), intent(in) :: model
+    integer(i32), intent(in)      :: execution_route
+    type(model_manifest)          :: manifest
+    type(weight_cache_key)        :: key
+    character(len=MAX_CACHE_KEY_LEN) :: candidate_key_text
+    character(len=MAX_NAME_LEN)      :: fingerprint_token
+    character(len=MAX_PATH_LEN)      :: payload_path
+
+    payload_path = ""
+    if (execution_route /= MIZU_EXEC_ROUTE_CUDA) return
+    if (model%import_weight_pack_hash == 0_i64) return
+
+    call populate_manifest_identity(model, manifest)
+    call build_weight_cache_key(manifest, "unbound", "logical", MIZU_BACKEND_FAMILY_CUDA, execution_route, key)
+    candidate_key_text = append_import_pack_identity(trim(key%key_text), model)
+    fingerprint_token = build_artifact_fingerprint_token(trim(candidate_key_text))
+    payload_path = build_artifact_payload_path(MIZU_STAGE_MODEL_LOAD, MIZU_BACKEND_FAMILY_CUDA, execution_route, &
+      trim(fingerprint_token))
+  end function build_cuda_weight_pack_payload_path
+
+  subroutine append_cuda_weight_pack_reference_payload(payload_text, payload_bytes, stage_kind, execution_route, &
+                                                       model, current_payload_path)
+    character(len=*), intent(inout) :: payload_text
+    integer(i64), intent(inout)     :: payload_bytes
+    integer(i32), intent(in)        :: stage_kind
+    integer(i32), intent(in)        :: execution_route
+    type(model_state), intent(in)   :: model
+    character(len=*), intent(in)    :: current_payload_path
+    character(len=MAX_PATH_LEN)     :: weight_payload_path
+    character(len=MAX_PATH_LEN)     :: weight_tile_cache_path
+    character(len=MAX_PATH_LEN + 96) :: field_text
+
+    if (execution_route /= MIZU_EXEC_ROUTE_CUDA) return
+    if (model%import_weight_pack_hash == 0_i64) return
+
+    if (stage_kind == MIZU_STAGE_MODEL_LOAD .and. len_trim(current_payload_path) > 0) then
+      weight_payload_path = trim(current_payload_path)
+    else
+      weight_payload_path = build_cuda_weight_pack_payload_path(model, execution_route)
+    end if
+    if (len_trim(weight_payload_path) == 0) return
+
+    weight_tile_cache_path = build_cuda_weight_pack_tile_cache_path(trim(weight_payload_path))
+    if (len_trim(weight_tile_cache_path) == 0) return
+
+    if (stage_kind == MIZU_STAGE_MODEL_LOAD) then
+      field_text = ""
+      write(field_text, '(";pack_tile_cache=",A)') trim(weight_tile_cache_path)
+      call append_payload_fragment(payload_text, trim(field_text))
+    else
+      field_text = ""
+      write(field_text, '(";pack_ref_artifact=",A)') trim(weight_payload_path)
+      call append_payload_fragment(payload_text, trim(field_text))
+      field_text = ""
+      write(field_text, '(";pack_ref_tile_cache=",A)') trim(weight_tile_cache_path)
+      call append_payload_fragment(payload_text, trim(field_text))
+    end if
+
+    payload_bytes = int(len_trim(payload_text) + 1_i64, kind=i64)
+  end subroutine append_cuda_weight_pack_reference_payload
+
+  subroutine materialize_cuda_weight_pack_tile_cache(cache_root, metadata, model)
+    character(len=*), intent(in)                 :: cache_root
+    type(artifact_metadata_record), intent(in)   :: metadata
+    type(model_state), intent(in)                :: model
+    character(len=(MAX_PATH_LEN * 3) + 8192)     :: tile_payload
+    character(len=MAX_PATH_LEN)                  :: tile_path
+    character(len=MAX_PATH_LEN)                  :: tile_full_path
+    character(len=MAX_PATH_LEN)                  :: parent_dir
+    character(len=MAX_PATH_LEN + 96)             :: field_text
+    character(len=128)                           :: hex_text
+    integer(i32)                                 :: tensor_index
+    integer(i32)                                 :: pack_index
+    integer(i32)                                 :: role_code
+    integer(i32)                                 :: layout_code
+    integer(i32)                                 :: page_word_count
+    integer(i32)                                 :: tile_byte_count
+    integer(i32)                                 :: unit_id
+    integer(i32)                                 :: ios
+    integer(i64)                                 :: tensor_bytes
+    integer(i64)                                 :: pack_offset
+    integer(i64)                                 :: span_hash
+    integer(i64)                                 :: actual_sample_bytes
+    integer(i64)                                 :: page_hash
+    integer(i64)                                 :: tile_hash
+    integer(i8)                                  :: sample_bytes(64)
+    integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
+    integer(i8)                                  :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
+    logical                                      :: exists
+
+    if (metadata%backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
+    if (metadata%stage_kind /= MIZU_STAGE_MODEL_LOAD) return
+    if (len_trim(cache_root) == 0) return
+    if (len_trim(metadata%payload_path) == 0) return
+    if (.not. allocated(model%import_tensors)) return
+
+    tile_path = build_cuda_weight_pack_tile_cache_path(metadata%payload_path)
+    if (len_trim(tile_path) == 0) return
+    tile_full_path = join_cache_root_with_payload_path(cache_root, tile_path)
+    if (len_trim(tile_full_path) == 0) return
+    inquire(file=trim(tile_full_path), exist=exists)
+    if (exists) return
+
+    tile_payload = "kind=cuda_weight_pack_tile_cache_v1"
+    pack_index = 0_i32
+    pack_offset = 0_i64
+
+    do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
+      if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
+
+      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
+        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      if (tensor_bytes <= 0_i64) cycle
+
+      pack_index = pack_index + 1_i32
+      call resolve_import_span_record_cache(trim(build_import_bundle_root_path(model)), &
+        trim(model%import_tensors(tensor_index)%source_path), IMPORT_STAGE_SPAN_SAMPLE_BYTES, span_hash, &
+        actual_sample_bytes, sample_bytes)
+
+      field_text = ""
+      write(field_text, '(";pack",I0,"_offset=",I0)') pack_index, pack_offset
+      call append_payload_fragment(tile_payload, trim(field_text))
+      field_text = ""
+      write(field_text, '(";pack",I0,"_bytes=",I0)') pack_index, tensor_bytes
+      call append_payload_fragment(tile_payload, trim(field_text))
+
+      role_code = import_tensor_role_code(trim(model%import_tensors(tensor_index)%tensor_role))
+      layout_code = import_tensor_layout_code(trim(model%import_tensors(tensor_index)%layout_name))
+      field_text = ""
+      write(field_text, '(";pack",I0,"_role=",I0)') pack_index, role_code
+      call append_payload_fragment(tile_payload, trim(field_text))
+      field_text = ""
+      write(field_text, '(";pack",I0,"_layout=",I0)') pack_index, layout_code
+      call append_payload_fragment(tile_payload, trim(field_text))
+
+      if (span_hash > 0_i64) then
+        call build_cuda_pack_page_record_cache(pack_offset, tensor_bytes, role_code, layout_code, span_hash, &
+          sample_bytes, actual_sample_bytes, page_hash, page_word_count, page_words)
+        if (page_hash > 0_i64 .and. page_word_count > 0_i32) then
+          field_text = ""
+          write(field_text, '(";pack",I0,"_page_hash=",I0)') pack_index, page_hash
+          call append_payload_fragment(tile_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";pack",I0,"_page_words=",I0)') pack_index, page_word_count
+          call append_payload_fragment(tile_payload, trim(field_text))
+          hex_text = ""
+          call encode_i32_words_as_hex_cache(page_words, page_word_count, hex_text)
+          field_text = ""
+          write(field_text, '(";pack",I0,"_page_hex=",A)') pack_index, trim(hex_text)
+          call append_payload_fragment(tile_payload, trim(field_text))
+        end if
+
+        call build_cuda_pack_tile_record_cache(pack_offset, tensor_bytes, role_code, layout_code, sample_bytes, &
+          actual_sample_bytes, tile_hash, tile_byte_count, tile_bytes)
+        if (tile_hash > 0_i64 .and. tile_byte_count > 0_i32) then
+          field_text = ""
+          write(field_text, '(";pack",I0,"_tile_hash=",I0)') pack_index, tile_hash
+          call append_payload_fragment(tile_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";pack",I0,"_tile_bytes=",I0)') pack_index, tile_byte_count
+          call append_payload_fragment(tile_payload, trim(field_text))
+          hex_text = ""
+          call encode_bytes_as_hex(tile_bytes, tile_byte_count, hex_text)
+          field_text = ""
+          write(field_text, '(";pack",I0,"_tile_hex=",A)') pack_index, trim(hex_text)
+          call append_payload_fragment(tile_payload, trim(field_text))
+        end if
+      end if
+
+      pack_offset = align_import_bytes(pack_offset + tensor_bytes)
+    end do
+
+    if (pack_index <= 0_i32) return
+    field_text = ""
+    write(field_text, '(";pack_count=",I0)') pack_index
+    call append_payload_fragment(tile_payload, trim(field_text))
+
+    parent_dir = parent_directory_path(tile_full_path)
+    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+    open(newunit=unit_id, file=trim(tile_full_path), status="replace", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+    write(unit_id, "(A)", iostat=ios) trim(tile_payload)
+    close(unit_id)
+  end subroutine materialize_cuda_weight_pack_tile_cache
 
   subroutine extract_payload_dispatch_entry_cache(dispatch_entry, pack_offset, pack_bytes, role_code, layout_code, &
                                                   parsed_ok)
