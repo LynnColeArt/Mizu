@@ -70,6 +70,10 @@ Last updated: 2026-04-09
   the executor now restores offset, byte span, role, and layout from that
   typed `.packbuffer` directory before launching the bridge, so warm execution
   depends less on surrounding dispatch text
+- those same compact CUDA plans now also normalize their stored artifact
+  lineage from the resolved typed `.packbuffer` record, so warm decode stays
+  stable whether a plan identifies a packed tensor by raw offset/bytes or by
+  explicit `pack=` index
 - when those pack-owned `.packtiles` payloads are available, CUDA execution now
   prefers their materialized hash identity over raw importer-span identity, and
   the direct executor path now allocates enough artifact text capacity to carry
