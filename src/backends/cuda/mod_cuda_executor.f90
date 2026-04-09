@@ -35,6 +35,7 @@ module mod_cuda_executor
     integer(i64) :: last_pack_offset = 0_i64
     integer(i64) :: last_pack_bytes = 0_i64
     integer(i32) :: usage_count = 0_i32
+    integer(i32) :: entry_pack_indices(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     integer(i64) :: entry_offsets(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
     integer(i64) :: entry_bytes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
     integer(i32) :: role_codes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
@@ -497,6 +498,7 @@ contains
     integer(i64)                                 :: parsed_i64
     integer(i64)                                 :: entry_offset
     integer(i64)                                 :: entry_bytes
+    integer(i32)                                 :: pack_index
     integer(i32)                                 :: role_code
     integer(i32)                                 :: layout_code
     logical                                      :: found_count
@@ -586,8 +588,10 @@ contains
       entry_text = ""
       call extract_payload_field_text(payload_text, trim(field_text), entry_text, found_entry)
       if (.not. found_entry) exit
-      call extract_payload_dispatch_entry(trim(entry_text), entry_offset, entry_bytes, role_code, layout_code, parsed_ok)
+      call extract_payload_dispatch_entry(trim(entry_text), pack_index, entry_offset, entry_bytes, role_code, &
+        layout_code, parsed_ok)
       if (.not. parsed_ok) cycle
+      pack_usage%entry_pack_indices(entry_index) = pack_index
       pack_usage%entry_offsets(entry_index) = entry_offset
       pack_usage%entry_bytes(entry_index) = entry_bytes
       pack_usage%role_codes(entry_index) = role_code
@@ -763,7 +767,8 @@ contains
 
     required_entry_found = .false.
     do entry_index = 1_i32, MAX_CUDA_PACK_DISPATCH_ENTRIES
-      if (len_trim(pack_usage%entry_span_paths(entry_index)) == 0) cycle
+      if (pack_usage%entry_bytes(entry_index) <= 0_i64 .and. pack_usage%entry_pack_indices(entry_index) <= 0_i32 .and. &
+          len_trim(pack_usage%entry_span_paths(entry_index)) == 0) cycle
       required_entry_found = .true.
 
       write(key_text, '("entry",I0,"_hash=")') entry_index
@@ -816,9 +821,9 @@ contains
       tile_bytes = 0_i8
       found_pack_record = .false.
       if (loaded_pack_tile_cache) then
-        call extract_weight_pack_tile_cache_record(pack_tile_cache_text, pack_usage%entry_offsets(entry_index), &
-          pack_usage%entry_bytes(entry_index), page_hash, page_word_count, page_words, tile_hash, tile_byte_count, &
-          tile_bytes, found_pack_record)
+        call extract_weight_pack_tile_cache_record(pack_tile_cache_text, pack_usage%entry_pack_indices(entry_index), &
+          pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), page_hash, page_word_count, &
+          page_words, tile_hash, tile_byte_count, tile_bytes, found_pack_record)
       end if
       if (found_pack_record) then
         found_tile_hash = .true.
@@ -899,9 +904,11 @@ contains
     loaded_cached = required_entry_found
   end subroutine hydrate_cached_pack_span_profile
 
-  subroutine extract_weight_pack_tile_cache_record(cache_text, pack_offset, pack_bytes, page_hash, page_word_count, &
-                                                   page_words, tile_hash, tile_byte_count, tile_bytes, found_record)
+  subroutine extract_weight_pack_tile_cache_record(cache_text, pack_index, pack_offset, pack_bytes, page_hash, &
+                                                   page_word_count, page_words, tile_hash, tile_byte_count, &
+                                                   tile_bytes, found_record)
     character(len=*), intent(in) :: cache_text
+    integer(i32), intent(in)     :: pack_index
     integer(i64), intent(in)     :: pack_offset
     integer(i64), intent(in)     :: pack_bytes
     integer(i64), intent(out)    :: page_hash
@@ -913,7 +920,7 @@ contains
     logical, intent(out)         :: found_record
     character(len=64)            :: key_text
     character(len=64)            :: value_text
-    integer(i32)                 :: pack_index
+    integer(i32)                 :: candidate_pack_index
     integer(i32)                 :: pack_count
     integer(i64)                 :: parsed_i64
     integer(i64)                 :: candidate_offset
@@ -943,29 +950,33 @@ contains
     if (.not. parse_i64_text(value_text, parsed_i64)) return
     pack_count = max(0_i32, int(parsed_i64, kind=i32))
 
-    do pack_index = 1_i32, pack_count
-      write(key_text, '("pack",I0,"_offset=")') pack_index
+    do candidate_pack_index = 1_i32, pack_count
+      write(key_text, '("pack",I0,"_offset=")') candidate_pack_index
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_offset)
       if (.not. found_offset) cycle
       if (.not. parse_i64_text(value_text, candidate_offset)) cycle
 
-      write(key_text, '("pack",I0,"_bytes=")') pack_index
+      write(key_text, '("pack",I0,"_bytes=")') candidate_pack_index
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_bytes)
       if (.not. found_bytes) cycle
       if (.not. parse_i64_text(value_text, candidate_bytes)) cycle
 
-      if (candidate_offset /= pack_offset .or. candidate_bytes /= pack_bytes) cycle
+      if (pack_index > 0_i32) then
+        if (candidate_pack_index /= pack_index) cycle
+      else if (candidate_offset /= pack_offset .or. candidate_bytes /= pack_bytes) then
+        cycle
+      end if
 
-      write(key_text, '("pack",I0,"_page_hash=")') pack_index
+      write(key_text, '("pack",I0,"_page_hash=")') candidate_pack_index
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hash)
       if (found_page_hash) then
         if (.not. parse_i64_text(value_text, page_hash)) page_hash = 0_i64
       end if
 
-      write(key_text, '("pack",I0,"_page_words=")') pack_index
+      write(key_text, '("pack",I0,"_page_words=")') candidate_pack_index
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_words)
       if (found_page_words) then
@@ -974,21 +985,21 @@ contains
         end if
       end if
 
-      write(key_text, '("pack",I0,"_page_hex=")') pack_index
+      write(key_text, '("pack",I0,"_page_hex=")') candidate_pack_index
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hex)
       if (found_page_words .and. found_page_hex .and. page_word_count > 0_i32) then
         call decode_hex_to_page_words(trim(value_text), page_words, page_word_count)
       end if
 
-      write(key_text, '("pack",I0,"_tile_hash=")') pack_index
+      write(key_text, '("pack",I0,"_tile_hash=")') candidate_pack_index
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hash)
       if (found_tile_hash) then
         if (.not. parse_i64_text(value_text, tile_hash)) tile_hash = 0_i64
       end if
 
-      write(key_text, '("pack",I0,"_tile_bytes=")') pack_index
+      write(key_text, '("pack",I0,"_tile_bytes=")') candidate_pack_index
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_bytes)
       if (found_tile_bytes) then
@@ -997,7 +1008,7 @@ contains
         end if
       end if
 
-      write(key_text, '("pack",I0,"_tile_hex=")') pack_index
+      write(key_text, '("pack",I0,"_tile_hex=")') candidate_pack_index
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hex)
       if (found_tile_bytes .and. found_tile_hex .and. tile_byte_count > 0_i32) then
@@ -1044,23 +1055,28 @@ contains
     parsed_ok = (pack_bytes > 0_i64 .and. pack_offset >= 0_i64)
   end subroutine extract_payload_usage_entry
 
-  subroutine extract_payload_dispatch_entry(dispatch_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
+  subroutine extract_payload_dispatch_entry(dispatch_entry, pack_index, pack_offset, pack_bytes, role_code, &
+                                           layout_code, parsed_ok)
     character(len=*), intent(in) :: dispatch_entry
+    integer(i32), intent(out)    :: pack_index
     integer(i64), intent(out)    :: pack_offset
     integer(i64), intent(out)    :: pack_bytes
     integer(i32), intent(out)    :: role_code
     integer(i32), intent(out)    :: layout_code
     logical, intent(out)         :: parsed_ok
+    character(len=64)            :: pack_index_text
     character(len=64)            :: offset_text
     character(len=64)            :: bytes_text
     character(len=64)            :: role_text
     character(len=64)            :: layout_text
     integer(i64)                 :: parsed_i64
+    logical                      :: found_pack_index
     logical                      :: found_offset
     logical                      :: found_bytes
     logical                      :: found_role
     logical                      :: found_layout
 
+    pack_index = 0_i32
     pack_offset = 0_i64
     pack_bytes = 0_i64
     role_code = 0_i32
@@ -1068,11 +1084,17 @@ contains
     parsed_ok = .false.
     if (len_trim(dispatch_entry) == 0) return
 
+    call extract_inline_numeric_field(dispatch_entry, "pack=", pack_index_text, found_pack_index)
     call extract_inline_numeric_field(dispatch_entry, "offset=", offset_text, found_offset)
     call extract_inline_numeric_field(dispatch_entry, "bytes=", bytes_text, found_bytes)
     call extract_inline_numeric_field(dispatch_entry, "role=", role_text, found_role)
     call extract_inline_numeric_field(dispatch_entry, "layout=", layout_text, found_layout)
     if (.not. found_offset .or. .not. found_bytes .or. .not. found_role .or. .not. found_layout) return
+    if (found_pack_index) then
+      if (parse_i64_text(pack_index_text, parsed_i64)) then
+        pack_index = max(0_i32, int(parsed_i64, kind=i32))
+      end if
+    end if
     if (.not. parse_i64_text(offset_text, pack_offset)) return
     if (.not. parse_i64_text(bytes_text, pack_bytes)) return
     if (.not. parse_i64_text(role_text, parsed_i64)) return

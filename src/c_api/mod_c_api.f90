@@ -2130,6 +2130,7 @@ contains
     integer(i32)                      :: tensor_index
     integer(i32)                      :: usage_index
     integer(i32)                      :: dispatch_index
+    integer(i32)                      :: pack_index
     integer(i32)                      :: role_code
     integer(i32)                      :: layout_code
     integer(i64)                      :: tensor_bytes
@@ -2168,6 +2169,7 @@ contains
     last_pack_offset = 0_i64
     last_pack_bytes = 0_i64
     pack_offset = 0_i64
+    pack_index = 0_i32
 
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
@@ -2175,6 +2177,7 @@ contains
       tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
         model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
       if (tensor_bytes <= 0_i64) cycle
+      pack_index = pack_index + 1_i32
 
       if (import_stage_uses_tensor(stage_kind, model%import_tensors(tensor_index))) then
         usage_index = usage_index + 1_i32
@@ -2195,8 +2198,8 @@ contains
           role_code = import_tensor_role_code(trim(model%import_tensors(tensor_index)%tensor_role))
           layout_code = import_tensor_layout_code(trim(model%import_tensors(tensor_index)%layout_name))
           field_text = ""
-          write(field_text, '(";pack_dispatch",I0,"=offset=",I0,"|bytes=",I0,"|role=",I0,"|layout=",I0)') &
-            dispatch_index, pack_offset, tensor_bytes, role_code, layout_code
+          write(field_text, '(";pack_dispatch",I0,"=offset=",I0,"|bytes=",I0,"|role=",I0,"|layout=",I0,"|pack=",I0)') &
+            dispatch_index, pack_offset, tensor_bytes, role_code, layout_code, pack_index
           call append_payload_fragment(payload_text, trim(field_text))
           dispatch_hash = ieor(dispatch_hash, hash_text64(trim(field_text)))
           if (len_trim(model%import_tensors(tensor_index)%source_path) > 0) then
@@ -3510,6 +3513,7 @@ contains
     integer(i32)                              :: entry_limit
     integer(i32)                              :: role_code
     integer(i32)                              :: layout_code
+    integer(i32)                              :: pack_index
     integer(i32)                              :: unit_id
     integer(i32)                              :: ios
     integer(i64)                              :: parsed_i64
@@ -3613,6 +3617,7 @@ contains
 
       role_code = 0_i32
       layout_code = 0_i32
+      pack_index = 0_i32
       entry_offset = 0_i64
       entry_bytes = 0_i64
       parsed_dispatch = .false.
@@ -3620,7 +3625,7 @@ contains
       entry_text = ""
       call extract_payload_field_text_cache(payload_text, trim(field_text), entry_text, found_entry)
       if (found_entry) then
-        call extract_payload_dispatch_entry_cache(trim(entry_text), entry_offset, entry_bytes, role_code, &
+        call extract_payload_dispatch_entry_cache(trim(entry_text), pack_index, entry_offset, entry_bytes, role_code, &
           layout_code, parsed_dispatch)
       end if
 
@@ -3639,6 +3644,11 @@ contains
         call append_payload_fragment(sidecar_payload, trim(field_text))
       end if
       if (parsed_dispatch) then
+        if (pack_index > 0_i32) then
+          field_text = ""
+          write(field_text, '(";entry",I0,"_pack=",I0)') entry_index, pack_index
+          call append_payload_fragment(sidecar_payload, trim(field_text))
+        end if
         call build_cuda_pack_page_record_cache(entry_offset, entry_bytes, role_code, layout_code, span_hash, &
           sample_bytes, actual_sample_bytes, page_hash, page_word_count, page_words)
         if (page_hash > 0_i64 .and. page_word_count > 0_i32) then
@@ -3926,24 +3936,28 @@ contains
     close(unit_id)
   end subroutine materialize_cuda_weight_pack_tile_cache
 
-  subroutine extract_payload_dispatch_entry_cache(dispatch_entry, pack_offset, pack_bytes, role_code, layout_code, &
-                                                  parsed_ok)
+  subroutine extract_payload_dispatch_entry_cache(dispatch_entry, pack_index, pack_offset, pack_bytes, role_code, &
+                                                  layout_code, parsed_ok)
     character(len=*), intent(in) :: dispatch_entry
+    integer(i32), intent(out)    :: pack_index
     integer(i64), intent(out)    :: pack_offset
     integer(i64), intent(out)    :: pack_bytes
     integer(i32), intent(out)    :: role_code
     integer(i32), intent(out)    :: layout_code
     logical, intent(out)         :: parsed_ok
+    character(len=64)            :: pack_index_text
     character(len=64)            :: offset_text
     character(len=64)            :: bytes_text
     character(len=64)            :: role_text
     character(len=64)            :: layout_text
     integer(i64)                 :: parsed_i64
+    logical                      :: found_pack_index
     logical                      :: found_offset
     logical                      :: found_bytes
     logical                      :: found_role
     logical                      :: found_layout
 
+    pack_index = 0_i32
     pack_offset = 0_i64
     pack_bytes = 0_i64
     role_code = 0_i32
@@ -3951,11 +3965,17 @@ contains
     parsed_ok = .false.
     if (len_trim(dispatch_entry) == 0) return
 
+    call extract_inline_numeric_field_cache(dispatch_entry, "pack=", pack_index_text, found_pack_index)
     call extract_inline_numeric_field_cache(dispatch_entry, "offset=", offset_text, found_offset)
     call extract_inline_numeric_field_cache(dispatch_entry, "bytes=", bytes_text, found_bytes)
     call extract_inline_numeric_field_cache(dispatch_entry, "role=", role_text, found_role)
     call extract_inline_numeric_field_cache(dispatch_entry, "layout=", layout_text, found_layout)
     if (.not. found_offset .or. .not. found_bytes .or. .not. found_role .or. .not. found_layout) return
+    if (found_pack_index) then
+      if (parse_i64_text_cache(pack_index_text, parsed_i64)) then
+        pack_index = max(0_i32, int(parsed_i64, kind=i32))
+      end if
+    end if
     if (.not. parse_i64_text_cache(offset_text, pack_offset)) return
     if (.not. parse_i64_text_cache(bytes_text, pack_bytes)) return
     if (.not. parse_i64_text_cache(role_text, parsed_i64)) return

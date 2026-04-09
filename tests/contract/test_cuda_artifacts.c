@@ -414,6 +414,8 @@ int main(void) {
     if (!expect_true("cuda projector artifact should depend on the import-driven weight pack", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_ref_count=4\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
     if (!expect_true("cuda projector artifact should retain the packed tensor count dependency", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_ref_tile_cache=artifacts/cuda/cuda/weights/\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
+    if (!expect_true("cuda projector artifact should reference the weight-pack tile cache", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill -type f | grep -q .");
     if (!expect_true("cuda prefill artifact file should exist", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_ref_bytes=2205693952\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
@@ -426,8 +428,8 @@ int main(void) {
     if (!expect_true("cuda prefill artifact should retain the expected prefill tensor-usage bytes", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_dispatch_count=3\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain the expected compact dispatch count", command_status == 0)) return 1;
-    command_status = system("grep -R \"pack_dispatch1=offset=0|bytes=1089994752|role=1|layout=1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain the first compact dispatch entry", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_dispatch1=offset=0|bytes=1089994752|role=1|layout=1|pack=1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain the first compact dispatch entry with pack index", command_status == 0)) return 1;
     snprintf(command_buffer, sizeof(command_buffer),
              "grep -R \"pack_span_root=%s/mizu_import\" %s/artifacts/cuda/cuda/plans/prefill >/dev/null",
              fixture_runtime_root, persist_root);
@@ -445,8 +447,8 @@ int main(void) {
     if (!expect_true("cuda decode artifact should retain a decode tensor-usage record", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use_count=4\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should retain the expected decode tensor-usage count", command_status == 0)) return 1;
-    command_status = system("grep -R \"pack_dispatch4=offset=1115699200|bytes=1089994752|role=4|layout=1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
-    if (!expect_true("cuda decode artifact should retain the final compact dispatch entry", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_dispatch4=offset=1115699200|bytes=1089994752|role=4|layout=1|pack=4\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should retain the final compact dispatch entry with pack index", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_span4=weights/lm_head.bin|sample_bytes=64\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should retain the final imported tensor-span record", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_span_cache=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
@@ -459,6 +461,8 @@ int main(void) {
     if (!expect_true("cuda span-cache sidecar should store the expected format marker", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"pack_tile_cache=\" {} +");
     if (!expect_true("cuda span-cache sidecar should reference the weight pack tile cache", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_pack=1\" {} +");
+    if (!expect_true("cuda span-cache sidecar should retain compact pack indices", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"tile_cache=\" {} +");
     if (!expect_true("cuda span-cache sidecar should reference a staged tile cache payload", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_sample_hex=\" {} +");
