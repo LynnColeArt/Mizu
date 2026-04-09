@@ -137,6 +137,8 @@ program test_cuda_executor
   character(len=*), parameter :: decode_path = "artifacts/cuda/cuda/plans/decode/test.plan"
   character(len=*), parameter :: prefill_usage_path = "artifacts/cuda/cuda/plans/prefill/usage.plan"
   character(len=*), parameter :: decode_usage_path = "artifacts/cuda/cuda/plans/decode/usage.plan"
+  character(len=*), parameter :: prefill_usage_buffer_path = "artifacts/cuda/cuda/plans/prefill/usage.plan.usagebuffer"
+  character(len=*), parameter :: decode_usage_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.usagebuffer"
   character(len=*), parameter :: decode_dispatch_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.dispatchbuffer"
   character(len=*), parameter :: decode_span_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.spanbuffer"
   character(len=*), parameter :: pack_tile_cache_path = "artifacts/cuda/cuda/weights/usage.pack.packtiles"
@@ -177,6 +179,10 @@ program test_cuda_executor
     cache_root // "/artifacts/cuda/cuda/plans/decode " // cache_root // "/artifacts/cuda/cuda/weights", &
     exitstat=shell_status)
   call expect_equal_i32("cuda executor fixture dirs should be created", int(shell_status, kind=i32), 0_i32)
+  call write_pack_usage_buffer_fixture(trim(cache_root) // "/" // trim(prefill_usage_buffer_path), 3_i32, &
+    1115699200_i64, 0_i64, 1115684864_i64, 14336_i64, 1111111111111111_i64)
+  call write_pack_usage_buffer_fixture(trim(cache_root) // "/" // trim(decode_usage_buffer_path), 4_i32, &
+    2205693952_i64, 0_i64, 1115699200_i64, 1089994752_i64, 2222222222222222_i64)
   call write_pack_dispatch_buffer_fixture(trim(cache_root) // "/" // trim(decode_dispatch_buffer_path), 4_i32, &
     2222222222222222_i64)
   call write_pack_span_buffer_fixture(trim(cache_root) // "/" // trim(decode_span_buffer_path), import_bundle_root)
@@ -231,6 +237,7 @@ program test_cuda_executor
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
+    "pack_usage_buffer=" // prefill_usage_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
@@ -256,6 +263,7 @@ program test_cuda_executor
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
+    "pack_usage_buffer=" // decode_usage_buffer_path // ";" // &
     "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
     "pack_span_buffer=" // decode_span_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
@@ -878,6 +886,7 @@ program test_cuda_executor
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
+    "pack_usage_buffer=" // decode_usage_buffer_path // ";" // &
     "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
     "pack_span_buffer=" // decode_span_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
@@ -967,6 +976,7 @@ program test_cuda_executor
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
+    "pack_usage_buffer=" // decode_usage_buffer_path // ";" // &
     "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
     "pack_span_buffer=" // decode_span_buffer_path // ";" // &
     "pack_dispatch1=pack=1;" // &
@@ -1226,6 +1236,39 @@ contains
     write(unit_id) buffer_bytes(1:data_offset)
     close(unit_id)
   end subroutine write_pack_dispatch_buffer_fixture
+
+  subroutine write_pack_usage_buffer_fixture(full_path, usage_count, usage_bytes, first_pack_offset, &
+      last_pack_offset, last_pack_bytes, usage_hash)
+    character(len=*), intent(in) :: full_path
+    integer(i32), intent(in)     :: usage_count
+    integer(i64), intent(in)     :: usage_bytes
+    integer(i64), intent(in)     :: first_pack_offset
+    integer(i64), intent(in)     :: last_pack_offset
+    integer(i64), intent(in)     :: last_pack_bytes
+    integer(i64), intent(in)     :: usage_hash
+    integer(i32), parameter      :: CUDA_USAGE_BUFFER_MAGIC = int(z'42555A4D', kind=i32)
+    integer(i32), parameter      :: CUDA_USAGE_BUFFER_VERSION = 1_i32
+    integer(i32), parameter      :: CUDA_USAGE_BUFFER_HEADER_BYTES = 64_i32
+    integer(i8)                  :: buffer_bytes(CUDA_USAGE_BUFFER_HEADER_BYTES)
+    integer                      :: unit_id
+
+    buffer_bytes = 0_i8
+    call write_fixture_i32_le(buffer_bytes, 0_i32, CUDA_USAGE_BUFFER_MAGIC)
+    call write_fixture_i32_le(buffer_bytes, 4_i32, CUDA_USAGE_BUFFER_VERSION)
+    call write_fixture_i32_le(buffer_bytes, 8_i32, CUDA_USAGE_BUFFER_HEADER_BYTES)
+    call write_fixture_i32_le(buffer_bytes, 12_i32, usage_count)
+    call write_fixture_i32_le(buffer_bytes, 16_i32, usage_count)
+    call write_fixture_i32_le(buffer_bytes, 20_i32, usage_count)
+    call write_fixture_i64_le(buffer_bytes, 24_i32, usage_bytes)
+    call write_fixture_i64_le(buffer_bytes, 32_i32, first_pack_offset)
+    call write_fixture_i64_le(buffer_bytes, 40_i32, last_pack_offset)
+    call write_fixture_i64_le(buffer_bytes, 48_i32, last_pack_bytes)
+    call write_fixture_i64_le(buffer_bytes, 56_i32, usage_hash)
+
+    open(newunit=unit_id, file=trim(full_path), status="replace", access="stream", form="unformatted", action="write")
+    write(unit_id) buffer_bytes
+    close(unit_id)
+  end subroutine write_pack_usage_buffer_fixture
 
   subroutine write_pack_span_buffer_fixture(full_path, bundle_root)
     character(len=*), intent(in) :: full_path
