@@ -4,9 +4,9 @@ Last updated: 2026-04-09
 
 ## Latest Checkpoint
 
-- current milestone: CUDA weight-pack `.packtiles` caches now derive their
-  staged page/tile records from pack materialization metadata and pack
-  identity, not just sampled importer preview bytes
+- current milestone: CUDA weight-pack `.packtiles` caches now index a binary
+  `.packbuffer` warm-path payload, with readable `.packpayload` fallback, so
+  staged page/tile bytes can be hydrated from backend-owned cache records
 - current milestone: the loader now understands a first concrete imported
   asset-bundle shape through `mizu_import/`, with validated tensor, modality,
   and projector inventories layered on top of the logical root manifest
@@ -60,10 +60,11 @@ Last updated: 2026-04-09
   weight-pack metadata and pack identity instead of sampled importer preview
   bytes, so warm replay is leaning more on backend-owned materialization than
   span reconstruction
-- those same CUDA weight-pack caches now also materialize a dedicated
-  `.packpayload` sibling carrying the staged page/tile bytes themselves, and
-  the CUDA executor now hydrates that payload directly instead of depending on
-  embedded `.packtiles` previews
+- those same CUDA weight-pack caches now also materialize a dedicated binary
+  `.packbuffer` sibling carrying the staged page/tile bytes themselves, with a
+  readable `.packpayload` fallback kept alongside it, and the CUDA executor
+  now hydrates the buffer directly instead of depending on embedded
+  `.packtiles` previews
 - when those pack-owned `.packtiles` payloads are available, CUDA execution now
   prefers their materialized hash identity over raw importer-span identity, and
   the direct executor path now allocates enough artifact text capacity to carry
