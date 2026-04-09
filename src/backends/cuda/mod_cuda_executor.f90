@@ -167,12 +167,16 @@ contains
       end if
     end if
 
-    artifact_hash = positive_hash64(trim(payload_text))
-    call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
     call extract_payload_pack_usage_profile(payload_text, pack_usage)
     call hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached_spans)
     if (.not. loaded_cached_spans) call hydrate_payload_pack_span_profile(pack_usage)
-    if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
+    if (payload_uses_compact_pack_usage(payload_text)) then
+      call build_compact_pack_artifact_hash(payload_text, pack_usage, artifact_hash, has_pack_dependency)
+    else
+      artifact_hash = positive_hash64(trim(payload_text))
+      call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
+      if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
+    end if
     payload_hash = artifact_hash
     payload_hash = combine_positive_hash64(payload_hash, token_content_hash)
     payload_hash = combine_positive_hash64(payload_hash, modal_content_hash)
@@ -254,12 +258,16 @@ contains
       return
     end if
 
-    artifact_hash = positive_hash64(trim(payload_text))
-    call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
     call extract_payload_pack_usage_profile(payload_text, pack_usage)
     call hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached_spans)
     if (.not. loaded_cached_spans) call hydrate_payload_pack_span_profile(pack_usage)
-    if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
+    if (payload_uses_compact_pack_usage(payload_text)) then
+      call build_compact_pack_artifact_hash(payload_text, pack_usage, artifact_hash, has_pack_dependency)
+    else
+      artifact_hash = positive_hash64(trim(payload_text))
+      call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
+      if (has_pack_dependency) artifact_hash = combine_positive_hash64(artifact_hash, pack_dependency_hash)
+    end if
     payload_hash = artifact_hash
     call extract_cuda_context_lineage(context_bytes, context_byte_count, current_context_stage, &
       current_context_artifact_hash, lineage_known)
@@ -448,6 +456,171 @@ contains
     if (hash_value == 0_i64) hash_value = 1_i64
   end function combine_positive_hash64
 
+  logical function payload_uses_compact_pack_usage(payload_text) result(is_compact)
+    character(len=*), intent(in) :: payload_text
+
+    is_compact = (index(payload_text, "pack_use_kind=") > 0) .or. &
+      (index(payload_text, "pack_dispatch_kind=cuda_pack_dispatch_v1") > 0)
+  end function payload_uses_compact_pack_usage
+
+  subroutine build_compact_pack_artifact_hash(payload_text, pack_usage, artifact_hash, has_dependency)
+    character(len=*), intent(in)             :: payload_text
+    type(cuda_pack_usage_profile), intent(in) :: pack_usage
+    integer(i64), intent(out)                :: artifact_hash
+    logical, intent(out)                     :: has_dependency
+    integer(i64)                             :: static_dependency_hash
+    integer(i64)                             :: resolved_usage_hash
+    logical                                  :: has_static_dependency
+    logical                                  :: has_resolved_usage
+
+    artifact_hash = hash_normalized_payload_fragments(payload_text)
+    call extract_payload_pack_static_dependency_hash(payload_text, static_dependency_hash, has_static_dependency)
+    call build_resolved_pack_usage_dependency_hash(pack_usage, resolved_usage_hash, has_resolved_usage)
+
+    has_dependency = has_static_dependency .or. has_resolved_usage
+    if (has_static_dependency) artifact_hash = combine_positive_hash64(artifact_hash, static_dependency_hash)
+    if (has_resolved_usage) artifact_hash = combine_positive_hash64(artifact_hash, resolved_usage_hash)
+  end subroutine build_compact_pack_artifact_hash
+
+  integer(i64) function hash_normalized_payload_fragments(payload_text) result(hash_value)
+    character(len=*), intent(in) :: payload_text
+    character(len=CUDA_ARTIFACT_TEXT_CAPACITY) :: fragment_text
+    integer(i32)                 :: fragment_start
+    integer(i32)                 :: fragment_end
+    integer(i32)                 :: separator_index
+    integer(i32)                 :: fragment_len
+    logical                      :: hashed_any
+
+    hash_value = 1_i64
+    hashed_any = .false.
+    if (len_trim(payload_text) == 0) return
+
+    fragment_start = 1_i32
+    do while (fragment_start <= len_trim(payload_text))
+      separator_index = index(payload_text(fragment_start:len_trim(payload_text)), ";")
+      if (separator_index <= 0_i32) then
+        fragment_end = len_trim(payload_text)
+      else
+        fragment_end = fragment_start + separator_index - 2_i32
+      end if
+
+      if (fragment_end >= fragment_start) then
+        fragment_text = ""
+        fragment_len = min(fragment_end - fragment_start + 1_i32, len(fragment_text))
+        if (fragment_len > 0_i32) then
+          fragment_text(1:fragment_len) = payload_text(fragment_start:fragment_start + fragment_len - 1_i32)
+          if (len_trim(fragment_text) > 0 .and. .not. payload_fragment_is_volatile_pack_field(trim(fragment_text))) then
+            hash_value = combine_positive_hash64(hash_value, positive_hash64(trim(fragment_text)))
+            hashed_any = .true.
+          end if
+        end if
+      end if
+
+      if (separator_index <= 0_i32) exit
+      fragment_start = fragment_end + 2_i32
+    end do
+
+    if (.not. hashed_any) hash_value = positive_hash64(trim(payload_text))
+  end function hash_normalized_payload_fragments
+
+  logical function payload_fragment_is_volatile_pack_field(fragment_text) result(is_volatile)
+    character(len=*), intent(in) :: fragment_text
+
+    is_volatile = .false.
+    if (len_trim(fragment_text) == 0) return
+
+    if (fragment_has_indexed_prefix(fragment_text, "pack_use")) then
+      is_volatile = .true.
+      return
+    end if
+    if (fragment_has_indexed_prefix(fragment_text, "pack_dispatch")) then
+      is_volatile = .true.
+      return
+    end if
+    if (fragment_has_indexed_prefix(fragment_text, "pack_span")) then
+      is_volatile = .true.
+      return
+    end if
+
+    if (index(fragment_text, "pack_use_hash=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_use_bytes=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_use_count=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_use_first_offset=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_use_last_offset=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_use_last_bytes=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_dispatch_hash=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_dispatch_count=") == 1) then
+      is_volatile = .true.
+    end if
+  end function payload_fragment_is_volatile_pack_field
+
+  logical function fragment_has_indexed_prefix(fragment_text, prefix_text) result(matches_prefix)
+    character(len=*), intent(in) :: fragment_text
+    character(len=*), intent(in) :: prefix_text
+    integer(i32)                 :: prefix_len
+
+    matches_prefix = .false.
+    prefix_len = len_trim(prefix_text)
+    if (prefix_len <= 0_i32) return
+    if (len_trim(fragment_text) <= prefix_len) return
+    if (fragment_text(1:prefix_len) /= prefix_text(1:prefix_len)) return
+    if (.not. is_ascii_digit(fragment_text(prefix_len + 1_i32:prefix_len + 1_i32))) return
+    matches_prefix = .true.
+  end function fragment_has_indexed_prefix
+
+  logical function is_ascii_digit(character_text) result(is_digit)
+    character(len=*), intent(in) :: character_text
+
+    is_digit = .false.
+    if (len_trim(character_text) <= 0) return
+    is_digit = (character_text(1:1) >= "0" .and. character_text(1:1) <= "9")
+  end function is_ascii_digit
+
+  subroutine extract_payload_pack_static_dependency_hash(payload_text, dependency_hash, has_dependency)
+    character(len=*), intent(in) :: payload_text
+    integer(i64), intent(out)    :: dependency_hash
+    logical, intent(out)         :: has_dependency
+    character(len=64)            :: pack_hash_text
+    character(len=64)            :: pack_bytes_text
+    character(len=64)            :: pack_count_text
+    logical                      :: found_hash
+    logical                      :: found_bytes
+    logical                      :: found_count
+
+    dependency_hash = 0_i64
+    has_dependency = .false.
+    pack_hash_text = ""
+    pack_bytes_text = ""
+    pack_count_text = ""
+
+    call extract_payload_field_text(payload_text, "pack_ref_hash=", pack_hash_text, found_hash)
+    if (.not. found_hash) call extract_payload_field_text(payload_text, "weight_pack_hash=", pack_hash_text, found_hash)
+    call extract_payload_field_text(payload_text, "pack_ref_bytes=", pack_bytes_text, found_bytes)
+    if (.not. found_bytes) call extract_payload_field_text(payload_text, "weight_pack_bytes=", pack_bytes_text, found_bytes)
+    call extract_payload_field_text(payload_text, "pack_ref_count=", pack_count_text, found_count)
+    if (.not. found_count) call extract_payload_field_text(payload_text, "weight_pack_count=", pack_count_text, found_count)
+
+    if (found_hash) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_hash_text)))
+      has_dependency = .true.
+    end if
+    if (found_bytes) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_bytes_text)))
+      has_dependency = .true.
+    end if
+    if (found_count) then
+      dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_count_text)))
+      has_dependency = .true.
+    end if
+  end subroutine extract_payload_pack_static_dependency_hash
+
   subroutine extract_payload_pack_dependency_hash(payload_text, dependency_hash, has_dependency)
     character(len=*), intent(in) :: payload_text
     integer(i64), intent(out)    :: dependency_hash
@@ -509,6 +682,43 @@ contains
       has_dependency = .true.
     end if
   end subroutine extract_payload_pack_dependency_hash
+
+  subroutine build_resolved_pack_usage_dependency_hash(pack_usage, dependency_hash, has_dependency)
+    type(cuda_pack_usage_profile), intent(in) :: pack_usage
+    integer(i64), intent(out)                 :: dependency_hash
+    logical, intent(out)                      :: has_dependency
+    integer(i32)                              :: entry_index
+
+    dependency_hash = 0_i64
+    has_dependency = .false.
+    if (.not. pack_usage%has_usage) return
+    if (pack_usage%usage_count <= 0_i32) return
+
+    dependency_hash = combine_positive_hash64(1_i64, positive_hash64("cuda_resolved_pack_usage_v1"))
+    dependency_hash = combine_positive_hash64(dependency_hash, int(pack_usage%usage_count, kind=i64))
+    dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%usage_bytes)
+    dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%first_pack_offset)
+    dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%last_pack_offset)
+    dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%last_pack_bytes)
+
+    do entry_index = 1_i32, min(MAX_CUDA_PACK_DISPATCH_ENTRIES, pack_usage%usage_count)
+      dependency_hash = combine_positive_hash64(dependency_hash, int(pack_usage%entry_pack_indices(entry_index), kind=i64))
+      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_offsets(entry_index))
+      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_bytes(entry_index))
+      dependency_hash = combine_positive_hash64(dependency_hash, int(pack_usage%role_codes(entry_index), kind=i64))
+      dependency_hash = combine_positive_hash64(dependency_hash, int(pack_usage%layout_codes(entry_index), kind=i64))
+      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_span_hashes(entry_index))
+      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_span_bytes(entry_index))
+      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_page_hashes(entry_index))
+      dependency_hash = combine_positive_hash64(dependency_hash, &
+        int(pack_usage%entry_page_word_counts(entry_index), kind=i64))
+      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_tile_hashes(entry_index))
+      dependency_hash = combine_positive_hash64(dependency_hash, &
+        int(pack_usage%entry_tile_byte_counts(entry_index), kind=i64))
+    end do
+
+    has_dependency = .true.
+  end subroutine build_resolved_pack_usage_dependency_hash
 
   subroutine extract_payload_pack_usage_profile(payload_text, pack_usage)
     character(len=*), intent(in)        :: payload_text
@@ -786,6 +996,7 @@ contains
     logical                                      :: required_entry_found
     logical                                      :: found_pack_record
     logical                                      :: found_materialized_hash
+    integer(i32)                                 :: resolved_pack_index
     integer(i64)                                 :: resolved_entry_offset
     integer(i64)                                 :: resolved_entry_bytes
     integer(i32)                                 :: resolved_role_code
@@ -954,6 +1165,7 @@ contains
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hex)
       page_words = 0_i32
+      resolved_pack_index = 0_i32
       resolved_entry_offset = 0_i64
       resolved_entry_bytes = 0_i64
       resolved_role_code = 0_i32
@@ -966,12 +1178,13 @@ contains
         call extract_weight_pack_tile_cache_record(pack_tile_cache_text, pack_tile_payload_text, &
           pack_tile_buffer_bytes, pack_tile_buffer_count, loaded_pack_tile_buffer, &
           pack_usage%entry_pack_indices(entry_index), pack_usage%entry_offsets(entry_index), &
-          pack_usage%entry_bytes(entry_index), pack_usage%entry_span_hashes(entry_index), &
+          pack_usage%entry_bytes(entry_index), resolved_pack_index, pack_usage%entry_span_hashes(entry_index), &
           pack_usage%entry_span_bytes(entry_index), resolved_entry_offset, resolved_entry_bytes, &
           resolved_role_code, resolved_layout_code, page_hash, page_word_count, page_words, tile_hash, &
           tile_byte_count, tile_bytes, materialized_hash, found_materialized_hash, found_pack_record)
       end if
       if (found_pack_record) then
+        if (resolved_pack_index > 0_i32) pack_usage%entry_pack_indices(entry_index) = resolved_pack_index
         if (resolved_entry_offset >= 0_i64) pack_usage%entry_offsets(entry_index) = resolved_entry_offset
         if (resolved_entry_bytes > 0_i64) pack_usage%entry_bytes(entry_index) = resolved_entry_bytes
         if (resolved_role_code > 0_i32) pack_usage%role_codes(entry_index) = resolved_role_code
@@ -1064,7 +1277,8 @@ contains
   end subroutine hydrate_cached_pack_span_profile
 
   subroutine extract_weight_pack_tile_cache_record(cache_text, payload_text, buffer_bytes, buffer_count, buffer_loaded, &
-                                                   pack_index, pack_offset, pack_bytes, span_hash, span_bytes, &
+                                                   pack_index, pack_offset, pack_bytes, resolved_pack_index, &
+                                                   span_hash, span_bytes, &
                                                    resolved_pack_offset, resolved_pack_bytes, resolved_role_code, &
                                                    resolved_layout_code, page_hash, page_word_count, page_words, &
                                                    tile_hash, tile_byte_count, tile_bytes, materialized_hash, &
@@ -1077,6 +1291,7 @@ contains
     integer(i32), intent(in)     :: pack_index
     integer(i64), intent(in)     :: pack_offset
     integer(i64), intent(in)     :: pack_bytes
+    integer(i32), intent(out)    :: resolved_pack_index
     integer(i64), intent(out)    :: span_hash
     integer(i64), intent(out)    :: span_bytes
     integer(i64), intent(out)    :: resolved_pack_offset
@@ -1125,6 +1340,7 @@ contains
     integer(i32)                 :: candidate_word_count
     integer(i32)                 :: candidate_tile_byte_count
 
+    resolved_pack_index = 0_i32
     span_hash = 0_i64
     span_bytes = 0_i64
     resolved_pack_offset = 0_i64
@@ -1143,7 +1359,7 @@ contains
     if (len_trim(cache_text) == 0) return
     if (buffer_loaded) then
       call extract_weight_pack_tile_buffer_record(buffer_bytes, buffer_count, pack_index, pack_offset, pack_bytes, &
-        span_hash, span_bytes, resolved_pack_offset, resolved_pack_bytes, resolved_role_code, &
+        resolved_pack_index, span_hash, span_bytes, resolved_pack_offset, resolved_pack_bytes, resolved_role_code, &
         resolved_layout_code, page_hash, page_word_count, page_words, tile_hash, tile_byte_count, tile_bytes, &
         materialized_hash, found_materialized_hash, found_record)
       if (found_record) return
@@ -1174,6 +1390,7 @@ contains
         cycle
       end if
 
+      resolved_pack_index = candidate_pack_index
       resolved_pack_offset = candidate_offset
       resolved_pack_bytes = candidate_bytes
 
@@ -1338,7 +1555,8 @@ contains
   end subroutine extract_weight_pack_tile_cache_record
 
   subroutine extract_weight_pack_tile_buffer_record(buffer_bytes, buffer_count, pack_index, pack_offset, pack_bytes, &
-                                                    span_hash, span_bytes, resolved_pack_offset, resolved_pack_bytes, &
+                                                    resolved_pack_index, span_hash, span_bytes, resolved_pack_offset, &
+                                                    resolved_pack_bytes, &
                                                     resolved_role_code, resolved_layout_code, page_hash, &
                                                     page_word_count, page_words, tile_hash, tile_byte_count, &
                                                     tile_bytes, materialized_hash, found_materialized_hash, found_record)
@@ -1351,6 +1569,7 @@ contains
     integer(i32), intent(in)   :: pack_index
     integer(i64), intent(in)   :: pack_offset
     integer(i64), intent(in)   :: pack_bytes
+    integer(i32), intent(out)  :: resolved_pack_index
     integer(i64), intent(out)  :: span_hash
     integer(i64), intent(out)  :: span_bytes
     integer(i64), intent(out)  :: resolved_pack_offset
@@ -1394,6 +1613,7 @@ contains
     integer(i64)               :: candidate_materialized_hash
     logical                    :: read_ok
 
+    resolved_pack_index = 0_i32
     span_hash = 0_i64
     span_bytes = 0_i64
     resolved_pack_offset = 0_i64
@@ -1492,6 +1712,7 @@ contains
 
       span_hash = candidate_span_hash
       span_bytes = max(0_i64, candidate_span_bytes)
+      resolved_pack_index = candidate_pack_index
       resolved_pack_offset = candidate_pack_offset
       resolved_pack_bytes = candidate_pack_bytes
       resolved_role_code = candidate_role_code

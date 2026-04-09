@@ -55,6 +55,7 @@ program test_cuda_executor
   integer(i32) :: pack_dispatch_count
   integer      :: shell_status
   integer(i64) :: artifact_hash
+  integer(i64) :: usage_decode_artifact_hash
   integer(i64) :: pack_usage_hash
   integer(i64) :: pack_usage_bytes
   integer(i64) :: first_pack_offset
@@ -854,6 +855,11 @@ program test_cuda_executor
     MIZU_STATUS_OK)
   call expect_true("cuda decode should reflect direct pack-owned buffer bytes", &
     token_value_without_pack_cache /= token_value_with_pack_cache)
+  call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
+    artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
+    summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda decode with rewritten pack-owned buffer should expose readable lineage", snapshot_valid)
+  usage_decode_artifact_hash = artifact_hash
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
@@ -904,6 +910,14 @@ program test_cuda_executor
     pack_dispatch_role_codes(4), 4_i32)
   call expect_equal_i32("cuda decode pack-index override should restore the final tensor layout from pack buffer", &
     pack_dispatch_layout_codes(4), 1_i32)
+  call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
+    artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
+    summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda decode pack-index override should preserve readable lineage", snapshot_valid)
+  call expect_equal_i64("cuda decode pack-index override should preserve artifact lineage from the pack buffer", &
+    artifact_hash, usage_decode_artifact_hash)
+  call expect_equal_i32("cuda decode with pack-index override should preserve token identity from the pack buffer", &
+    token_value_with_pack_index_override, token_value_without_pack_cache)
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
