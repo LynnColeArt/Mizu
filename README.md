@@ -142,6 +142,9 @@ Current implementation status:
   that weight-pack cache so the CUDA executor can prefer pack-owned page/tile
   records before falling back to plan-local `.tilecache` payloads or raw span
   samples
+- warm CUDA replay now stays stable even if the plan-local `.spancache` and
+  `.tilecache` files are removed, as long as that pack-owned `.packtiles`
+  cache remains available under `cache_root`
 - CUDA projector, prefill, and decode artifacts now also stamp explicit
   `pack=` indices into compact dispatch records, so warm execution can address
   the weight-pack tile cache by packed entry identity instead of relying only

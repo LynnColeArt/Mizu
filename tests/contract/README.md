@@ -75,9 +75,9 @@ These suites cover the `API-C*` portion of
   - verifies that warm replay still reproduces the same decode token even
     after imported tensor bytes are mutated, as long as the persisted
     `.spancache` sidecars are present
-  - verifies the same public CUDA flow still executes cleanly after those
-    `.spancache` sidecars are removed, exercising the direct importer-span
-    fallback path
+  - verifies the same public CUDA flow still reproduces the same decode token
+    after those plan-local `.spancache` and `.tilecache` files are removed, as
+    long as the pack-owned weight `.packtiles` cache remains available
   - verifies that narrow public CUDA flow emits a stable positive placeholder
     token and reproduces it for the same staged multimodal context
 - `test_go_binding_smoke.go`
