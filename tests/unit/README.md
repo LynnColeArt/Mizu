@@ -148,6 +148,9 @@ bodies.
     `pack_dispatch_buffer=` sidecar plus `.packbuffer` even when textual
     `pack_use*` entries are removed from the plan payload
   - validates that same compact CUDA decode path can now replay from a binary
+    `pack_usage_buffer=` sidecar even when textual `pack_use*` summary fields
+    are removed from the plan payload
+  - validates that same compact CUDA decode path can now replay from a binary
     `pack_span_buffer=` sidecar even when textual `pack_span*` entries are
     removed from the plan payload
   - validates those same compact CUDA decode plans now keep token identity and

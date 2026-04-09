@@ -141,6 +141,7 @@ These are the highest-leverage next tasks.
 - [x] Collapse generated CUDA `pack_dispatch*` records to `pack=<index>` entries and recover dispatch metadata from `pack_use*` plus `.packbuffer`
 - [x] Materialize CUDA `.dispatchbuffer` sidecars so warm plans can recover selected packed-entry indices without textual `pack_use*` recovery
 - [x] Emit importer-rooted CUDA `pack_span*` records for prefill and decode
+- [x] Materialize CUDA `.usagebuffer` sidecars so warm plans can recover `pack_use_*` summary without textual summary fields
 - [x] Materialize CUDA `.spanbuffer` sidecars so warm plans can recover sampled span identity without textual `pack_span*` recovery
 - [x] Persist staged CUDA pack-page records beside cached tensor spans
 - [x] Persist staged CUDA tensor-tile records beside cached tensor spans

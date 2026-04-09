@@ -182,6 +182,10 @@ Current implementation status:
   `pack_span_buffer=` references to a tiny binary span-identity sidecar, so
   warm replay can recover sampled span hashes and sample bytes without
   depending on textual `pack_span*` recovery
+- those same CUDA prefill/decode artifacts now also carry direct
+  `pack_usage_buffer=` references to a tiny binary usage-summary sidecar, so
+  warm replay can recover `pack_use_*` count/byte/offset/hash identity without
+  depending on textual `pack_use*` summary fields
 - compact CUDA warm artifact lineage now treats those binary sidecar paths as
   transport details and derives identity from resolved pack/span content
   instead, so replay stays stable when equivalent plans differ only in sidecar
@@ -199,6 +203,9 @@ Current implementation status:
   unit suite still pins exact deterministic executor outputs per bridge variant
 - runtime workspace reservations now back a real reusable host scratch buffer,
   and the CUDA bridge receives that buffer during stage execution
+- compact CUDA decode plans can now replay from binary usage, dispatch, and
+  span sidecars together, even when textual `pack_use*` summary and
+  `pack_span*` records are removed from the plan payload
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
   sources change, which keeps the public-path tests from silently running stale
   executables

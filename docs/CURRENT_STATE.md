@@ -19,6 +19,11 @@ Last updated: 2026-04-09
   binary `.spanbuffer` sidecar carrying sampled span hashes and sampled bytes,
   and warm execution now prefers that binary span-identity sidecar over
   textual `pack_span*` recovery when the cached sidecars are present
+- current milestone: CUDA prefill/decode plans now also materialize a small
+  binary `.usagebuffer` sidecar carrying `pack_use_*` count/byte/offset/hash
+  summary, and warm execution now prefers that binary usage-summary sidecar
+  over textual `pack_use*` summary recovery when the cached sidecars are
+  present
 - current milestone: compact CUDA warm artifact lineage now treats binary
   sidecar paths as transport details and derives identity from resolved
   pack/span content instead, so warm replay stays stable when equivalent plans
@@ -112,6 +117,10 @@ Last updated: 2026-04-09
   `pack_span_buffer=` references to a tiny binary span-identity sidecar, so
   warm replay can recover sampled span hashes and sample bytes without
   depending on textual `pack_span*` recovery
+- those same CUDA prefill/decode artifacts now also carry direct
+  `pack_usage_buffer=` references to a tiny binary usage-summary sidecar, so
+  warm replay can recover `pack_use_*` count/byte/offset/hash identity without
+  depending on textual `pack_use*` summary fields
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact
