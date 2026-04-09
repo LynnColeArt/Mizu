@@ -37,6 +37,7 @@ program test_cuda_executor
   integer(i32) :: token_value_page_5
   integer(i32) :: token_value_with_other_context
   integer(i32) :: token_value_with_pack_cache
+  integer(i32) :: token_value_with_pack_index_override
   integer(i32) :: token_value_without_pack_cache
   integer(i32) :: context_byte_count_a
   integer(i32) :: context_byte_count_b
@@ -853,6 +854,56 @@ program test_cuda_executor
     MIZU_STATUS_OK)
   call expect_true("cuda decode should reflect direct pack-owned buffer bytes", &
     token_value_without_pack_cache /= token_value_with_pack_cache)
+
+  open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
+  write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
+    "pack_use_kind=cuda_decode_pack_usage_v1;" // &
+    "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
+    "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
+    "pack_span_root=" // import_bundle_root // ";" // &
+    "pack_use1=token_embeddings|embedding_table|offset=0|" // &
+    "bytes=1089994752|layout=row_major;" // &
+    "pack_dispatch1=offset=17|bytes=19|role=8|layout=9|pack=1;" // &
+    "pack_span1=weights/token_embeddings.bin|sample_bytes=64;" // &
+    "pack_use2=decoder_blocks|decoder_stack|offset=1089994752|" // &
+    "bytes=25690112|layout=packed;" // &
+    "pack_dispatch2=offset=23|bytes=29|role=7|layout=8|pack=2;" // &
+    "pack_span2=weights/decoder_blocks.bin|sample_bytes=64;" // &
+    "pack_use3=final_norm|normalization|offset=1115684864|" // &
+    "bytes=14336|layout=vector;" // &
+    "pack_dispatch3=offset=31|bytes=37|role=6|layout=7|pack=3;" // &
+    "pack_span3=weights/final_norm.bin|sample_bytes=64;" // &
+    "pack_use4=lm_head|token_projection|offset=1115699200|" // &
+    "bytes=1089994752|layout=row_major;" // &
+    "pack_dispatch4=offset=41|bytes=43|role=5|layout=6|pack=4;" // &
+    "pack_span4=weights/lm_head.bin|sample_bytes=64;" // &
+    "pack_dispatch_count=4;pack_use_count=4;pack_use_bytes=2205693952;" // &
+    "pack_use_first_offset=0;pack_use_last_offset=1115699200;" // &
+    "pack_use_last_bytes=1089994752;" // &
+    "pack_use_hash=2222222222222222"
+  close(13)
+
+  call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
+    token_value_with_pack_index_override, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
+  call expect_equal_i32("cuda decode with pack-index override should still succeed", status_code, MIZU_STATUS_OK)
+  call extract_cuda_context_pack_dispatch_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, &
+    pack_dispatch_offsets, pack_dispatch_bytes, pack_dispatch_role_codes, pack_dispatch_layout_codes, &
+    pack_dispatch_count, snapshot_valid)
+  call expect_true("cuda decode pack-index override snapshot should be readable", snapshot_valid)
+  call expect_equal_i32("cuda decode pack-index override should keep four live entries", pack_dispatch_count, 4_i32)
+  call expect_equal_i64("cuda decode pack-index override should restore the first tensor offset from pack buffer", &
+    pack_dispatch_offsets(1), 0_i64)
+  call expect_equal_i64("cuda decode pack-index override should restore the second tensor offset from pack buffer", &
+    pack_dispatch_offsets(2), 1089994752_i64)
+  call expect_equal_i64("cuda decode pack-index override should restore the token projection bytes from pack buffer", &
+    pack_dispatch_bytes(4), 1089994752_i64)
+  call expect_equal_i32("cuda decode pack-index override should restore the first tensor role from pack buffer", &
+    pack_dispatch_role_codes(1), 1_i32)
+  call expect_equal_i32("cuda decode pack-index override should restore the final tensor role from pack buffer", &
+    pack_dispatch_role_codes(4), 4_i32)
+  call expect_equal_i32("cuda decode pack-index override should restore the final tensor layout from pack buffer", &
+    pack_dispatch_layout_codes(4), 1_i32)
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &

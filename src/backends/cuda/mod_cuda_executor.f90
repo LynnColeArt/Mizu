@@ -786,6 +786,10 @@ contains
     logical                                      :: required_entry_found
     logical                                      :: found_pack_record
     logical                                      :: found_materialized_hash
+    integer(i64)                                 :: resolved_entry_offset
+    integer(i64)                                 :: resolved_entry_bytes
+    integer(i32)                                 :: resolved_role_code
+    integer(i32)                                 :: resolved_layout_code
     integer(i64)                                 :: page_hash
     integer(i32)                                 :: page_word_count
     integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
@@ -950,6 +954,10 @@ contains
       value_text = ""
       call extract_payload_field_text(cache_text, trim(key_text), value_text, found_page_hex)
       page_words = 0_i32
+      resolved_entry_offset = 0_i64
+      resolved_entry_bytes = 0_i64
+      resolved_role_code = 0_i32
+      resolved_layout_code = 0_i32
       tile_hash = 0_i64
       tile_byte_count = 0_i32
       tile_bytes = 0_i8
@@ -959,10 +967,15 @@ contains
           pack_tile_buffer_bytes, pack_tile_buffer_count, loaded_pack_tile_buffer, &
           pack_usage%entry_pack_indices(entry_index), pack_usage%entry_offsets(entry_index), &
           pack_usage%entry_bytes(entry_index), pack_usage%entry_span_hashes(entry_index), &
-          pack_usage%entry_span_bytes(entry_index), page_hash, page_word_count, page_words, tile_hash, &
+          pack_usage%entry_span_bytes(entry_index), resolved_entry_offset, resolved_entry_bytes, &
+          resolved_role_code, resolved_layout_code, page_hash, page_word_count, page_words, tile_hash, &
           tile_byte_count, tile_bytes, materialized_hash, found_materialized_hash, found_pack_record)
       end if
       if (found_pack_record) then
+        if (resolved_entry_offset >= 0_i64) pack_usage%entry_offsets(entry_index) = resolved_entry_offset
+        if (resolved_entry_bytes > 0_i64) pack_usage%entry_bytes(entry_index) = resolved_entry_bytes
+        if (resolved_role_code > 0_i32) pack_usage%role_codes(entry_index) = resolved_role_code
+        if (resolved_layout_code > 0_i32) pack_usage%layout_codes(entry_index) = resolved_layout_code
         if (found_materialized_hash .and. materialized_hash > 0_i64) then
           pack_usage%entry_span_hashes(entry_index) = materialized_hash
           if (pack_usage%entry_bytes(entry_index) > 0_i64) then
@@ -1044,14 +1057,18 @@ contains
       end if
     end do
 
+    call refresh_compact_pack_usage_summary(pack_usage)
+
     if (allocated(pack_tile_buffer_bytes)) deallocate(pack_tile_buffer_bytes)
     loaded_cached = required_entry_found .and. (loaded_span_cache .or. loaded_pack_tile_cache)
   end subroutine hydrate_cached_pack_span_profile
 
   subroutine extract_weight_pack_tile_cache_record(cache_text, payload_text, buffer_bytes, buffer_count, buffer_loaded, &
                                                    pack_index, pack_offset, pack_bytes, span_hash, span_bytes, &
-                                                   page_hash, page_word_count, page_words, tile_hash, tile_byte_count, &
-                                                   tile_bytes, materialized_hash, found_materialized_hash, found_record)
+                                                   resolved_pack_offset, resolved_pack_bytes, resolved_role_code, &
+                                                   resolved_layout_code, page_hash, page_word_count, page_words, &
+                                                   tile_hash, tile_byte_count, tile_bytes, materialized_hash, &
+                                                   found_materialized_hash, found_record)
     character(len=*), intent(in) :: cache_text
     character(len=*), intent(in) :: payload_text
     integer(i8), intent(in)      :: buffer_bytes(:)
@@ -1062,6 +1079,10 @@ contains
     integer(i64), intent(in)     :: pack_bytes
     integer(i64), intent(out)    :: span_hash
     integer(i64), intent(out)    :: span_bytes
+    integer(i64), intent(out)    :: resolved_pack_offset
+    integer(i64), intent(out)    :: resolved_pack_bytes
+    integer(i32), intent(out)    :: resolved_role_code
+    integer(i32), intent(out)    :: resolved_layout_code
     integer(i64), intent(out)    :: page_hash
     integer(i32), intent(out)    :: page_word_count
     integer(i32), intent(out)    :: page_words(:)
@@ -1088,6 +1109,8 @@ contains
     logical                      :: found_page_data_bytes
     logical                      :: found_span_hash
     logical                      :: found_span_bytes
+    logical                      :: found_role
+    logical                      :: found_layout
     logical                      :: found_tile_hash
     logical                      :: found_tile_bytes
     logical                      :: found_tile_hex
@@ -1104,6 +1127,10 @@ contains
 
     span_hash = 0_i64
     span_bytes = 0_i64
+    resolved_pack_offset = 0_i64
+    resolved_pack_bytes = 0_i64
+    resolved_role_code = 0_i32
+    resolved_layout_code = 0_i32
     page_hash = 0_i64
     page_word_count = 0_i32
     page_words = 0_i32
@@ -1116,7 +1143,8 @@ contains
     if (len_trim(cache_text) == 0) return
     if (buffer_loaded) then
       call extract_weight_pack_tile_buffer_record(buffer_bytes, buffer_count, pack_index, pack_offset, pack_bytes, &
-        span_hash, span_bytes, page_hash, page_word_count, page_words, tile_hash, tile_byte_count, tile_bytes, &
+        span_hash, span_bytes, resolved_pack_offset, resolved_pack_bytes, resolved_role_code, &
+        resolved_layout_code, page_hash, page_word_count, page_words, tile_hash, tile_byte_count, tile_bytes, &
         materialized_hash, found_materialized_hash, found_record)
       if (found_record) return
     end if
@@ -1144,6 +1172,27 @@ contains
         if (candidate_pack_index /= pack_index) cycle
       else if (candidate_offset /= pack_offset .or. candidate_bytes /= pack_bytes) then
         cycle
+      end if
+
+      resolved_pack_offset = candidate_offset
+      resolved_pack_bytes = candidate_bytes
+
+      write(key_text, '("pack",I0,"_role=")') candidate_pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_role)
+      if (found_role) then
+        if (parse_i64_text(value_text, parsed_i64)) then
+          resolved_role_code = max(0_i32, int(parsed_i64, kind=i32))
+        end if
+      end if
+
+      write(key_text, '("pack",I0,"_layout=")') candidate_pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_layout)
+      if (found_layout) then
+        if (parse_i64_text(value_text, parsed_i64)) then
+          resolved_layout_code = max(0_i32, int(parsed_i64, kind=i32))
+        end if
       end if
 
       write(key_text, '("pack",I0,"_span_hash=")') candidate_pack_index
@@ -1289,9 +1338,10 @@ contains
   end subroutine extract_weight_pack_tile_cache_record
 
   subroutine extract_weight_pack_tile_buffer_record(buffer_bytes, buffer_count, pack_index, pack_offset, pack_bytes, &
-                                                    span_hash, span_bytes, page_hash, page_word_count, page_words, &
-                                                    tile_hash, tile_byte_count, tile_bytes, materialized_hash, &
-                                                    found_materialized_hash, found_record)
+                                                    span_hash, span_bytes, resolved_pack_offset, resolved_pack_bytes, &
+                                                    resolved_role_code, resolved_layout_code, page_hash, &
+                                                    page_word_count, page_words, tile_hash, tile_byte_count, &
+                                                    tile_bytes, materialized_hash, found_materialized_hash, found_record)
     integer(i32), parameter    :: CUDA_PACK_BUFFER_MAGIC = int(z'42505A4D', kind=i32)
     integer(i32), parameter    :: CUDA_PACK_BUFFER_VERSION = 1_i32
     integer(i32), parameter    :: CUDA_PACK_BUFFER_HEADER_BYTES = 32_i32
@@ -1303,6 +1353,10 @@ contains
     integer(i64), intent(in)   :: pack_bytes
     integer(i64), intent(out)  :: span_hash
     integer(i64), intent(out)  :: span_bytes
+    integer(i64), intent(out)  :: resolved_pack_offset
+    integer(i64), intent(out)  :: resolved_pack_bytes
+    integer(i32), intent(out)  :: resolved_role_code
+    integer(i32), intent(out)  :: resolved_layout_code
     integer(i64), intent(out)  :: page_hash
     integer(i32), intent(out)  :: page_word_count
     integer(i32), intent(out)  :: page_words(:)
@@ -1342,6 +1396,10 @@ contains
 
     span_hash = 0_i64
     span_bytes = 0_i64
+    resolved_pack_offset = 0_i64
+    resolved_pack_bytes = 0_i64
+    resolved_role_code = 0_i32
+    resolved_layout_code = 0_i32
     page_hash = 0_i64
     page_word_count = 0_i32
     page_words = 0_i32
@@ -1434,6 +1492,10 @@ contains
 
       span_hash = candidate_span_hash
       span_bytes = max(0_i64, candidate_span_bytes)
+      resolved_pack_offset = candidate_pack_offset
+      resolved_pack_bytes = candidate_pack_bytes
+      resolved_role_code = candidate_role_code
+      resolved_layout_code = candidate_layout_code
       page_hash = candidate_page_hash
       page_word_count = decoded_page_word_count
       tile_hash = candidate_tile_hash
@@ -1444,6 +1506,34 @@ contains
       return
     end do
   end subroutine extract_weight_pack_tile_buffer_record
+
+  subroutine refresh_compact_pack_usage_summary(pack_usage)
+    type(cuda_pack_usage_profile), intent(inout) :: pack_usage
+    integer(i32)                                 :: entry_index
+    integer(i32)                                 :: live_count
+
+    live_count = 0_i32
+    pack_usage%usage_bytes = 0_i64
+    pack_usage%first_pack_offset = 0_i64
+    pack_usage%last_pack_offset = 0_i64
+    pack_usage%last_pack_bytes = 0_i64
+
+    do entry_index = 1_i32, MAX_CUDA_PACK_DISPATCH_ENTRIES
+      if (pack_usage%entry_bytes(entry_index) <= 0_i64) cycle
+      live_count = live_count + 1_i32
+      pack_usage%usage_bytes = pack_usage%usage_bytes + pack_usage%entry_bytes(entry_index)
+      if (live_count == 1_i32) pack_usage%first_pack_offset = pack_usage%entry_offsets(entry_index)
+      pack_usage%last_pack_offset = pack_usage%entry_offsets(entry_index)
+      pack_usage%last_pack_bytes = pack_usage%entry_bytes(entry_index)
+    end do
+
+    if (live_count > 0_i32) then
+      pack_usage%usage_count = live_count
+      pack_usage%has_usage = .true.
+    else
+      pack_usage%has_usage = (pack_usage%usage_count > 0_i32)
+    end if
+  end subroutine refresh_compact_pack_usage_summary
 
   subroutine extract_payload_usage_entry(usage_entry, pack_offset, pack_bytes, role_code, layout_code, parsed_ok)
     character(len=*), intent(in) :: usage_entry
