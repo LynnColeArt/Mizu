@@ -3876,6 +3876,16 @@ contains
       field_text = ""
       write(field_text, '(";pack",I0,"_bytes=",I0)') pack_index, tensor_bytes
       call append_payload_fragment(tile_payload, trim(field_text))
+      if (span_hash > 0_i64) then
+        field_text = ""
+        write(field_text, '(";pack",I0,"_span_hash=",I0)') pack_index, span_hash
+        call append_payload_fragment(tile_payload, trim(field_text))
+      end if
+      if (actual_sample_bytes > 0_i64) then
+        field_text = ""
+        write(field_text, '(";pack",I0,"_span_bytes=",I0)') pack_index, actual_sample_bytes
+        call append_payload_fragment(tile_payload, trim(field_text))
+      end if
 
       role_code = import_tensor_role_code(trim(model%import_tensors(tensor_index)%tensor_role))
       layout_code = import_tensor_layout_code(trim(model%import_tensors(tensor_index)%layout_name))

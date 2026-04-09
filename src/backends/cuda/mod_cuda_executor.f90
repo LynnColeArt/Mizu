@@ -703,6 +703,7 @@ contains
     logical                                      :: found_tile_bytes
     logical                                      :: found_tile_hex
     logical                                      :: loaded_ok
+    logical                                      :: loaded_span_cache
     logical                                      :: loaded_pack_tile_cache
     logical                                      :: loaded_tile_cache
     logical                                      :: required_entry_found
@@ -720,14 +721,21 @@ contains
     cache_path = ""
     call extract_payload_field_text(payload_text, "pack_span_cache=", cache_path, found_cache_path)
     if (.not. found_cache_path) cache_path = build_pack_span_cache_artifact_path(artifact_path)
-    if (len_trim(cache_path) == 0) return
-
-    call load_cuda_artifact_payload(cache_root, trim(cache_path), cache_text, loaded_ok)
-    if (.not. loaded_ok) return
-    if (index(cache_text, "kind=cuda_pack_span_cache_v1") <= 0 .and. &
-        index(cache_text, "kind=cuda_pack_span_cache_v2") <= 0 .and. &
-        index(cache_text, "kind=cuda_pack_span_cache_v3") <= 0 .and. &
-        index(cache_text, "kind=cuda_pack_span_cache_v4") <= 0) return
+    cache_text = ""
+    loaded_span_cache = .false.
+    if (len_trim(cache_path) > 0) then
+      call load_cuda_artifact_payload(cache_root, trim(cache_path), cache_text, loaded_ok)
+      if (loaded_ok) then
+        if (index(cache_text, "kind=cuda_pack_span_cache_v1") > 0 .or. &
+            index(cache_text, "kind=cuda_pack_span_cache_v2") > 0 .or. &
+            index(cache_text, "kind=cuda_pack_span_cache_v3") > 0 .or. &
+            index(cache_text, "kind=cuda_pack_span_cache_v4") > 0) then
+          loaded_span_cache = .true.
+        else
+          cache_text = ""
+        end if
+      end if
+    end if
 
     pack_tile_cache_text = ""
     pack_tile_cache_path = ""
@@ -771,28 +779,31 @@ contains
           len_trim(pack_usage%entry_span_paths(entry_index)) == 0) cycle
       required_entry_found = .true.
 
-      write(key_text, '("entry",I0,"_hash=")') entry_index
-      value_text = ""
-      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_hash)
-      if (.not. found_hash) return
-      if (.not. parse_i64_text(value_text, parsed_i64)) return
-      if (parsed_i64 <= 0_i64) return
-      pack_usage%entry_span_hashes(entry_index) = parsed_i64
-
-      write(key_text, '("entry",I0,"_bytes=")') entry_index
-      value_text = ""
-      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_bytes)
-      if (found_bytes) then
+      pack_usage%entry_span_hashes(entry_index) = 0_i64
+      if (loaded_span_cache) then
+        write(key_text, '("entry",I0,"_hash=")') entry_index
+        value_text = ""
+        call extract_payload_field_text(cache_text, trim(key_text), value_text, found_hash)
+        if (.not. found_hash) return
         if (.not. parse_i64_text(value_text, parsed_i64)) return
-        if (parsed_i64 > 0_i64) pack_usage%entry_span_bytes(entry_index) = parsed_i64
-      end if
+        if (parsed_i64 <= 0_i64) return
+        pack_usage%entry_span_hashes(entry_index) = parsed_i64
 
-      write(key_text, '("entry",I0,"_sample_hex=")') entry_index
-      value_text = ""
-      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_bytes)
-      if (found_bytes) then
-        call decode_hex_to_span_bytes(trim(value_text), pack_usage%entry_span_samples(:, entry_index), &
-          pack_usage%entry_span_sample_sizes(entry_index))
+        write(key_text, '("entry",I0,"_bytes=")') entry_index
+        value_text = ""
+        call extract_payload_field_text(cache_text, trim(key_text), value_text, found_bytes)
+        if (found_bytes) then
+          if (.not. parse_i64_text(value_text, parsed_i64)) return
+          if (parsed_i64 > 0_i64) pack_usage%entry_span_bytes(entry_index) = parsed_i64
+        end if
+
+        write(key_text, '("entry",I0,"_sample_hex=")') entry_index
+        value_text = ""
+        call extract_payload_field_text(cache_text, trim(key_text), value_text, found_bytes)
+        if (found_bytes) then
+          call decode_hex_to_span_bytes(trim(value_text), pack_usage%entry_span_samples(:, entry_index), &
+            pack_usage%entry_span_sample_sizes(entry_index))
+        end if
       end if
 
       write(key_text, '("entry",I0,"_page_hash=")') entry_index
@@ -822,8 +833,9 @@ contains
       found_pack_record = .false.
       if (loaded_pack_tile_cache) then
         call extract_weight_pack_tile_cache_record(pack_tile_cache_text, pack_usage%entry_pack_indices(entry_index), &
-          pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), page_hash, page_word_count, &
-          page_words, tile_hash, tile_byte_count, tile_bytes, found_pack_record)
+          pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), pack_usage%entry_span_hashes(entry_index), &
+          pack_usage%entry_span_bytes(entry_index), page_hash, page_word_count, page_words, tile_hash, tile_byte_count, &
+          tile_bytes, found_pack_record)
       end if
       if (found_pack_record) then
         found_tile_hash = .true.
@@ -901,16 +913,18 @@ contains
       end if
     end do
 
-    loaded_cached = required_entry_found
+    loaded_cached = required_entry_found .and. (loaded_span_cache .or. loaded_pack_tile_cache)
   end subroutine hydrate_cached_pack_span_profile
 
-  subroutine extract_weight_pack_tile_cache_record(cache_text, pack_index, pack_offset, pack_bytes, page_hash, &
-                                                   page_word_count, page_words, tile_hash, tile_byte_count, &
-                                                   tile_bytes, found_record)
+  subroutine extract_weight_pack_tile_cache_record(cache_text, pack_index, pack_offset, pack_bytes, span_hash, &
+                                                   span_bytes, page_hash, page_word_count, page_words, tile_hash, &
+                                                   tile_byte_count, tile_bytes, found_record)
     character(len=*), intent(in) :: cache_text
     integer(i32), intent(in)     :: pack_index
     integer(i64), intent(in)     :: pack_offset
     integer(i64), intent(in)     :: pack_bytes
+    integer(i64), intent(out)    :: span_hash
+    integer(i64), intent(out)    :: span_bytes
     integer(i64), intent(out)    :: page_hash
     integer(i32), intent(out)    :: page_word_count
     integer(i32), intent(out)    :: page_words(:)
@@ -931,10 +945,14 @@ contains
     logical                      :: found_page_hash
     logical                      :: found_page_words
     logical                      :: found_page_hex
+    logical                      :: found_span_hash
+    logical                      :: found_span_bytes
     logical                      :: found_tile_hash
     logical                      :: found_tile_bytes
     logical                      :: found_tile_hex
 
+    span_hash = 0_i64
+    span_bytes = 0_i64
     page_hash = 0_i64
     page_word_count = 0_i32
     page_words = 0_i32
@@ -967,6 +985,20 @@ contains
         if (candidate_pack_index /= pack_index) cycle
       else if (candidate_offset /= pack_offset .or. candidate_bytes /= pack_bytes) then
         cycle
+      end if
+
+      write(key_text, '("pack",I0,"_span_hash=")') candidate_pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_span_hash)
+      if (found_span_hash) then
+        if (.not. parse_i64_text(value_text, span_hash)) span_hash = 0_i64
+      end if
+
+      write(key_text, '("pack",I0,"_span_bytes=")') candidate_pack_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_span_bytes)
+      if (found_span_bytes) then
+        if (.not. parse_i64_text(value_text, span_bytes)) span_bytes = 0_i64
       end if
 
       write(key_text, '("pack",I0,"_page_hash=")') candidate_pack_index

@@ -592,6 +592,8 @@ int main(void) {
 
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -delete");
     if (!expect_true("cuda span-cache sidecar removal should succeed", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.tilecache' -delete");
+    if (!expect_true("cuda tile-cache payload removal should succeed", command_status == 0)) return 1;
 
     status = mizu_runtime_create(&runtime_config, &runtime_fallback);
     if (!expect_status("cuda fallback runtime create", status, MIZU_STATUS_OK)) return 1;
@@ -646,6 +648,10 @@ int main(void) {
     status = mizu_session_decode_step(session_fallback, &decode_options, &decode_result_fallback,
                                       &decode_buffer_fallback);
     if (!expect_status("cuda fallback decode", status, MIZU_STATUS_OK)) return 1;
+    if (!expect_true("cuda fallback decode should reproduce the same token from weight-pack caches",
+                     decode_tokens_fallback[0] == decode_tokens[0])) {
+        return 1;
+    }
     status = mizu_session_read_output(session_fallback, &output_buffer_fallback);
     if (!expect_status("cuda fallback read output", status, MIZU_STATUS_OK)) return 1;
     if (!expect_true("cuda fallback output should match fallback decode token",
