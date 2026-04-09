@@ -972,44 +972,37 @@ program test_cuda_executor
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
-    "pack_use_kind=cuda_decode_pack_usage_v1;" // &
-    "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
     "pack_usage_buffer=" // decode_usage_buffer_path // ";" // &
     "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
-    "pack_span_buffer=" // decode_span_buffer_path // ";" // &
-    "pack_dispatch1=pack=1;" // &
-    "pack_dispatch2=pack=2;" // &
-    "pack_dispatch3=pack=3;" // &
-    "pack_dispatch4=pack=4;" // &
-    "pack_dispatch_count=4"
+    "pack_span_buffer=" // decode_span_buffer_path
   close(13)
 
   call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
     token_value_with_dispatch_buffer_only, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
     usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
-  call expect_equal_i32("cuda decode with dispatch-buffer-only plan should still succeed", status_code, MIZU_STATUS_OK)
+  call expect_equal_i32("cuda decode with binary-sidecar-only plan should still succeed", status_code, MIZU_STATUS_OK)
   call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
     artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
     summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
-  call expect_true("cuda dispatch-buffer-only replay should preserve readable lineage", snapshot_valid)
-  call expect_equal_i64("cuda dispatch-buffer-only replay should preserve artifact lineage", artifact_hash, &
+  call expect_true("cuda binary-sidecar-only replay should preserve readable lineage", snapshot_valid)
+  call expect_equal_i64("cuda binary-sidecar-only replay should preserve artifact lineage", artifact_hash, &
     usage_decode_artifact_hash)
-  call expect_equal_i32("cuda dispatch-buffer-only replay should preserve token identity", &
+  call expect_equal_i32("cuda binary-sidecar-only replay should preserve token identity", &
     token_value_with_dispatch_buffer_only, token_value_with_pack_index_override)
   call extract_cuda_context_pack_dispatch_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, &
     pack_dispatch_offsets, pack_dispatch_bytes, pack_dispatch_role_codes, pack_dispatch_layout_codes, &
     pack_dispatch_count, snapshot_valid)
-  call expect_true("cuda dispatch-buffer-only replay should retain a readable dispatch snapshot", snapshot_valid)
-  call expect_equal_i32("cuda dispatch-buffer-only replay should keep four live entries", pack_dispatch_count, 4_i32)
-  call expect_equal_i64("cuda dispatch-buffer-only replay should restore the first tensor offset from the binary buffers", &
+  call expect_true("cuda binary-sidecar-only replay should retain a readable dispatch snapshot", snapshot_valid)
+  call expect_equal_i32("cuda binary-sidecar-only replay should keep four live entries", pack_dispatch_count, 4_i32)
+  call expect_equal_i64("cuda binary-sidecar-only replay should restore the first tensor offset from the binary buffers", &
     pack_dispatch_offsets(1), 0_i64)
-  call expect_equal_i64("cuda dispatch-buffer-only replay should restore the token projection bytes from the binary buffers", &
+  call expect_equal_i64("cuda binary-sidecar-only replay should restore the token projection bytes from the binary buffers", &
     pack_dispatch_bytes(4), 1089994752_i64)
-  call expect_equal_i32("cuda dispatch-buffer-only replay should restore the first tensor role from the binary buffers", &
+  call expect_equal_i32("cuda binary-sidecar-only replay should restore the first tensor role from the binary buffers", &
     pack_dispatch_role_codes(1), 1_i32)
-  call expect_equal_i32("cuda dispatch-buffer-only replay should restore the final tensor layout from the binary buffers", &
+  call expect_equal_i32("cuda binary-sidecar-only replay should restore the final tensor layout from the binary buffers", &
     pack_dispatch_layout_codes(4), 1_i32)
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")

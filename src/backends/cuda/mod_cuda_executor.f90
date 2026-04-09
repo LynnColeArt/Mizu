@@ -487,7 +487,10 @@ contains
     character(len=*), intent(in) :: payload_text
 
     is_compact = (index(payload_text, "pack_use_kind=") > 0) .or. &
-      (index(payload_text, "pack_dispatch_kind=cuda_pack_dispatch_v1") > 0)
+      (index(payload_text, "pack_dispatch_kind=cuda_pack_dispatch_v1") > 0) .or. &
+      (index(payload_text, "pack_usage_buffer=") > 0) .or. &
+      (index(payload_text, "pack_dispatch_buffer=") > 0) .or. &
+      (index(payload_text, "pack_span_buffer=") > 0)
   end function payload_uses_compact_pack_usage
 
   subroutine build_compact_pack_artifact_hash(payload_text, pack_usage, artifact_hash, has_dependency)
@@ -571,6 +574,8 @@ contains
 
     if (index(fragment_text, "pack_use_hash=") == 1) then
       is_volatile = .true.
+    else if (index(fragment_text, "pack_use_kind=") == 1) then
+      is_volatile = .true.
     else if (index(fragment_text, "pack_use_bytes=") == 1) then
       is_volatile = .true.
     else if (index(fragment_text, "pack_use_count=") == 1) then
@@ -582,6 +587,8 @@ contains
     else if (index(fragment_text, "pack_use_last_bytes=") == 1) then
       is_volatile = .true.
     else if (index(fragment_text, "pack_dispatch_hash=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_dispatch_kind=") == 1) then
       is_volatile = .true.
     else if (index(fragment_text, "pack_dispatch_count=") == 1) then
       is_volatile = .true.
@@ -834,6 +841,9 @@ contains
     logical                                      :: found_last_offset
     logical                                      :: found_last_bytes
     logical                                      :: found_dispatch_count
+    logical                                      :: found_usage_buffer
+    logical                                      :: found_dispatch_buffer
+    logical                                      :: found_span_buffer
     logical                                      :: found_span_root
     logical                                      :: found_path
     logical                                      :: found_sample_bytes
@@ -904,6 +914,16 @@ contains
         has_compact_markers = .true.
       end if
     end if
+
+    path_text = ""
+    call extract_payload_field_text(payload_text, "pack_usage_buffer=", path_text, found_usage_buffer)
+    if (found_usage_buffer) has_compact_markers = .true.
+    path_text = ""
+    call extract_payload_field_text(payload_text, "pack_dispatch_buffer=", path_text, found_dispatch_buffer)
+    if (found_dispatch_buffer) has_compact_markers = .true.
+    path_text = ""
+    call extract_payload_field_text(payload_text, "pack_span_buffer=", path_text, found_span_buffer)
+    if (found_span_buffer) has_compact_markers = .true.
 
     pack_usage%span_root = ""
     path_text = ""
