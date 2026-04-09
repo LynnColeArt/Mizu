@@ -141,9 +141,9 @@ bodies.
     page/tile bytes, keep `.packpayload` as a readable fallback, and change
     decode behavior when the staged binary buffer is rewritten for the same
     usage profile
-  - validates compact CUDA `pack_dispatch*` entries with explicit `pack=`
-    indices now restore offset, byte span, role, and layout from that typed
-    `.packbuffer` directory even if the surrounding dispatch text is wrong
+  - validates compact CUDA `pack_dispatch*` entries can now collapse to
+    `pack=<index>` and still restore offset, byte span, role, and layout from
+    `pack_use*` plus the typed `.packbuffer` directory
   - validates those same compact CUDA decode plans now keep token identity and
     stored artifact lineage stable when typed `.packbuffer` resolution matches,
     even if one artifact uses offset/byte dispatch text and another uses

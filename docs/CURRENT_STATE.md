@@ -5,9 +5,11 @@ Last updated: 2026-04-09
 ## Latest Checkpoint
 
 - current milestone: CUDA weight-pack `.packtiles` caches now index a typed
-  binary `.packbuffer` warm-path payload, and pack-indexed dispatch records
-  now restore bridge-facing offset/bytes/role/layout from that per-pack
-  directory instead of trusting surrounding text
+  binary `.packbuffer` warm-path payload, generated prefill/decode plans now
+  collapse compact dispatch text down to `pack=<index>` entries, and both
+  sidecar generation and execution restore bridge-facing offset/bytes/role/
+  layout from `pack_use*` plus that per-pack binary directory instead of
+  trusting surrounding text
 - current milestone: the loader now understands a first concrete imported
   asset-bundle shape through `mizu_import/`, with validated tensor, modality,
   and projector inventories layered on top of the logical root manifest
@@ -85,10 +87,10 @@ Last updated: 2026-04-09
 - warm CUDA replay now stays stable even if the plan-local `.spancache` and
   `.tilecache` files are removed, as long as that pack-owned `.packtiles`
   cache remains available under `cache_root`
-- CUDA projector, prefill, and decode artifacts now also stamp explicit
-  `pack=` indices into compact dispatch records, so warm execution can address
-  the weight-pack tile cache by packed entry identity instead of relying only
-  on offset/byte matching
+- CUDA projector, prefill, and decode artifacts now also stamp compact
+  `pack=<index>` dispatch records, so warm execution can address the
+  weight-pack tile cache by packed entry identity instead of relying on
+  offset/byte matching in plan text
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact
