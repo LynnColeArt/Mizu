@@ -85,6 +85,9 @@ These suites cover the `API-C*` portion of
   - verifies the same public CUDA flow still reproduces the same decode token
     after those plan-local `.spancache` and `.tilecache` files are removed, as
     long as the pack-owned weight `.packtiles` cache remains available
+  - verifies CUDA projector, prefill, and decode artifacts now carry direct
+    `pack_ref_tile_buffer=` references, and that the same public flow still
+    runs after the weight-pack `.packtiles` text index is removed
   - verifies that narrow public CUDA flow emits a stable positive placeholder
     token and reproduces it for the same staged multimodal context
 - `test_go_binding_smoke.go`

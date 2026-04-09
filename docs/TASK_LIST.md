@@ -148,6 +148,7 @@ These are the highest-leverage next tasks.
 - [x] Give CUDA `.packbuffer` a typed header and per-pack directory for warm replay
 - [x] Restore CUDA dispatch offset/bytes/role/layout from typed pack-buffer records when `pack=` indices are present
 - [x] Normalize compact CUDA warm artifact lineage across offset/byte and `pack=` dispatch forms
+- [x] Emit direct CUDA `pack_ref_tile_buffer=` references for stage artifacts
 - [x] Address CUDA warm pack tiles by explicit packed entry index
 - [x] Derive CUDA `.packtiles` page/tile records from weight-pack materialization instead of sampled span previews
 - [x] Prefer CUDA `.packtiles` materialized hash identity during warm execution when pack-owned cache is available

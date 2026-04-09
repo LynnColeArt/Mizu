@@ -159,6 +159,10 @@ Current implementation status:
   lineage from the resolved typed `.packbuffer` record, so warm decode stays
   stable whether a plan identifies a packed tensor by raw offset/bytes or by
   explicit `pack=` index
+- CUDA projector, prefill, and decode artifacts now also carry direct
+  `pack_ref_tile_buffer=` references, so warm execution can still hydrate
+  pack-owned binary page/tile records even if the `.packtiles` text index is
+  missing
 - when those pack-owned `.packtiles` payloads are available, CUDA execution now
   prefers their materialized hash identity over raw importer-span identity, and
   the direct executor path now allocates enough artifact text capacity to carry
