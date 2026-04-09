@@ -144,6 +144,7 @@ These are the highest-leverage next tasks.
 - [x] Materialize CUDA `.usagebuffer` sidecars so warm plans can recover `pack_use_*` summary without textual summary fields
 - [x] Materialize CUDA `.spanbuffer` sidecars so warm plans can recover sampled span identity without textual `pack_span*` recovery
 - [x] Support compact CUDA replay from binary sidecars alone, without per-entry `pack_dispatch*` plan text
+- [x] Verify the public CUDA warm path still replays after generated decode plans drop per-entry `pack_use*`, `pack_dispatch*`, and `pack_span*` text
 - [x] Persist staged CUDA pack-page records beside cached tensor spans
 - [x] Persist staged CUDA tensor-tile records beside cached tensor spans
 - [x] Materialize dedicated CUDA `.tilecache` payloads under `cache_root`

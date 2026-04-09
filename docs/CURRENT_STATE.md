@@ -127,6 +127,10 @@ Last updated: 2026-04-09
   depending on textual `pack_use*` summary fields
 - compact CUDA decode can now replay from stage kind plus binary refs alone,
   with no per-entry `pack_dispatch*` text required in the plan payload
+- the public CUDA warm contract path now also replays correctly after a
+  generated decode plan drops its per-entry `pack_use*`, `pack_dispatch*`, and
+  `pack_span*` text, as long as the binary usage/dispatch/span sidecars and
+  stable static plan metadata remain available
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact

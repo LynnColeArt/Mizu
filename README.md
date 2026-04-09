@@ -212,6 +212,10 @@ Current implementation status:
   `pack_span*` records are removed from the plan payload
 - that same compact CUDA decode path can now replay from stage kind plus binary
   refs alone, with no per-entry `pack_dispatch*` text required in the plan
+- the public CUDA warm path now also tolerates generated decode plans with
+  per-entry `pack_use*`, `pack_dispatch*`, and `pack_span*` text stripped out,
+  as long as the stable plan metadata and binary usage/dispatch/span sidecars
+  remain in place
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
   sources change, which keeps the public-path tests from silently running stale
   executables

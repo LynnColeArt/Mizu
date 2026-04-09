@@ -100,5 +100,9 @@ These suites cover the `API-C*` portion of
     runs after the weight-pack `.packtiles` text index is removed
   - verifies that narrow public CUDA flow emits a stable positive placeholder
     token and reproduces it for the same staged multimodal context
+  - verifies that same public CUDA flow still replays identically after the
+    generated decode plan drops its per-entry `pack_use*`, `pack_dispatch*`,
+    and `pack_span*` text, as long as the binary usage/dispatch/span sidecars
+    and stable static plan metadata remain available
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path
