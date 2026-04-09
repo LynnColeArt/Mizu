@@ -700,6 +700,7 @@ contains
     dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%first_pack_offset)
     dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%last_pack_offset)
     dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%last_pack_bytes)
+    dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%usage_hash)
 
     do entry_index = 1_i32, min(MAX_CUDA_PACK_DISPATCH_ENTRIES, pack_usage%usage_count)
       dependency_hash = combine_positive_hash64(dependency_hash, int(pack_usage%entry_pack_indices(entry_index), kind=i64))
@@ -709,12 +710,6 @@ contains
       dependency_hash = combine_positive_hash64(dependency_hash, int(pack_usage%layout_codes(entry_index), kind=i64))
       dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_span_hashes(entry_index))
       dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_span_bytes(entry_index))
-      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_page_hashes(entry_index))
-      dependency_hash = combine_positive_hash64(dependency_hash, &
-        int(pack_usage%entry_page_word_counts(entry_index), kind=i64))
-      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_tile_hashes(entry_index))
-      dependency_hash = combine_positive_hash64(dependency_hash, &
-        int(pack_usage%entry_tile_byte_counts(entry_index), kind=i64))
     end do
 
     has_dependency = .true.
@@ -978,6 +973,8 @@ contains
     logical                                      :: found_pack_tile_cache_path
     logical                                      :: found_pack_tile_payload_path
     logical                                      :: found_pack_tile_buffer_path
+    logical                                      :: found_direct_pack_tile_payload_path
+    logical                                      :: found_direct_pack_tile_buffer_path
     logical                                      :: found_tile_cache_path
     logical                                      :: found_hash
     logical                                      :: found_bytes
@@ -1043,6 +1040,10 @@ contains
     loaded_pack_tile_cache = .false.
     loaded_pack_tile_payload = .false.
     loaded_pack_tile_buffer = .false.
+    found_pack_tile_payload_path = .false.
+    found_pack_tile_buffer_path = .false.
+    found_direct_pack_tile_payload_path = .false.
+    found_direct_pack_tile_buffer_path = .false.
     call extract_payload_field_text(cache_text, "pack_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
     if (.not. found_pack_tile_cache_path) then
       call extract_payload_field_text(payload_text, "pack_ref_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
@@ -1069,26 +1070,42 @@ contains
         found_pack_tile_payload_path)
       call extract_payload_field_text(pack_tile_cache_text, "pack_buffer=", pack_tile_buffer_path, &
         found_pack_tile_buffer_path)
-      if (.not. found_pack_tile_payload_path) then
-        pack_tile_payload_path = build_weight_pack_tile_payload_artifact_path(artifact_path)
+    end if
+    if (.not. found_pack_tile_payload_path) then
+      call extract_payload_field_text(payload_text, "pack_ref_tile_payload=", pack_tile_payload_path, &
+        found_direct_pack_tile_payload_path)
+      if (found_direct_pack_tile_payload_path) found_pack_tile_payload_path = .true.
+    end if
+    if (.not. found_pack_tile_buffer_path) then
+      call extract_payload_field_text(payload_text, "pack_ref_tile_buffer=", pack_tile_buffer_path, &
+        found_direct_pack_tile_buffer_path)
+      if (.not. found_direct_pack_tile_buffer_path) then
+        call extract_payload_field_text(payload_text, "pack_buffer=", pack_tile_buffer_path, &
+          found_direct_pack_tile_buffer_path)
       end if
-      if (.not. found_pack_tile_buffer_path) then
-        pack_tile_buffer_path = build_weight_pack_tile_buffer_artifact_path(artifact_path)
-      end if
-      if (len_trim(pack_tile_payload_path) > 0) then
-        call load_cuda_artifact_payload(cache_root, trim(pack_tile_payload_path), pack_tile_payload_text, &
-          loaded_pack_tile_payload)
-        if (loaded_pack_tile_payload) then
-          if (index(pack_tile_payload_text, "kind=cuda_weight_pack_payload_v1") <= 0) then
-            loaded_pack_tile_payload = .false.
-            pack_tile_payload_text = ""
-          end if
+      if (found_direct_pack_tile_buffer_path) found_pack_tile_buffer_path = .true.
+    end if
+    if (.not. found_pack_tile_payload_path .and. len_trim(pack_tile_cache_path) > 0) then
+      pack_tile_payload_path = build_weight_pack_tile_payload_artifact_path(artifact_path)
+      found_pack_tile_payload_path = (len_trim(pack_tile_payload_path) > 0)
+    end if
+    if (.not. found_pack_tile_buffer_path .and. len_trim(pack_tile_cache_path) > 0) then
+      pack_tile_buffer_path = build_weight_pack_tile_buffer_artifact_path(artifact_path)
+      found_pack_tile_buffer_path = (len_trim(pack_tile_buffer_path) > 0)
+    end if
+    if (len_trim(pack_tile_payload_path) > 0) then
+      call load_cuda_artifact_payload(cache_root, trim(pack_tile_payload_path), pack_tile_payload_text, &
+        loaded_pack_tile_payload)
+      if (loaded_pack_tile_payload) then
+        if (index(pack_tile_payload_text, "kind=cuda_weight_pack_payload_v1") <= 0) then
+          loaded_pack_tile_payload = .false.
+          pack_tile_payload_text = ""
         end if
       end if
-      if (len_trim(pack_tile_buffer_path) > 0) then
-        call load_cuda_artifact_blob(cache_root, trim(pack_tile_buffer_path), pack_tile_buffer_bytes, &
-          pack_tile_buffer_count, loaded_pack_tile_buffer)
-      end if
+    end if
+    if (len_trim(pack_tile_buffer_path) > 0) then
+      call load_cuda_artifact_blob(cache_root, trim(pack_tile_buffer_path), pack_tile_buffer_bytes, &
+        pack_tile_buffer_count, loaded_pack_tile_buffer)
     end if
 
     if (.not. allocated(pack_tile_buffer_bytes)) then
@@ -1174,7 +1191,7 @@ contains
       tile_byte_count = 0_i32
       tile_bytes = 0_i8
       found_pack_record = .false.
-      if (loaded_pack_tile_cache) then
+      if (loaded_pack_tile_cache .or. loaded_pack_tile_payload .or. loaded_pack_tile_buffer) then
         call extract_weight_pack_tile_cache_record(pack_tile_cache_text, pack_tile_payload_text, &
           pack_tile_buffer_bytes, pack_tile_buffer_count, loaded_pack_tile_buffer, &
           pack_usage%entry_pack_indices(entry_index), pack_usage%entry_offsets(entry_index), &
@@ -1273,7 +1290,8 @@ contains
     call refresh_compact_pack_usage_summary(pack_usage)
 
     if (allocated(pack_tile_buffer_bytes)) deallocate(pack_tile_buffer_bytes)
-    loaded_cached = required_entry_found .and. (loaded_span_cache .or. loaded_pack_tile_cache)
+    loaded_cached = required_entry_found .and. &
+      (loaded_span_cache .or. loaded_pack_tile_cache .or. loaded_pack_tile_payload .or. loaded_pack_tile_buffer)
   end subroutine hydrate_cached_pack_span_profile
 
   subroutine extract_weight_pack_tile_cache_record(cache_text, payload_text, buffer_bytes, buffer_count, buffer_loaded, &
@@ -1356,7 +1374,7 @@ contains
     materialized_hash = 0_i64
     found_materialized_hash = .false.
     found_record = .false.
-    if (len_trim(cache_text) == 0) return
+    if (len_trim(cache_text) == 0 .and. .not. buffer_loaded) return
     if (buffer_loaded) then
       call extract_weight_pack_tile_buffer_record(buffer_bytes, buffer_count, pack_index, pack_offset, pack_bytes, &
         resolved_pack_index, span_hash, span_bytes, resolved_pack_offset, resolved_pack_bytes, resolved_role_code, &

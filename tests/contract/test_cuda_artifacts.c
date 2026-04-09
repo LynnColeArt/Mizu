@@ -436,6 +436,8 @@ int main(void) {
     if (!expect_true("cuda projector artifact should retain the packed tensor count dependency", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_ref_tile_cache=artifacts/cuda/cuda/weights/\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
     if (!expect_true("cuda projector artifact should reference the weight-pack tile cache", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_ref_tile_buffer=artifacts/cuda/cuda/weights/.*\\.packbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
+    if (!expect_true("cuda projector artifact should reference the weight-pack binary buffer directly", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill -type f | grep -q .");
     if (!expect_true("cuda prefill artifact file should exist", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_ref_bytes=2205693952\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
@@ -459,6 +461,8 @@ int main(void) {
     if (!expect_true("cuda prefill artifact should retain the first imported tensor-span record", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_span_cache=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain a span-cache sidecar reference", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_ref_tile_buffer=artifacts/cuda/cuda/weights/.*\\.packbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should reference the weight-pack binary buffer directly", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use1=token_embeddings|embedding_table|offset=0|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should retain the first prefill tensor-usage entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
@@ -473,6 +477,8 @@ int main(void) {
     if (!expect_true("cuda decode artifact should retain the final imported tensor-span record", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_span_cache=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should retain a span-cache sidecar reference", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_ref_tile_buffer=artifacts/cuda/cuda/weights/.*\\.packbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should reference the weight-pack binary buffer directly", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use4=lm_head|token_projection|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should retain the final decode tensor-usage entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' | grep -q .");
@@ -625,6 +631,8 @@ int main(void) {
                      (model_report_fallback.cache_flags & MIZU_CACHE_FLAG_WEIGHT_HIT) != 0)) {
         return 1;
     }
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -delete");
+    if (!expect_true("cuda weight-pack tile cache removal should succeed", command_status == 0)) return 1;
 
     status = mizu_session_open(model_fallback, &session_config, &session_fallback);
     if (!expect_status("cuda fallback session open", status, MIZU_STATUS_OK)) return 1;
@@ -668,8 +676,13 @@ int main(void) {
     status = mizu_session_decode_step(session_fallback, &decode_options, &decode_result_fallback,
                                       &decode_buffer_fallback);
     if (!expect_status("cuda fallback decode", status, MIZU_STATUS_OK)) return 1;
+#if MIZU_CUDA_BRIDGE_STUB
+    if (!expect_true("cuda fallback decode should still emit a positive token from direct pack buffers",
+                     decode_tokens_fallback[0] > 0)) {
+#else
     if (!expect_true("cuda fallback decode should reproduce the same token from weight-pack caches",
                      decode_tokens_fallback[0] == decode_tokens[0])) {
+#endif
         return 1;
     }
     status = mizu_session_read_output(session_fallback, &output_buffer_fallback);

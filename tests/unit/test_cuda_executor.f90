@@ -223,6 +223,7 @@ program test_cuda_executor
     "pack_use_kind=cuda_prefill_pack_usage_v1;" // &
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
+    "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
@@ -247,6 +248,7 @@ program test_cuda_executor
     "pack_use_kind=cuda_decode_pack_usage_v1;" // &
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
+    "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
@@ -866,6 +868,7 @@ program test_cuda_executor
     "pack_use_kind=cuda_decode_pack_usage_v1;" // &
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
+    "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
@@ -918,6 +921,34 @@ program test_cuda_executor
     artifact_hash, usage_decode_artifact_hash)
   call expect_equal_i32("cuda decode with pack-index override should preserve token identity from the pack buffer", &
     token_value_with_pack_index_override, token_value_without_pack_cache)
+
+  call execute_command_line("rm -f " // cache_root // "/" // pack_tile_cache_path, exitstat=shell_status)
+  call expect_equal_i32("cuda direct pack-buffer index cleanup should succeed", int(shell_status, kind=i32), 0_i32)
+  call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
+    token_value_with_pack_index_override, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
+  call expect_equal_i32("cuda decode should still succeed with only direct pack buffer references", &
+    status_code, MIZU_STATUS_OK)
+  call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
+    artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
+    summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda direct pack-buffer replay should preserve readable lineage", snapshot_valid)
+  call expect_true("cuda direct pack-buffer replay should retain a nonzero artifact lineage", artifact_hash /= 0_i64)
+  call expect_true("cuda direct pack-buffer replay should still emit a positive token", &
+    token_value_with_pack_index_override > 0_i32)
+  call extract_cuda_context_pack_dispatch_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, &
+    pack_dispatch_offsets, pack_dispatch_bytes, pack_dispatch_role_codes, pack_dispatch_layout_codes, &
+    pack_dispatch_count, snapshot_valid)
+  call expect_true("cuda direct pack-buffer replay should retain a readable dispatch snapshot", snapshot_valid)
+  call expect_equal_i32("cuda direct pack-buffer replay should keep four live entries", pack_dispatch_count, 4_i32)
+  call expect_equal_i64("cuda direct pack-buffer replay should restore the first tensor offset from the binary buffer", &
+    pack_dispatch_offsets(1), 0_i64)
+  call expect_equal_i64("cuda direct pack-buffer replay should restore the token projection bytes from the binary buffer", &
+    pack_dispatch_bytes(4), 1089994752_i64)
+  call expect_equal_i32("cuda direct pack-buffer replay should restore the first tensor role from the binary buffer", &
+    pack_dispatch_role_codes(1), 1_i32)
+  call expect_equal_i32("cuda direct pack-buffer replay should restore the final tensor layout from the binary buffer", &
+    pack_dispatch_layout_codes(4), 1_i32)
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &

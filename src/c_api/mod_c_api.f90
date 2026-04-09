@@ -3799,6 +3799,7 @@ contains
     character(len=*), intent(in)    :: current_payload_path
     character(len=MAX_PATH_LEN)     :: weight_payload_path
     character(len=MAX_PATH_LEN)     :: weight_tile_cache_path
+    character(len=MAX_PATH_LEN)     :: weight_tile_buffer_path
     character(len=MAX_PATH_LEN + 96) :: field_text
 
     if (execution_route /= MIZU_EXEC_ROUTE_CUDA) return
@@ -3813,11 +3814,17 @@ contains
 
     weight_tile_cache_path = build_cuda_weight_pack_tile_cache_path(trim(weight_payload_path))
     if (len_trim(weight_tile_cache_path) == 0) return
+    weight_tile_buffer_path = build_cuda_weight_pack_tile_buffer_path(trim(weight_payload_path))
 
     if (stage_kind == MIZU_STAGE_MODEL_LOAD) then
       field_text = ""
       write(field_text, '(";pack_tile_cache=",A)') trim(weight_tile_cache_path)
       call append_payload_fragment(payload_text, trim(field_text))
+      if (len_trim(weight_tile_buffer_path) > 0) then
+        field_text = ""
+        write(field_text, '(";pack_buffer=",A)') trim(weight_tile_buffer_path)
+        call append_payload_fragment(payload_text, trim(field_text))
+      end if
     else
       field_text = ""
       write(field_text, '(";pack_ref_artifact=",A)') trim(weight_payload_path)
@@ -3825,6 +3832,11 @@ contains
       field_text = ""
       write(field_text, '(";pack_ref_tile_cache=",A)') trim(weight_tile_cache_path)
       call append_payload_fragment(payload_text, trim(field_text))
+      if (len_trim(weight_tile_buffer_path) > 0) then
+        field_text = ""
+        write(field_text, '(";pack_ref_tile_buffer=",A)') trim(weight_tile_buffer_path)
+        call append_payload_fragment(payload_text, trim(field_text))
+      end if
     end if
 
     payload_bytes = int(len_trim(payload_text) + 1_i64, kind=i64)
