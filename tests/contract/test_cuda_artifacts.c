@@ -59,6 +59,124 @@ static int file_contains_substring(const char *path, const char *needle) {
     return 0;
 }
 
+static int read_text_file(const char *path, char *buffer, size_t buffer_size) {
+    FILE *file = NULL;
+    size_t bytes_read;
+
+    if (buffer == NULL || buffer_size < 2U) return 0;
+    file = fopen(path, "rb");
+    if (file == NULL) return 0;
+
+    bytes_read = fread(buffer, 1, buffer_size - 1U, file);
+    if (ferror(file) != 0) {
+        fclose(file);
+        return 0;
+    }
+
+    buffer[bytes_read] = '\0';
+    fclose(file);
+    return 1;
+}
+
+static int write_text_file(const char *path, const char *text) {
+    FILE *file = NULL;
+    size_t text_length;
+    size_t bytes_written;
+
+    if (path == NULL || text == NULL) return 0;
+    file = fopen(path, "wb");
+    if (file == NULL) return 0;
+
+    text_length = strlen(text);
+    bytes_written = fwrite(text, 1, text_length, file);
+    fclose(file);
+    return bytes_written == text_length;
+}
+
+static int capture_first_line(const char *command, char *buffer, size_t buffer_size) {
+    FILE *pipe = NULL;
+
+    if (command == NULL || buffer == NULL || buffer_size < 2U) return 0;
+
+    pipe = popen(command, "r");
+    if (pipe == NULL) return 0;
+
+    if (fgets(buffer, (int)buffer_size, pipe) == NULL) {
+        pclose(pipe);
+        return 0;
+    }
+
+    pclose(pipe);
+    buffer[strcspn(buffer, "\r\n")] = '\0';
+    return buffer[0] != '\0';
+}
+
+static int fragment_has_indexed_prefix(const char *fragment, const char *prefix) {
+    size_t prefix_length;
+
+    if (fragment == NULL || prefix == NULL) return 0;
+    prefix_length = strlen(prefix);
+    if (prefix_length == 0U) return 0;
+    if (strncmp(fragment, prefix, prefix_length) != 0) return 0;
+    return fragment[prefix_length] >= '0' && fragment[prefix_length] <= '9';
+}
+
+static int is_binary_sidecar_redundant_fragment(const char *fragment) {
+    if (fragment == NULL || fragment[0] == '\0') return 0;
+
+    if (fragment_has_indexed_prefix(fragment, "pack_use")) return 1;
+    if (fragment_has_indexed_prefix(fragment, "pack_dispatch")) return 1;
+    if (fragment_has_indexed_prefix(fragment, "pack_span")) return 1;
+
+    if (strncmp(fragment, "pack_use_kind=", 14) == 0) return 1;
+    if (strncmp(fragment, "pack_dispatch_kind=", 19) == 0) return 1;
+
+    return 0;
+}
+
+static int reduce_plan_to_binary_sidecars(const char *input_text, char *output_text, size_t output_size) {
+    const char *cursor;
+    const char *separator;
+    size_t output_length;
+    int wrote_any;
+
+    if (input_text == NULL || output_text == NULL || output_size < 2U) return 0;
+
+    output_text[0] = '\0';
+    output_length = 0U;
+    wrote_any = 0;
+    cursor = input_text;
+
+    while (*cursor != '\0') {
+        size_t fragment_length;
+        char fragment[4096];
+        int keep_fragment;
+
+        separator = strchr(cursor, ';');
+        fragment_length = separator == NULL ? strlen(cursor) : (size_t)(separator - cursor);
+        if (fragment_length >= sizeof(fragment)) return 0;
+
+        memcpy(fragment, cursor, fragment_length);
+        fragment[fragment_length] = '\0';
+
+        keep_fragment = wrote_any == 0 ? 1 : !is_binary_sidecar_redundant_fragment(fragment);
+        if (keep_fragment && fragment[0] != '\0') {
+            size_t needed = fragment_length + (wrote_any != 0 ? 1U : 0U);
+            if (output_length + needed >= output_size) return 0;
+            if (wrote_any != 0) output_text[output_length++] = ';';
+            memcpy(output_text + output_length, fragment, fragment_length);
+            output_length += fragment_length;
+            output_text[output_length] = '\0';
+            wrote_any = 1;
+        }
+
+        if (separator == NULL) break;
+        cursor = separator + 1;
+    }
+
+    return wrote_any;
+}
+
 static int overwrite_file_prefix(const char *path, const uint8_t *bytes, size_t byte_count) {
     FILE *file = fopen(path, "r+b");
     size_t bytes_written;
@@ -129,6 +247,9 @@ int main(void) {
     char command_buffer[2048];
     char fixture_runtime_root[512];
     char fixture_bundle_root[640];
+    char decode_plan_path[1024];
+    char decode_plan_text[16384];
+    char decode_binary_only_text[8192];
     char mutated_weight_path[768];
     memset(prefill_reports, 0, sizeof(prefill_reports));
     memset(prefill_reports_warm, 0, sizeof(prefill_reports_warm));
@@ -531,6 +652,61 @@ int main(void) {
     if (!expect_true("cuda tile-cache payload should store staged tensor-tile records", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/sessions -type f | grep -q .");
     if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
+
+    if (!expect_true("cuda decode artifact plan path should resolve",
+                     capture_first_line("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f ! -name '*.dispatchbuffer' ! -name '*.usagebuffer' ! -name '*.spanbuffer' ! -name '*.spancache' ! -name '*.tilecache'",
+                                        decode_plan_path, sizeof(decode_plan_path)))) {
+        return 1;
+    }
+    if (!expect_true("cuda decode artifact plan should be readable",
+                     read_text_file(decode_plan_path, decode_plan_text, sizeof(decode_plan_text)))) {
+        return 1;
+    }
+    if (!expect_true("cuda decode artifact should reduce cleanly to binary-sidecar replay form",
+                     reduce_plan_to_binary_sidecars(decode_plan_text, decode_binary_only_text,
+                                                    sizeof(decode_binary_only_text)))) {
+        return 1;
+    }
+    if (!expect_true("cuda decode artifact rewrite to binary refs should succeed",
+                     write_text_file(decode_plan_path, decode_binary_only_text))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should retain a direct pack-buffer reference",
+                     file_contains_substring(decode_plan_path, "pack_ref_tile_buffer="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should retain a usage-buffer reference",
+                     file_contains_substring(decode_plan_path, "pack_usage_buffer="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should retain a dispatch-buffer reference",
+                     file_contains_substring(decode_plan_path, "pack_dispatch_buffer="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should retain a span-buffer reference",
+                     file_contains_substring(decode_plan_path, "pack_span_buffer="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual pack-use records",
+                     !file_contains_substring(decode_plan_path, "pack_use_kind="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual per-entry usage records",
+                     !file_contains_substring(decode_plan_path, "pack_use4="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual dispatch markers",
+                     !file_contains_substring(decode_plan_path, "pack_dispatch_kind="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual per-entry dispatch records",
+                     !file_contains_substring(decode_plan_path, "pack_dispatch4="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual per-entry span records",
+                     !file_contains_substring(decode_plan_path, "pack_span4="))) {
+        return 1;
+    }
 
     for (size_t byte_index = 0; byte_index < sizeof(mutated_prefix); ++byte_index) {
         mutated_prefix[byte_index] = (uint8_t)(0xF0u - (uint8_t)byte_index);
