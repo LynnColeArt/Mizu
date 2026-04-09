@@ -140,6 +140,7 @@ These are the highest-leverage next tasks.
 - [x] Emit compact CUDA `pack_dispatch*` records for prefill and decode
 - [x] Emit importer-rooted CUDA `pack_span*` records for prefill and decode
 - [x] Persist staged CUDA pack-page records beside cached tensor spans
+- [x] Persist staged CUDA tensor-tile records beside cached tensor spans
 - [x] Persist CUDA pack-usage snapshots in live context state
 - [x] Persist CUDA pack-dispatch snapshots in live context state
 

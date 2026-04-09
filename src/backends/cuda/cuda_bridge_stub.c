@@ -34,6 +34,7 @@
 #define MIZU_CUDA_CONTEXT_PACK_DISPATCH_STRIDE INT32_C(24)
 #define MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT 4
 #define MIZU_CUDA_PACK_PAGE_WORDS 8
+#define MIZU_CUDA_PACK_TILE_BYTES 32
 #define MIZU_CUDA_PACK_SPAN_SAMPLE_BYTES 64
 #define MIZU_CUDA_CONTEXT_TOTAL_BYTES INT32_C(912)
 #define MIZU_CUDA_CONTEXT_PAGE_COUNT 4
@@ -111,6 +112,38 @@ static uint64_t mix_pack_page_words(uint64_t seed,
             (uint64_t)(uint32_t)pack_entry_page_words[page_base + word_index] ^
             ((uint64_t)(uint32_t)(usage_index + 1) << 8) ^
             ((uint64_t)(uint32_t)(word_index + 1) << 28));
+    }
+    return seed;
+}
+
+static uint64_t mix_pack_tile_bytes(uint64_t seed,
+                                    const int64_t *pack_entry_tile_hashes,
+                                    const int32_t *pack_entry_tile_byte_counts,
+                                    const int8_t *pack_entry_tile_bytes,
+                                    int32_t usage_index) {
+    int32_t tile_byte_count;
+    int32_t tile_base;
+    int32_t byte_index;
+
+    if (pack_entry_tile_hashes == NULL || pack_entry_tile_byte_counts == NULL ||
+        pack_entry_tile_bytes == NULL) {
+        return seed;
+    }
+
+    tile_byte_count = pack_entry_tile_byte_counts[usage_index];
+    if (tile_byte_count < 0) tile_byte_count = 0;
+    if (tile_byte_count > MIZU_CUDA_PACK_TILE_BYTES) tile_byte_count = MIZU_CUDA_PACK_TILE_BYTES;
+    if (tile_byte_count <= 0) return seed;
+
+    tile_base = usage_index * MIZU_CUDA_PACK_TILE_BYTES;
+    seed = mix_u64(seed ^
+        (uint64_t)pack_entry_tile_hashes[usage_index] ^
+        ((uint64_t)(uint32_t)(usage_index + 1) << 18));
+    for (byte_index = 0; byte_index < tile_byte_count; ++byte_index) {
+        seed = mix_u64(seed ^
+            (uint64_t)(uint8_t)pack_entry_tile_bytes[tile_base + byte_index] ^
+            ((uint64_t)(uint32_t)(usage_index + 1) << 10) ^
+            ((uint64_t)(uint32_t)(byte_index + 1) << 30));
     }
     return seed;
 }
@@ -1402,6 +1435,9 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                               const int64_t *pack_entry_page_hashes,
                               const int32_t *pack_entry_page_word_counts,
                               const int32_t *pack_entry_page_words,
+                              const int64_t *pack_entry_tile_hashes,
+                              const int32_t *pack_entry_tile_byte_counts,
+                              const int8_t *pack_entry_tile_bytes,
                               const int32_t *pack_entry_span_sample_sizes,
                               const int8_t *pack_entry_span_samples,
                               const int32_t *token_values,
@@ -1457,9 +1493,14 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                 (uint64_t)pack_entry_span_bytes[index] ^
                 ((uint64_t)(uint32_t)(index + 1) << 16));
         }
-        workspace_seed = mix_pack_page_words(workspace_seed, pack_entry_page_hashes,
-                                             pack_entry_page_word_counts, pack_entry_page_words, index);
-        if (pack_entry_page_word_counts == NULL || pack_entry_page_word_counts[index] <= 0) {
+        workspace_seed = mix_pack_tile_bytes(workspace_seed, pack_entry_tile_hashes,
+                                             pack_entry_tile_byte_counts, pack_entry_tile_bytes, index);
+        if (pack_entry_tile_byte_counts == NULL || pack_entry_tile_byte_counts[index] <= 0) {
+            workspace_seed = mix_pack_page_words(workspace_seed, pack_entry_page_hashes,
+                                                 pack_entry_page_word_counts, pack_entry_page_words, index);
+        }
+        if ((pack_entry_tile_byte_counts == NULL || pack_entry_tile_byte_counts[index] <= 0) &&
+            (pack_entry_page_word_counts == NULL || pack_entry_page_word_counts[index] <= 0)) {
             workspace_seed = mix_span_sample_bytes(workspace_seed, pack_entry_span_sample_sizes,
                                                    pack_entry_span_samples, index);
         }
@@ -1513,6 +1554,9 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                              const int64_t *pack_entry_page_hashes,
                              const int32_t *pack_entry_page_word_counts,
                              const int32_t *pack_entry_page_words,
+                             const int64_t *pack_entry_tile_hashes,
+                             const int32_t *pack_entry_tile_byte_counts,
+                             const int8_t *pack_entry_tile_bytes,
                              const int32_t *pack_entry_span_sample_sizes,
                              const int8_t *pack_entry_span_samples,
                              int64_t kv_before,
@@ -1612,9 +1656,14 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                 (uint64_t)pack_entry_span_bytes[index] ^
                 ((uint64_t)(uint32_t)(index + 1) << 16));
         }
-        seed = mix_pack_page_words(seed, pack_entry_page_hashes,
-                                   pack_entry_page_word_counts, pack_entry_page_words, index);
-        if (pack_entry_page_word_counts == NULL || pack_entry_page_word_counts[index] <= 0) {
+        seed = mix_pack_tile_bytes(seed, pack_entry_tile_hashes,
+                                   pack_entry_tile_byte_counts, pack_entry_tile_bytes, index);
+        if (pack_entry_tile_byte_counts == NULL || pack_entry_tile_byte_counts[index] <= 0) {
+            seed = mix_pack_page_words(seed, pack_entry_page_hashes,
+                                       pack_entry_page_word_counts, pack_entry_page_words, index);
+        }
+        if ((pack_entry_tile_byte_counts == NULL || pack_entry_tile_byte_counts[index] <= 0) &&
+            (pack_entry_page_word_counts == NULL || pack_entry_page_word_counts[index] <= 0)) {
             seed = mix_span_sample_bytes(seed, pack_entry_span_sample_sizes, pack_entry_span_samples, index);
         }
     }

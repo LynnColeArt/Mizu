@@ -13,6 +13,7 @@ module mod_cuda_bridge
   integer(i32), parameter :: MAX_CUDA_PACK_DISPATCH_ENTRIES = 4_i32
   integer(i32), parameter :: MAX_CUDA_SPAN_SAMPLE_BYTES = 64_i32
   integer(i32), parameter :: MAX_CUDA_PACK_PAGE_WORDS = 8_i32
+  integer(i32), parameter :: MAX_CUDA_PACK_TILE_BYTES = 32_i32
 
   type :: cuda_device_info
     logical                    :: is_available = .false.
@@ -46,6 +47,8 @@ module mod_cuda_bridge
                                           pack_entry_span_hashes, pack_entry_span_bytes, &
                                           pack_entry_page_hashes, pack_entry_page_word_counts, &
                                           pack_entry_page_words, &
+                                          pack_entry_tile_hashes, pack_entry_tile_byte_counts, &
+                                          pack_entry_tile_bytes, &
                                           pack_entry_span_sample_sizes, pack_entry_span_samples, &
                                           token_values, token_count, modal_bytes, modal_byte_count, &
                                           staged_modal_count, workspace_buffer, workspace_bytes, context_bytes, context_capacity, &
@@ -69,6 +72,9 @@ module mod_cuda_bridge
       type(c_ptr), value             :: pack_entry_page_hashes
       type(c_ptr), value             :: pack_entry_page_word_counts
       type(c_ptr), value             :: pack_entry_page_words
+      type(c_ptr), value             :: pack_entry_tile_hashes
+      type(c_ptr), value             :: pack_entry_tile_byte_counts
+      type(c_ptr), value             :: pack_entry_tile_bytes
       type(c_ptr), value             :: pack_entry_span_sample_sizes
       type(c_ptr), value             :: pack_entry_span_samples
       type(c_ptr), value             :: token_values
@@ -105,6 +111,8 @@ module mod_cuda_bridge
                                          pack_entry_span_hashes, pack_entry_span_bytes, &
                                          pack_entry_page_hashes, pack_entry_page_word_counts, &
                                          pack_entry_page_words, &
+                                         pack_entry_tile_hashes, pack_entry_tile_byte_counts, &
+                                         pack_entry_tile_bytes, &
                                          pack_entry_span_sample_sizes, pack_entry_span_samples, &
                                          kv_before, token_budget, context_bytes, context_byte_count, &
                                          workspace_buffer, workspace_bytes, &
@@ -130,6 +138,9 @@ module mod_cuda_bridge
       type(c_ptr), value             :: pack_entry_page_hashes
       type(c_ptr), value             :: pack_entry_page_word_counts
       type(c_ptr), value             :: pack_entry_page_words
+      type(c_ptr), value             :: pack_entry_tile_hashes
+      type(c_ptr), value             :: pack_entry_tile_byte_counts
+      type(c_ptr), value             :: pack_entry_tile_bytes
       type(c_ptr), value             :: pack_entry_span_sample_sizes
       type(c_ptr), value             :: pack_entry_span_samples
       integer(c_int64_t), value      :: kv_before
@@ -191,6 +202,7 @@ contains
                                  pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
                                  pack_entry_span_hashes, pack_entry_span_bytes, &
                                  pack_entry_page_hashes, pack_entry_page_word_counts, pack_entry_page_words, &
+                                 pack_entry_tile_hashes, pack_entry_tile_byte_counts, pack_entry_tile_bytes, &
                                  pack_entry_span_sample_sizes, pack_entry_span_samples, &
                                  staged_tokens, staged_modal_count, &
                                  consumed_token_count, status_code, workspace_buffer, workspace_bytes, &
@@ -212,6 +224,9 @@ contains
     integer(i64), intent(in)  :: pack_entry_page_hashes(:)
     integer(i32), intent(in)  :: pack_entry_page_word_counts(:)
     integer(i32), intent(in)  :: pack_entry_page_words(:,:)
+    integer(i64), intent(in)  :: pack_entry_tile_hashes(:)
+    integer(i32), intent(in)  :: pack_entry_tile_byte_counts(:)
+    integer(i8), intent(in)   :: pack_entry_tile_bytes(:,:)
     integer(i32), intent(in)  :: pack_entry_span_sample_sizes(:)
     integer(i8), intent(in)   :: pack_entry_span_samples(:,:)
     integer(i64), intent(in)  :: staged_tokens
@@ -237,6 +252,9 @@ contains
     type(c_ptr)               :: pack_entry_page_hashes_c
     type(c_ptr)               :: pack_entry_page_word_counts_c
     type(c_ptr)               :: pack_entry_page_words_c
+    type(c_ptr)               :: pack_entry_tile_hashes_c
+    type(c_ptr)               :: pack_entry_tile_byte_counts_c
+    type(c_ptr)               :: pack_entry_tile_bytes_c
     type(c_ptr)               :: pack_entry_span_sample_sizes_c
     type(c_ptr)               :: pack_entry_span_samples_c
     type(c_ptr)               :: token_values_c
@@ -256,6 +274,9 @@ contains
     integer(c_int64_t), target :: pack_entry_page_hashes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target     :: pack_entry_page_word_counts_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target     :: pack_entry_page_words_copy(MAX_CUDA_PACK_PAGE_WORDS, MAX_CUDA_PACK_DISPATCH_ENTRIES)
+    integer(c_int64_t), target :: pack_entry_tile_hashes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
+    integer(c_i32), target     :: pack_entry_tile_byte_counts_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
+    integer(c_i8), target      :: pack_entry_tile_bytes_copy(MAX_CUDA_PACK_TILE_BYTES, MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target     :: pack_entry_span_sample_sizes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i8), target      :: pack_entry_span_samples_copy(MAX_CUDA_SPAN_SAMPLE_BYTES, MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), allocatable, target :: token_values_copy(:)
@@ -272,6 +293,9 @@ contains
     pack_entry_page_hashes_c = c_null_ptr
     pack_entry_page_word_counts_c = c_null_ptr
     pack_entry_page_words_c = c_null_ptr
+    pack_entry_tile_hashes_c = c_null_ptr
+    pack_entry_tile_byte_counts_c = c_null_ptr
+    pack_entry_tile_bytes_c = c_null_ptr
     pack_entry_span_sample_sizes_c = c_null_ptr
     pack_entry_span_samples_c = c_null_ptr
     token_values_c = c_null_ptr
@@ -291,6 +315,9 @@ contains
     pack_entry_page_hashes_copy = 0_c_int64_t
     pack_entry_page_word_counts_copy = 0_c_i32
     pack_entry_page_words_copy = 0_c_i32
+    pack_entry_tile_hashes_copy = 0_c_int64_t
+    pack_entry_tile_byte_counts_copy = 0_c_i32
+    pack_entry_tile_bytes_copy = 0_c_i8
     pack_entry_span_sample_sizes_copy = 0_c_i32
     pack_entry_span_samples_copy = 0_c_i8
     context_bytes_copy = 0_c_i8
@@ -325,6 +352,9 @@ contains
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_page_hashes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_page_word_counts), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_page_words, dim=2), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_tile_hashes), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_tile_byte_counts), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_tile_bytes, dim=2), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_span_sample_sizes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_span_samples, dim=2), kind=i32))
       pack_entry_offsets_copy(1:pack_entry_limit) = int(pack_entry_offsets(1:pack_entry_limit), kind=c_int64_t)
@@ -337,6 +367,10 @@ contains
       pack_entry_page_word_counts_copy(1:pack_entry_limit) = int(pack_entry_page_word_counts(1:pack_entry_limit), kind=c_i32)
       pack_entry_page_words_copy(:, 1:pack_entry_limit) = 0_c_i32
       pack_entry_page_words_copy(:, 1:pack_entry_limit) = int(pack_entry_page_words(:, 1:pack_entry_limit), kind=c_i32)
+      pack_entry_tile_hashes_copy(1:pack_entry_limit) = int(pack_entry_tile_hashes(1:pack_entry_limit), kind=c_int64_t)
+      pack_entry_tile_byte_counts_copy(1:pack_entry_limit) = int(pack_entry_tile_byte_counts(1:pack_entry_limit), kind=c_i32)
+      pack_entry_tile_bytes_copy(:, 1:pack_entry_limit) = 0_c_i8
+      pack_entry_tile_bytes_copy(:, 1:pack_entry_limit) = int(pack_entry_tile_bytes(:, 1:pack_entry_limit), kind=c_i8)
       pack_entry_span_sample_sizes_copy(1:pack_entry_limit) = int(pack_entry_span_sample_sizes(1:pack_entry_limit), kind=c_i32)
       sample_size_limit = min(MAX_CUDA_SPAN_SAMPLE_BYTES, int(size(pack_entry_span_samples, dim=1), kind=i32))
       if (sample_size_limit > 0_i32) then
@@ -352,6 +386,9 @@ contains
       pack_entry_page_hashes_c = c_loc(pack_entry_page_hashes_copy(1))
       pack_entry_page_word_counts_c = c_loc(pack_entry_page_word_counts_copy(1))
       pack_entry_page_words_c = c_loc(pack_entry_page_words_copy(1, 1))
+      pack_entry_tile_hashes_c = c_loc(pack_entry_tile_hashes_copy(1))
+      pack_entry_tile_byte_counts_c = c_loc(pack_entry_tile_byte_counts_copy(1))
+      pack_entry_tile_bytes_c = c_loc(pack_entry_tile_bytes_copy(1, 1))
       pack_entry_span_sample_sizes_c = c_loc(pack_entry_span_sample_sizes_copy(1))
       pack_entry_span_samples_c = c_loc(pack_entry_span_samples_copy(1, 1))
     end if
@@ -362,7 +399,8 @@ contains
       int(last_pack_bytes, kind=c_int64_t), int(pack_usage_count, kind=c_int32_t), &
       pack_entry_offsets_c, pack_entry_bytes_c, pack_role_codes_c, pack_layout_codes_c, &
       pack_entry_span_hashes_c, pack_entry_span_bytes_c, pack_entry_page_hashes_c, &
-      pack_entry_page_word_counts_c, pack_entry_page_words_c, pack_entry_span_sample_sizes_c, &
+      pack_entry_page_word_counts_c, pack_entry_page_words_c, pack_entry_tile_hashes_c, &
+      pack_entry_tile_byte_counts_c, pack_entry_tile_bytes_c, pack_entry_span_sample_sizes_c, &
       pack_entry_span_samples_c, &
       token_values_c, token_count_c, modal_bytes_c, modal_byte_count_c, int(staged_modal_count, kind=c_int32_t), &
       workspace_buffer_c, workspace_bytes_c, context_bytes_c, int(MAX_LIVE_CONTEXT_BYTES, kind=c_int32_t), &
@@ -412,6 +450,7 @@ contains
                                 pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
                                 pack_entry_span_hashes, pack_entry_span_bytes, &
                                 pack_entry_page_hashes, pack_entry_page_word_counts, pack_entry_page_words, &
+                                pack_entry_tile_hashes, pack_entry_tile_byte_counts, pack_entry_tile_bytes, &
                                 pack_entry_span_sample_sizes, pack_entry_span_samples, &
                                 kv_before, token_budget, emitted_token_count, &
                                 token_value, stop_reason, status_code, workspace_buffer, workspace_bytes, &
@@ -434,6 +473,9 @@ contains
     integer(i64), intent(in)  :: pack_entry_page_hashes(:)
     integer(i32), intent(in)  :: pack_entry_page_word_counts(:)
     integer(i32), intent(in)  :: pack_entry_page_words(:,:)
+    integer(i64), intent(in)  :: pack_entry_tile_hashes(:)
+    integer(i32), intent(in)  :: pack_entry_tile_byte_counts(:)
+    integer(i8), intent(in)   :: pack_entry_tile_bytes(:,:)
     integer(i32), intent(in)  :: pack_entry_span_sample_sizes(:)
     integer(i8), intent(in)   :: pack_entry_span_samples(:,:)
     integer(i64), intent(in)  :: kv_before
@@ -464,6 +506,9 @@ contains
     type(c_ptr)               :: pack_entry_page_hashes_c
     type(c_ptr)               :: pack_entry_page_word_counts_c
     type(c_ptr)               :: pack_entry_page_words_c
+    type(c_ptr)               :: pack_entry_tile_hashes_c
+    type(c_ptr)               :: pack_entry_tile_byte_counts_c
+    type(c_ptr)               :: pack_entry_tile_bytes_c
     type(c_ptr)               :: pack_entry_span_sample_sizes_c
     type(c_ptr)               :: pack_entry_span_samples_c
     type(c_ptr)               :: context_bytes_c
@@ -480,6 +525,9 @@ contains
     integer(c_int64_t), target :: pack_entry_page_hashes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target      :: pack_entry_page_word_counts_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target      :: pack_entry_page_words_copy(MAX_CUDA_PACK_PAGE_WORDS, MAX_CUDA_PACK_DISPATCH_ENTRIES)
+    integer(c_int64_t), target  :: pack_entry_tile_hashes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
+    integer(c_i32), target      :: pack_entry_tile_byte_counts_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
+    integer(c_i8), target       :: pack_entry_tile_bytes_copy(MAX_CUDA_PACK_TILE_BYTES, MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target      :: pack_entry_span_sample_sizes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i8), target       :: pack_entry_span_samples_copy(MAX_CUDA_SPAN_SAMPLE_BYTES, MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i8), allocatable, target  :: context_bytes_copy(:)
@@ -495,6 +543,9 @@ contains
     pack_entry_page_hashes_c = c_null_ptr
     pack_entry_page_word_counts_c = c_null_ptr
     pack_entry_page_words_c = c_null_ptr
+    pack_entry_tile_hashes_c = c_null_ptr
+    pack_entry_tile_byte_counts_c = c_null_ptr
+    pack_entry_tile_bytes_c = c_null_ptr
     pack_entry_span_sample_sizes_c = c_null_ptr
     pack_entry_span_samples_c = c_null_ptr
     context_bytes_c = c_null_ptr
@@ -512,6 +563,9 @@ contains
     pack_entry_page_hashes_copy = 0_c_int64_t
     pack_entry_page_word_counts_copy = 0_c_i32
     pack_entry_page_words_copy = 0_c_i32
+    pack_entry_tile_hashes_copy = 0_c_int64_t
+    pack_entry_tile_byte_counts_copy = 0_c_i32
+    pack_entry_tile_bytes_copy = 0_c_i8
     pack_entry_span_sample_sizes_copy = 0_c_i32
     pack_entry_span_samples_copy = 0_c_i8
     updated_context_bytes_copy = 0_c_i8
@@ -540,6 +594,9 @@ contains
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_page_hashes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_page_word_counts), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_page_words, dim=2), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_tile_hashes), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_tile_byte_counts), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_tile_bytes, dim=2), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_span_sample_sizes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_span_samples, dim=2), kind=i32))
       pack_entry_offsets_copy(1:pack_entry_limit) = int(pack_entry_offsets(1:pack_entry_limit), kind=c_int64_t)
@@ -552,6 +609,10 @@ contains
       pack_entry_page_word_counts_copy(1:pack_entry_limit) = int(pack_entry_page_word_counts(1:pack_entry_limit), kind=c_i32)
       pack_entry_page_words_copy(:, 1:pack_entry_limit) = 0_c_i32
       pack_entry_page_words_copy(:, 1:pack_entry_limit) = int(pack_entry_page_words(:, 1:pack_entry_limit), kind=c_i32)
+      pack_entry_tile_hashes_copy(1:pack_entry_limit) = int(pack_entry_tile_hashes(1:pack_entry_limit), kind=c_int64_t)
+      pack_entry_tile_byte_counts_copy(1:pack_entry_limit) = int(pack_entry_tile_byte_counts(1:pack_entry_limit), kind=c_i32)
+      pack_entry_tile_bytes_copy(:, 1:pack_entry_limit) = 0_c_i8
+      pack_entry_tile_bytes_copy(:, 1:pack_entry_limit) = int(pack_entry_tile_bytes(:, 1:pack_entry_limit), kind=c_i8)
       pack_entry_span_sample_sizes_copy(1:pack_entry_limit) = int(pack_entry_span_sample_sizes(1:pack_entry_limit), kind=c_i32)
       sample_size_limit = min(MAX_CUDA_SPAN_SAMPLE_BYTES, int(size(pack_entry_span_samples, dim=1), kind=i32))
       if (sample_size_limit > 0_i32) then
@@ -567,6 +628,9 @@ contains
       pack_entry_page_hashes_c = c_loc(pack_entry_page_hashes_copy(1))
       pack_entry_page_word_counts_c = c_loc(pack_entry_page_word_counts_copy(1))
       pack_entry_page_words_c = c_loc(pack_entry_page_words_copy(1, 1))
+      pack_entry_tile_hashes_c = c_loc(pack_entry_tile_hashes_copy(1))
+      pack_entry_tile_byte_counts_c = c_loc(pack_entry_tile_byte_counts_copy(1))
+      pack_entry_tile_bytes_c = c_loc(pack_entry_tile_bytes_copy(1, 1))
       pack_entry_span_sample_sizes_c = c_loc(pack_entry_span_sample_sizes_copy(1))
       pack_entry_span_samples_c = c_loc(pack_entry_span_samples_copy(1, 1))
     end if
@@ -577,7 +641,8 @@ contains
       int(last_pack_bytes, kind=c_int64_t), int(pack_usage_count, kind=c_int32_t), &
       pack_entry_offsets_c, pack_entry_bytes_c, pack_role_codes_c, pack_layout_codes_c, &
       pack_entry_span_hashes_c, pack_entry_span_bytes_c, pack_entry_page_hashes_c, &
-      pack_entry_page_word_counts_c, pack_entry_page_words_c, pack_entry_span_sample_sizes_c, &
+      pack_entry_page_word_counts_c, pack_entry_page_words_c, pack_entry_tile_hashes_c, &
+      pack_entry_tile_byte_counts_c, pack_entry_tile_bytes_c, pack_entry_span_sample_sizes_c, &
       pack_entry_span_samples_c, &
       int(kv_before, kind=c_int64_t), int(token_budget, kind=c_int64_t), context_bytes_c, context_byte_count_c, &
       workspace_buffer_c, workspace_bytes_c, updated_context_bytes_c, int(MAX_LIVE_CONTEXT_BYTES, kind=c_int32_t), &

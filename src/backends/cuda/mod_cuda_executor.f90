@@ -26,6 +26,7 @@ module mod_cuda_executor
   integer(i32), parameter :: MAX_CUDA_PACK_DISPATCH_ENTRIES = 4_i32
   integer(i32), parameter :: MAX_CUDA_SPAN_SAMPLE_BYTES = 64_i32
   integer(i32), parameter :: MAX_CUDA_PACK_PAGE_WORDS = 8_i32
+  integer(i32), parameter :: MAX_CUDA_PACK_TILE_BYTES = 32_i32
 
   type :: cuda_pack_usage_profile
     integer(i64) :: usage_hash = 0_i64
@@ -45,6 +46,9 @@ module mod_cuda_executor
     integer(i64) :: entry_page_hashes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
     integer(i32) :: entry_page_word_counts(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     integer(i32) :: entry_page_words(MAX_CUDA_PACK_PAGE_WORDS, MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
+    integer(i64) :: entry_tile_hashes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
+    integer(i32) :: entry_tile_byte_counts(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
+    integer(i8)  :: entry_tile_bytes(MAX_CUDA_PACK_TILE_BYTES, MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i8
     character(len=MAX_PATH_LEN) :: entry_span_paths(MAX_CUDA_PACK_DISPATCH_ENTRIES) = ""
     character(len=MAX_PATH_LEN) :: span_root = ""
     logical      :: has_usage = .false.
@@ -179,6 +183,7 @@ contains
       pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
       pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
       pack_usage%entry_page_hashes, pack_usage%entry_page_word_counts, pack_usage%entry_page_words, &
+      pack_usage%entry_tile_hashes, pack_usage%entry_tile_byte_counts, pack_usage%entry_tile_bytes, &
       pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
       max(0_i64, staged_tokens), staged_modal_count, &
       consumed_token_count, status_code, workspace_buffer_local, workspace_bytes_local, token_values, &
@@ -271,6 +276,7 @@ contains
       pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
       pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
       pack_usage%entry_page_hashes, pack_usage%entry_page_word_counts, pack_usage%entry_page_words, &
+      pack_usage%entry_tile_hashes, pack_usage%entry_tile_byte_counts, pack_usage%entry_tile_bytes, &
       pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
       kv_before, token_budget, emitted_token_count, token_value, &
       stop_reason, status_code, workspace_buffer_local, workspace_bytes_local, context_bytes, &
@@ -604,6 +610,9 @@ contains
     integer(i64)                                 :: page_hash
     integer(i32)                                 :: page_word_count
     integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
+    integer(i64)                                 :: tile_hash
+    integer(i32)                                 :: tile_byte_count
+    integer(i8)                                  :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
 
     if (len_trim(pack_usage%span_root) == 0) return
 
@@ -631,6 +640,16 @@ contains
       if (page_word_count > 0_i32) then
         pack_usage%entry_page_words(1:page_word_count, entry_index) = page_words(1:page_word_count)
       end if
+      call build_cuda_pack_tile_record(pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), &
+        pack_usage%role_codes(entry_index), pack_usage%layout_codes(entry_index), &
+        pack_usage%entry_span_samples(:, entry_index), int(pack_usage%entry_span_sample_sizes(entry_index), kind=i64), &
+        tile_hash, tile_byte_count, tile_bytes)
+      pack_usage%entry_tile_hashes(entry_index) = tile_hash
+      pack_usage%entry_tile_byte_counts(entry_index) = tile_byte_count
+      pack_usage%entry_tile_bytes(:, entry_index) = 0_i8
+      if (tile_byte_count > 0_i32) then
+        pack_usage%entry_tile_bytes(1:tile_byte_count, entry_index) = tile_bytes(1:tile_byte_count)
+      end if
     end do
   end subroutine hydrate_payload_pack_span_profile
 
@@ -652,11 +671,17 @@ contains
     logical                                      :: found_page_hash
     logical                                      :: found_page_words
     logical                                      :: found_page_hex
+    logical                                      :: found_tile_hash
+    logical                                      :: found_tile_bytes
+    logical                                      :: found_tile_hex
     logical                                      :: loaded_ok
     logical                                      :: required_entry_found
     integer(i64)                                 :: page_hash
     integer(i32)                                 :: page_word_count
     integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
+    integer(i64)                                 :: tile_hash
+    integer(i32)                                 :: tile_byte_count
+    integer(i8)                                  :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
 
     loaded_cached = .false.
     if (len_trim(cache_root) == 0) return
@@ -669,7 +694,8 @@ contains
     call load_cuda_artifact_payload(cache_root, trim(cache_path), cache_text, loaded_ok)
     if (.not. loaded_ok) return
     if (index(cache_text, "kind=cuda_pack_span_cache_v1") <= 0 .and. &
-        index(cache_text, "kind=cuda_pack_span_cache_v2") <= 0) return
+        index(cache_text, "kind=cuda_pack_span_cache_v2") <= 0 .and. &
+        index(cache_text, "kind=cuda_pack_span_cache_v3") <= 0) return
 
     required_entry_found = .false.
     do entry_index = 1_i32, MAX_CUDA_PACK_DISPATCH_ENTRIES
@@ -735,6 +761,43 @@ contains
       if (pack_usage%entry_page_word_counts(entry_index) > 0_i32) then
         pack_usage%entry_page_words(1:pack_usage%entry_page_word_counts(entry_index), entry_index) = &
           page_words(1:pack_usage%entry_page_word_counts(entry_index))
+      end if
+
+      write(key_text, '("entry",I0,"_tile_hash=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hash)
+      tile_hash = 0_i64
+      if (found_tile_hash) then
+        if (.not. parse_i64_text(value_text, tile_hash)) return
+      end if
+
+      write(key_text, '("entry",I0,"_tile_bytes=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_bytes)
+      tile_byte_count = 0_i32
+      if (found_tile_bytes) then
+        if (.not. parse_i64_text(value_text, parsed_i64)) return
+        tile_byte_count = max(0_i32, min(MAX_CUDA_PACK_TILE_BYTES, int(parsed_i64, kind=i32)))
+      end if
+
+      write(key_text, '("entry",I0,"_tile_hex=")') entry_index
+      value_text = ""
+      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hex)
+      tile_bytes = 0_i8
+      if (found_tile_bytes .and. found_tile_hex .and. tile_byte_count > 0_i32) then
+        call decode_hex_to_tile_bytes(trim(value_text), tile_bytes, tile_byte_count)
+      else if (pack_usage%entry_span_sample_sizes(entry_index) > 0_i32) then
+        call build_cuda_pack_tile_record(pack_usage%entry_offsets(entry_index), pack_usage%entry_bytes(entry_index), &
+          pack_usage%role_codes(entry_index), pack_usage%layout_codes(entry_index), &
+          pack_usage%entry_span_samples(:, entry_index), int(pack_usage%entry_span_sample_sizes(entry_index), kind=i64), &
+          tile_hash, tile_byte_count, tile_bytes)
+      end if
+      pack_usage%entry_tile_hashes(entry_index) = max(0_i64, tile_hash)
+      pack_usage%entry_tile_byte_counts(entry_index) = max(0_i32, tile_byte_count)
+      pack_usage%entry_tile_bytes(:, entry_index) = 0_i8
+      if (pack_usage%entry_tile_byte_counts(entry_index) > 0_i32) then
+        pack_usage%entry_tile_bytes(1:pack_usage%entry_tile_byte_counts(entry_index), entry_index) = &
+          tile_bytes(1:pack_usage%entry_tile_byte_counts(entry_index))
       end if
     end do
 
@@ -989,6 +1052,88 @@ contains
         ((word_index - 1_i32) * 4_i32) + 4_i32))
     end do
   end subroutine decode_hex_to_page_words
+
+  subroutine build_cuda_pack_tile_record(pack_offset, pack_bytes, role_code, layout_code, sample_bytes, &
+                                         actual_sample_bytes, tile_hash, tile_byte_count, tile_bytes)
+    integer(i64), intent(in) :: pack_offset
+    integer(i64), intent(in) :: pack_bytes
+    integer(i32), intent(in) :: role_code
+    integer(i32), intent(in) :: layout_code
+    integer(i8), intent(in)  :: sample_bytes(:)
+    integer(i64), intent(in) :: actual_sample_bytes
+    integer(i64), intent(out) :: tile_hash
+    integer(i32), intent(out) :: tile_byte_count
+    integer(i8), intent(out)  :: tile_bytes(:)
+    integer(i32)              :: stored_sample_bytes
+    integer(i32)              :: byte_index
+    integer(i32)              :: source_index
+    integer(i32)              :: start_index
+
+    tile_hash = 0_i64
+    tile_byte_count = 0_i32
+    tile_bytes = 0_i8
+    if (pack_bytes <= 0_i64) return
+
+    stored_sample_bytes = int(max(0_i64, min(actual_sample_bytes, int(size(sample_bytes), kind=i64))), kind=i32)
+    if (stored_sample_bytes <= 0_i32) return
+
+    tile_byte_count = min(MAX_CUDA_PACK_TILE_BYTES, min(stored_sample_bytes, int(size(tile_bytes), kind=i32)))
+    if (tile_byte_count <= 0_i32) return
+
+    start_index = 1_i32 + mod(int(modulo(pack_offset, int(max(1_i32, stored_sample_bytes), kind=i64)), kind=i32), &
+      max(1_i32, stored_sample_bytes))
+    do byte_index = 1_i32, tile_byte_count
+      source_index = select_cuda_pack_tile_source_index(layout_code, byte_index, stored_sample_bytes, start_index)
+      tile_bytes(byte_index) = sample_bytes(source_index)
+    end do
+
+    tile_hash = positive_hash64("cuda_pack_tile")
+    tile_hash = combine_positive_hash64(tile_hash, iand(pack_offset, int(z'7FFFFFFFFFFFFFFF', kind=i64)))
+    tile_hash = combine_positive_hash64(tile_hash, iand(pack_bytes, int(z'7FFFFFFFFFFFFFFF', kind=i64)))
+    tile_hash = combine_positive_hash64(tile_hash, int(role_code, kind=i64) + 257_i64)
+    tile_hash = combine_positive_hash64(tile_hash, int(layout_code, kind=i64) + 1025_i64)
+    tile_hash = combine_positive_hash64(tile_hash, hash_i8_buffer64(tile_bytes, int(tile_byte_count, kind=i64)))
+  end subroutine build_cuda_pack_tile_record
+
+  pure integer(i32) function select_cuda_pack_tile_source_index(layout_code, byte_index, stored_sample_bytes, &
+                                                                start_index) result(source_index)
+    integer(i32), intent(in) :: layout_code
+    integer(i32), intent(in) :: byte_index
+    integer(i32), intent(in) :: stored_sample_bytes
+    integer(i32), intent(in) :: start_index
+    integer(i32)             :: half_count
+    integer(i32)             :: local_index
+
+    source_index = 1_i32
+    if (stored_sample_bytes <= 0_i32) return
+
+    select case (layout_code)
+    case (2_i32)
+      half_count = max(1_i32, (stored_sample_bytes + 1_i32) / 2_i32)
+      if (mod(byte_index, 2_i32) == 1_i32) then
+        local_index = (byte_index + 1_i32) / 2_i32
+      else
+        local_index = half_count + (byte_index / 2_i32)
+      end if
+    case (3_i32)
+      local_index = 1_i32 + mod((byte_index - 1_i32) * 2_i32, stored_sample_bytes)
+    case default
+      local_index = byte_index
+    end select
+
+    source_index = 1_i32 + mod((start_index - 1_i32) + (local_index - 1_i32), stored_sample_bytes)
+  end function select_cuda_pack_tile_source_index
+
+  subroutine decode_hex_to_tile_bytes(hex_text, tile_bytes, stored_count)
+    character(len=*), intent(in) :: hex_text
+    integer(i8), intent(out)     :: tile_bytes(:)
+    integer(i32), intent(inout)  :: stored_count
+    integer(i32)                 :: decoded_count
+
+    decoded_count = 0_i32
+    call decode_hex_to_span_bytes(hex_text, tile_bytes, decoded_count)
+    stored_count = max(0_i32, min(stored_count, decoded_count))
+  end subroutine decode_hex_to_tile_bytes
 
   pure integer(i32) function unpack_le_i32(byte_values) result(word_value)
     integer(i8), intent(in) :: byte_values(:)

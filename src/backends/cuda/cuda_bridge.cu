@@ -38,6 +38,7 @@ constexpr int32_t MIZU_CUDA_CONTEXT_PACK_DISPATCH_OFFSET = 816;
 constexpr int32_t MIZU_CUDA_CONTEXT_PACK_DISPATCH_STRIDE = 24;
 constexpr int32_t MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT = 4;
 constexpr int32_t MIZU_CUDA_PACK_PAGE_WORDS = 8;
+constexpr int32_t MIZU_CUDA_PACK_TILE_BYTES = 32;
 constexpr int32_t MIZU_CUDA_PACK_SPAN_SAMPLE_BYTES = 64;
 constexpr int32_t MIZU_CUDA_CONTEXT_TOTAL_BYTES = 912;
 constexpr int32_t MIZU_CUDA_CONTEXT_PAGE_COUNT = 4;
@@ -116,6 +117,35 @@ inline unsigned long long mix_pack_page_words(unsigned long long seed,
       static_cast<unsigned long long>(static_cast<uint32_t>(pack_entry_page_words[page_base + word_index])) ^
       (static_cast<unsigned long long>(usage_index + 1) << 8) ^
       (static_cast<unsigned long long>(word_index + 1) << 28));
+  }
+  return seed;
+}
+
+inline unsigned long long mix_pack_tile_bytes(unsigned long long seed,
+                                              const int64_t *pack_entry_tile_hashes,
+                                              const int32_t *pack_entry_tile_byte_counts,
+                                              const int8_t *pack_entry_tile_bytes,
+                                              int32_t usage_index) {
+  if (pack_entry_tile_hashes == nullptr || pack_entry_tile_byte_counts == nullptr ||
+      pack_entry_tile_bytes == nullptr) {
+    return seed;
+  }
+
+  const int32_t tile_byte_count =
+      pack_entry_tile_byte_counts[usage_index] < 0 ? 0 :
+      (pack_entry_tile_byte_counts[usage_index] > MIZU_CUDA_PACK_TILE_BYTES ?
+       MIZU_CUDA_PACK_TILE_BYTES : pack_entry_tile_byte_counts[usage_index]);
+  if (tile_byte_count <= 0) return seed;
+
+  const int32_t tile_base = usage_index * MIZU_CUDA_PACK_TILE_BYTES;
+  seed = mix_u64_host(seed ^
+    static_cast<unsigned long long>(pack_entry_tile_hashes[usage_index]) ^
+    (static_cast<unsigned long long>(usage_index + 1) << 18));
+  for (int32_t byte_index = 0; byte_index < tile_byte_count; ++byte_index) {
+    seed = mix_u64_host(seed ^
+      static_cast<unsigned long long>(static_cast<uint8_t>(pack_entry_tile_bytes[tile_base + byte_index])) ^
+      (static_cast<unsigned long long>(usage_index + 1) << 10) ^
+      (static_cast<unsigned long long>(byte_index + 1) << 30));
   }
   return seed;
 }
@@ -1392,6 +1422,9 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
                                          const int64_t *pack_entry_page_hashes,
                                          const int32_t *pack_entry_page_word_counts,
                                          const int32_t *pack_entry_page_words,
+                                         const int64_t *pack_entry_tile_hashes,
+                                         const int32_t *pack_entry_tile_byte_counts,
+                                         const int8_t *pack_entry_tile_bytes,
                                          const int32_t *pack_entry_span_sample_sizes,
                                          const int8_t *pack_entry_span_samples,
                                          const int32_t *token_values,
@@ -1490,9 +1523,14 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
           static_cast<unsigned long long>(pack_entry_span_bytes[usage_index]) ^
           (static_cast<unsigned long long>(usage_index + 1) << 16));
       }
-      workspace_seed = mix_pack_page_words(workspace_seed, pack_entry_page_hashes,
-                                           pack_entry_page_word_counts, pack_entry_page_words, usage_index);
-      if (pack_entry_page_word_counts == nullptr || pack_entry_page_word_counts[usage_index] <= 0) {
+      workspace_seed = mix_pack_tile_bytes(workspace_seed, pack_entry_tile_hashes,
+                                           pack_entry_tile_byte_counts, pack_entry_tile_bytes, usage_index);
+      if (pack_entry_tile_byte_counts == nullptr || pack_entry_tile_byte_counts[usage_index] <= 0) {
+        workspace_seed = mix_pack_page_words(workspace_seed, pack_entry_page_hashes,
+                                             pack_entry_page_word_counts, pack_entry_page_words, usage_index);
+      }
+      if ((pack_entry_tile_byte_counts == nullptr || pack_entry_tile_byte_counts[usage_index] <= 0) &&
+          (pack_entry_page_word_counts == nullptr || pack_entry_page_word_counts[usage_index] <= 0)) {
         workspace_seed = mix_span_sample_bytes(workspace_seed, pack_entry_span_sample_sizes,
                                                pack_entry_span_samples, usage_index);
       }
@@ -1573,6 +1611,9 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
                                         const int64_t *pack_entry_page_hashes,
                                         const int32_t *pack_entry_page_word_counts,
                                         const int32_t *pack_entry_page_words,
+                                        const int64_t *pack_entry_tile_hashes,
+                                        const int32_t *pack_entry_tile_byte_counts,
+                                        const int8_t *pack_entry_tile_bytes,
                                         const int32_t *pack_entry_span_sample_sizes,
                                         const int8_t *pack_entry_span_samples,
                                         int64_t kv_before,
@@ -1706,9 +1747,14 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
         static_cast<unsigned long long>(pack_entry_span_bytes[usage_index]) ^
         (static_cast<unsigned long long>(usage_index + 1) << 16));
     }
-    decode_seed = mix_pack_page_words(decode_seed, pack_entry_page_hashes,
-                                      pack_entry_page_word_counts, pack_entry_page_words, usage_index);
-    if (pack_entry_page_word_counts == nullptr || pack_entry_page_word_counts[usage_index] <= 0) {
+    decode_seed = mix_pack_tile_bytes(decode_seed, pack_entry_tile_hashes,
+                                      pack_entry_tile_byte_counts, pack_entry_tile_bytes, usage_index);
+    if (pack_entry_tile_byte_counts == nullptr || pack_entry_tile_byte_counts[usage_index] <= 0) {
+      decode_seed = mix_pack_page_words(decode_seed, pack_entry_page_hashes,
+                                        pack_entry_page_word_counts, pack_entry_page_words, usage_index);
+    }
+    if ((pack_entry_tile_byte_counts == nullptr || pack_entry_tile_byte_counts[usage_index] <= 0) &&
+        (pack_entry_page_word_counts == nullptr || pack_entry_page_word_counts[usage_index] <= 0)) {
       decode_seed = mix_span_sample_bytes(decode_seed, pack_entry_span_sample_sizes,
                                           pack_entry_span_samples, usage_index);
     }
