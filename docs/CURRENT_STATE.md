@@ -15,6 +15,14 @@ Last updated: 2026-04-09
   a normalized usage hash, and warm execution now prefers that binary
   selection list over textual `pack_use*` recovery when the cached sidecars
   are present
+- current milestone: CUDA prefill/decode plans now also materialize a small
+  binary `.spanbuffer` sidecar carrying sampled span hashes and sampled bytes,
+  and warm execution now prefers that binary span-identity sidecar over
+  textual `pack_span*` recovery when the cached sidecars are present
+- current milestone: compact CUDA warm artifact lineage now treats binary
+  sidecar paths as transport details and derives identity from resolved
+  pack/span content instead, so warm replay stays stable when equivalent plans
+  differ only in sidecar path text
 - current milestone: the loader now understands a first concrete imported
   asset-bundle shape through `mizu_import/`, with validated tensor, modality,
   and projector inventories layered on top of the logical root manifest
@@ -100,6 +108,10 @@ Last updated: 2026-04-09
   `pack_dispatch_buffer=` references to a tiny binary selection sidecar, so
   warm replay can recover selected packed-entry indices without depending on
   textual `pack_use*` recovery
+- those same CUDA prefill/decode artifacts now also carry direct
+  `pack_span_buffer=` references to a tiny binary span-identity sidecar, so
+  warm replay can recover sampled span hashes and sample bytes without
+  depending on textual `pack_span*` recovery
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact

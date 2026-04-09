@@ -147,10 +147,13 @@ bodies.
   - validates a compact CUDA decode plan can now replay from a binary
     `pack_dispatch_buffer=` sidecar plus `.packbuffer` even when textual
     `pack_use*` entries are removed from the plan payload
+  - validates that same compact CUDA decode path can now replay from a binary
+    `pack_span_buffer=` sidecar even when textual `pack_span*` entries are
+    removed from the plan payload
   - validates those same compact CUDA decode plans now keep token identity and
     stored artifact lineage stable when typed `.packbuffer` resolution matches,
-    even if one artifact uses offset/byte dispatch text and another uses
-    explicit `pack=` indices
+    even if equivalent artifacts differ in dispatch form or binary sidecar
+    transport paths
   - validates those same compact CUDA decode plans can still restore their
     bridge-facing dispatch from direct `pack_ref_tile_buffer=` references even
     after the `.packtiles` text index is removed

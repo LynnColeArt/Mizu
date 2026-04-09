@@ -141,6 +141,7 @@ These are the highest-leverage next tasks.
 - [x] Collapse generated CUDA `pack_dispatch*` records to `pack=<index>` entries and recover dispatch metadata from `pack_use*` plus `.packbuffer`
 - [x] Materialize CUDA `.dispatchbuffer` sidecars so warm plans can recover selected packed-entry indices without textual `pack_use*` recovery
 - [x] Emit importer-rooted CUDA `pack_span*` records for prefill and decode
+- [x] Materialize CUDA `.spanbuffer` sidecars so warm plans can recover sampled span identity without textual `pack_span*` recovery
 - [x] Persist staged CUDA pack-page records beside cached tensor spans
 - [x] Persist staged CUDA tensor-tile records beside cached tensor spans
 - [x] Materialize dedicated CUDA `.tilecache` payloads under `cache_root`
@@ -150,6 +151,7 @@ These are the highest-leverage next tasks.
 - [x] Give CUDA `.packbuffer` a typed header and per-pack directory for warm replay
 - [x] Restore CUDA dispatch offset/bytes/role/layout from typed pack-buffer records when `pack=` indices are present
 - [x] Normalize compact CUDA warm artifact lineage across offset/byte and `pack=` dispatch forms
+- [x] Normalize compact CUDA warm artifact lineage across equivalent binary sidecar transport paths
 - [x] Emit direct CUDA `pack_ref_tile_buffer=` references for stage artifacts
 - [x] Address CUDA warm pack tiles by explicit packed entry index
 - [x] Derive CUDA `.packtiles` page/tile records from weight-pack materialization instead of sampled span previews

@@ -178,6 +178,14 @@ Current implementation status:
   `pack_dispatch_buffer=` references to a tiny binary selection sidecar, so
   warm replay can recover selected packed-entry indices without depending on
   textual `pack_use*` recovery
+- those same CUDA prefill/decode artifacts now also carry direct
+  `pack_span_buffer=` references to a tiny binary span-identity sidecar, so
+  warm replay can recover sampled span hashes and sample bytes without
+  depending on textual `pack_span*` recovery
+- compact CUDA warm artifact lineage now treats those binary sidecar paths as
+  transport details and derives identity from resolved pack/span content
+  instead, so replay stays stable when equivalent plans differ only in sidecar
+  path text
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside payload
