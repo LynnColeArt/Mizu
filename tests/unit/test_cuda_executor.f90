@@ -5,6 +5,7 @@ program test_cuda_executor
   use mod_types,         only: MIZU_STOP_REASON_NONE, MIZU_STAGE_PREFILL, MIZU_STAGE_DECODE, &
                                workspace_state, MAX_LIVE_CONTEXT_BYTES
   use mod_cuda_bridge,   only: cuda_device_info, query_cuda_device_info
+  use mod_model_manifest, only: hash_text64
   use mod_cuda_executor, only: execute_cuda_projector, execute_cuda_prefill, execute_cuda_decode, &
                                extract_cuda_context_state_snapshot, extract_cuda_context_window_snapshot, &
                                extract_cuda_context_kv_lane_snapshot, extract_cuda_context_kv_layout_snapshot, &
@@ -137,6 +138,7 @@ program test_cuda_executor
   character(len=*), parameter :: prefill_usage_path = "artifacts/cuda/cuda/plans/prefill/usage.plan"
   character(len=*), parameter :: decode_usage_path = "artifacts/cuda/cuda/plans/decode/usage.plan"
   character(len=*), parameter :: decode_dispatch_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.dispatchbuffer"
+  character(len=*), parameter :: decode_span_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.spanbuffer"
   character(len=*), parameter :: pack_tile_cache_path = "artifacts/cuda/cuda/weights/usage.pack.packtiles"
   character(len=*), parameter :: pack_tile_payload_path = "artifacts/cuda/cuda/weights/usage.pack.packpayload"
   character(len=*), parameter :: pack_tile_buffer_path = "artifacts/cuda/cuda/weights/usage.pack.packbuffer"
@@ -177,6 +179,7 @@ program test_cuda_executor
   call expect_equal_i32("cuda executor fixture dirs should be created", int(shell_status, kind=i32), 0_i32)
   call write_pack_dispatch_buffer_fixture(trim(cache_root) // "/" // trim(decode_dispatch_buffer_path), 4_i32, &
     2222222222222222_i64)
+  call write_pack_span_buffer_fixture(trim(cache_root) // "/" // trim(decode_span_buffer_path), import_bundle_root)
 
   open(unit=9, file=trim(cache_root) // "/" // trim(projector_path), status="replace", action="write")
   write(9, "(A)") "candidate=projector;stage=2;workspace=8388608;format=cuda_u8_bf16_projector_plan_v1"
@@ -254,6 +257,7 @@ program test_cuda_executor
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
     "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
+    "pack_span_buffer=" // decode_span_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
@@ -875,6 +879,7 @@ program test_cuda_executor
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
     "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
+    "pack_span_buffer=" // decode_span_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
@@ -963,7 +968,7 @@ program test_cuda_executor
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
     "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
-    "pack_span_root=" // import_bundle_root // ";" // &
+    "pack_span_buffer=" // decode_span_buffer_path // ";" // &
     "pack_dispatch1=pack=1;" // &
     "pack_dispatch2=pack=2;" // &
     "pack_dispatch3=pack=3;" // &
@@ -1222,6 +1227,94 @@ contains
     close(unit_id)
   end subroutine write_pack_dispatch_buffer_fixture
 
+  subroutine write_pack_span_buffer_fixture(full_path, bundle_root)
+    character(len=*), intent(in) :: full_path
+    character(len=*), intent(in) :: bundle_root
+    integer(i32), parameter      :: CUDA_SPAN_BUFFER_MAGIC = int(z'42535A4D', kind=i32)
+    integer(i32), parameter      :: CUDA_SPAN_BUFFER_VERSION = 1_i32
+    integer(i32), parameter      :: CUDA_SPAN_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter      :: CUDA_SPAN_BUFFER_ENTRY_BYTES = 32_i32
+    character(len=128)           :: source_paths(4)
+    integer(i8)                  :: buffer_bytes(512)
+    integer(i8)                  :: sample_bytes(64)
+    integer(i32)                 :: record_index
+    integer(i32)                 :: entry_offset
+    integer(i32)                 :: sample_count
+    integer(i32)                 :: sample_data_offset
+    integer(i64)                 :: span_hash
+    integer(i64)                 :: sample_bytes_i64
+    integer                      :: unit_id
+
+    source_paths = [character(len=128) :: &
+      "weights/token_embeddings.bin", &
+      "weights/decoder_blocks.bin", &
+      "weights/final_norm.bin", &
+      "weights/lm_head.bin" ]
+
+    buffer_bytes = 0_i8
+    sample_data_offset = CUDA_SPAN_BUFFER_HEADER_BYTES + (4_i32 * CUDA_SPAN_BUFFER_ENTRY_BYTES)
+
+    do record_index = 1_i32, 4_i32
+      call read_fixture_span_record(trim(bundle_root), trim(source_paths(record_index)), span_hash, sample_bytes_i64, &
+        sample_bytes, sample_count)
+      entry_offset = CUDA_SPAN_BUFFER_HEADER_BYTES + ((record_index - 1_i32) * CUDA_SPAN_BUFFER_ENTRY_BYTES)
+      call write_fixture_i32_le(buffer_bytes, entry_offset + 0_i32, record_index)
+      call write_fixture_i32_le(buffer_bytes, entry_offset + 4_i32, record_index)
+      call write_fixture_i32_le(buffer_bytes, entry_offset + 8_i32, sample_count)
+      call write_fixture_i32_le(buffer_bytes, entry_offset + 12_i32, sample_data_offset)
+      call write_fixture_i64_le(buffer_bytes, entry_offset + 16_i32, span_hash)
+      call write_fixture_i64_le(buffer_bytes, entry_offset + 24_i32, sample_bytes_i64)
+      if (sample_count > 0_i32) then
+        buffer_bytes(sample_data_offset + 1_i32:sample_data_offset + sample_count) = sample_bytes(1:sample_count)
+        sample_data_offset = sample_data_offset + sample_count
+      end if
+    end do
+
+    call write_fixture_i32_le(buffer_bytes, 0_i32, CUDA_SPAN_BUFFER_MAGIC)
+    call write_fixture_i32_le(buffer_bytes, 4_i32, CUDA_SPAN_BUFFER_VERSION)
+    call write_fixture_i32_le(buffer_bytes, 8_i32, CUDA_SPAN_BUFFER_HEADER_BYTES)
+    call write_fixture_i32_le(buffer_bytes, 12_i32, CUDA_SPAN_BUFFER_ENTRY_BYTES)
+    call write_fixture_i32_le(buffer_bytes, 16_i32, 4_i32)
+    call write_fixture_i32_le(buffer_bytes, 20_i32, 4_i32)
+    call write_fixture_i64_le(buffer_bytes, 24_i32, 2222222222222222_i64)
+
+    open(newunit=unit_id, file=trim(full_path), status="replace", access="stream", form="unformatted", action="write")
+    write(unit_id) buffer_bytes(1:sample_data_offset)
+    close(unit_id)
+  end subroutine write_pack_span_buffer_fixture
+
+  subroutine read_fixture_span_record(bundle_root, source_path, span_hash, sample_bytes_i64, sample_bytes, sample_count)
+    character(len=*), intent(in) :: bundle_root
+    character(len=*), intent(in) :: source_path
+    integer(i64), intent(out)    :: span_hash
+    integer(i64), intent(out)    :: sample_bytes_i64
+    integer(i8), intent(out)     :: sample_bytes(:)
+    integer(i32), intent(out)    :: sample_count
+    character(len=512)           :: full_path
+    integer(i8)                  :: sample_buffer(64)
+    integer(i64)                 :: file_size
+    integer                      :: unit_id
+    integer(i32)                 :: ios
+
+    sample_bytes = 0_i8
+    sample_buffer = 0_i8
+    full_path = trim(bundle_root) // "/" // trim(source_path)
+    file_size = 0_i64
+    inquire(file=trim(full_path), size=file_size, iostat=ios)
+    if (ios /= 0_i32) error stop 1
+    sample_count = max(0_i32, min(int(size(sample_buffer), kind=i32), int(file_size, kind=i32)))
+    open(newunit=unit_id, file=trim(full_path), status="old", access="stream", form="unformatted", action="read", &
+      iostat=ios)
+    if (ios /= 0_i32) error stop 1
+    if (sample_count > 0_i32) read(unit_id, iostat=ios) sample_buffer(1:sample_count)
+    close(unit_id)
+    if (ios /= 0_i32) error stop 1
+    if (sample_count > 0_i32) sample_bytes(1:sample_count) = sample_buffer(1:sample_count)
+    sample_bytes_i64 = int(sample_count, kind=i64)
+    span_hash = fixture_positive_hash64(trim(full_path))
+    span_hash = fixture_combine_positive_hash64(span_hash, fixture_hash_i8_buffer64(sample_bytes, sample_bytes_i64))
+  end subroutine read_fixture_span_record
+
   subroutine decode_fixture_hex(hex_text, byte_values, byte_count)
     character(len=*), intent(in) :: hex_text
     integer(i8), intent(out)     :: byte_values(:)
@@ -1290,5 +1383,38 @@ contains
       digit_value = -1_i32
     end select
   end function fixture_hex_digit_value
+
+  integer(i64) function fixture_positive_hash64(text) result(hash_value)
+    character(len=*), intent(in) :: text
+
+    hash_value = iand(hash_text64(text), int(z'7FFFFFFFFFFFFFFF', kind=i64))
+    if (hash_value == 0_i64) hash_value = 1_i64
+  end function fixture_positive_hash64
+
+  integer(i64) function fixture_combine_positive_hash64(base_hash, content_hash) result(hash_value)
+    integer(i64), intent(in) :: base_hash
+    integer(i64), intent(in) :: content_hash
+    integer(i64)             :: mixed_hash
+
+    mixed_hash = ieor(max(1_i64, base_hash), content_hash + int(z'9E3779B97F4A7C15', kind=i64))
+    mixed_hash = ieor(mixed_hash, shiftr(mixed_hash, 30))
+    mixed_hash = mixed_hash * int(z'BF58476D1CE4E5B9', kind=i64)
+    mixed_hash = ieor(mixed_hash, shiftr(mixed_hash, 27))
+    mixed_hash = mixed_hash * int(z'94D049BB133111EB', kind=i64)
+    hash_value = iand(ieor(mixed_hash, shiftr(mixed_hash, 31)), int(z'7FFFFFFFFFFFFFFF', kind=i64))
+    if (hash_value == 0_i64) hash_value = 1_i64
+  end function fixture_combine_positive_hash64
+
+  integer(i64) function fixture_hash_i8_buffer64(buffer, buffer_count) result(hash_value)
+    integer(i8), intent(in)  :: buffer(:)
+    integer(i64), intent(in) :: buffer_count
+    integer(i64)             :: index_byte
+
+    hash_value = fixture_positive_hash64("cuda_import_span")
+    if (buffer_count <= 0_i64) return
+    do index_byte = 1_i64, min(buffer_count, int(size(buffer), kind=i64))
+      hash_value = fixture_combine_positive_hash64(max(1_i64, hash_value), int(buffer(index_byte), kind=i64) + 257_i64)
+    end do
+  end function fixture_hash_i8_buffer64
 
 end program test_cuda_executor
