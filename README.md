@@ -137,6 +137,11 @@ Current implementation status:
   under `cache_root`, referenced by the `v4` `.spancache` sidecars, and the
   CUDA bridge now prefers those staged tile bytes before falling back to page
   words or raw sampled span bytes
+- CUDA model-load artifacts now also materialize pack-owned `.packtiles`
+  payloads under `cache_root`, and prefill/decode span caches now reference
+  that weight-pack cache so the CUDA executor can prefer pack-owned page/tile
+  records before falling back to plan-local `.tilecache` payloads or raw span
+  samples
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside payload
