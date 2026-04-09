@@ -153,6 +153,9 @@ bodies.
   - validates that same compact CUDA decode path can now replay from a binary
     `pack_span_buffer=` sidecar even when textual `pack_span*` entries are
     removed from the plan payload
+  - validates that same compact CUDA decode path can now replay from stage kind
+    plus binary usage/dispatch/span sidecars alone, with no per-entry
+    `pack_dispatch*` plan text required
   - validates those same compact CUDA decode plans now keep token identity and
     stored artifact lineage stable when typed `.packbuffer` resolution matches,
     even if equivalent artifacts differ in dispatch form or binary sidecar

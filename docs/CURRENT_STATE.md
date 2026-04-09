@@ -28,6 +28,10 @@ Last updated: 2026-04-09
   sidecar paths as transport details and derives identity from resolved
   pack/span content instead, so warm replay stays stable when equivalent plans
   differ only in sidecar path text
+- current milestone: compact CUDA warm artifact lineage now also ignores
+  `pack_use_kind=` and `pack_dispatch_kind=` marker text, so older
+  text-plus-buffer plans and newer binary-sidecar-only plans converge on the
+  same replay identity when they resolve to the same packed tensors
 - current milestone: the loader now understands a first concrete imported
   asset-bundle shape through `mizu_import/`, with validated tensor, modality,
   and projector inventories layered on top of the logical root manifest
@@ -121,6 +125,8 @@ Last updated: 2026-04-09
   `pack_usage_buffer=` references to a tiny binary usage-summary sidecar, so
   warm replay can recover `pack_use_*` count/byte/offset/hash identity without
   depending on textual `pack_use*` summary fields
+- compact CUDA decode can now replay from stage kind plus binary refs alone,
+  with no per-entry `pack_dispatch*` text required in the plan payload
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact

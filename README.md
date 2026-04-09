@@ -190,6 +190,10 @@ Current implementation status:
   transport details and derives identity from resolved pack/span content
   instead, so replay stays stable when equivalent plans differ only in sidecar
   path text
+- compact CUDA warm artifact lineage now also ignores `pack_use_kind=` and
+  `pack_dispatch_kind=` marker text, so binary-sidecar-only plans and older
+  text-plus-buffer plans converge on the same replay identity when they resolve
+  to the same packed tensors
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside payload
@@ -206,6 +210,8 @@ Current implementation status:
 - compact CUDA decode plans can now replay from binary usage, dispatch, and
   span sidecars together, even when textual `pack_use*` summary and
   `pack_span*` records are removed from the plan payload
+- that same compact CUDA decode path can now replay from stage kind plus binary
+  refs alone, with no per-entry `pack_dispatch*` text required in the plan
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
   sources change, which keeps the public-path tests from silently running stale
   executables
