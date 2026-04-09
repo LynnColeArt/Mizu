@@ -104,5 +104,9 @@ These suites cover the `API-C*` portion of
     generated decode plan drops its per-entry `pack_use*`, `pack_dispatch*`,
     and `pack_span*` text, as long as the binary usage/dispatch/span sidecars
     and stable static plan metadata remain available
+  - verifies that same public CUDA flow still replays identically after the
+    generated decode plan also drops the textual `pack_use_*` summary fields,
+    because the warm `.usagebuffer` sidecar now persists the effective usage
+    hash and byte/offset summary needed for replay
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

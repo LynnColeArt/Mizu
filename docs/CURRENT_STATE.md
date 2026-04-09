@@ -131,6 +131,10 @@ Last updated: 2026-04-09
   generated decode plan drops its per-entry `pack_use*`, `pack_dispatch*`, and
   `pack_span*` text, as long as the binary usage/dispatch/span sidecars and
   stable static plan metadata remain available
+- those public CUDA binary sidecars now also persist a real effective
+  `pack_use_hash`, so the warm contract path can drop textual `pack_use_*`
+  summary fields as well and still replay identically from stable static plan
+  metadata plus `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer`
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact

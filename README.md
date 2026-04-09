@@ -216,6 +216,11 @@ Current implementation status:
   per-entry `pack_use*`, `pack_dispatch*`, and `pack_span*` text stripped out,
   as long as the stable plan metadata and binary usage/dispatch/span sidecars
   remain in place
+- those public CUDA binary sidecars now also persist a real effective
+  `pack_use_hash` for warm replay, so generated decode plans can drop the
+  textual `pack_use_*` summary fields too and still replay identically from
+  stable plan metadata plus `.usagebuffer`, `.dispatchbuffer`, and
+  `.spanbuffer`
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
   sources change, which keeps the public-path tests from silently running stale
   executables
