@@ -773,9 +773,13 @@ contains
     integer(i64)                                 :: parsed_i64
     integer(i64)                                 :: entry_offset
     integer(i64)                                 :: entry_bytes
+    integer(i64)                                 :: usage_offset
+    integer(i64)                                 :: usage_bytes
     integer(i32)                                 :: pack_index
     integer(i32)                                 :: role_code
     integer(i32)                                 :: layout_code
+    integer(i32)                                 :: usage_role_code
+    integer(i32)                                 :: usage_layout_code
     logical                                      :: found_count
     logical                                      :: found_bytes
     logical                                      :: found_hash
@@ -789,6 +793,7 @@ contains
     logical                                      :: found_entry
     logical                                      :: has_compact_markers
     logical                                      :: parsed_ok
+    logical                                      :: parsed_usage_ok
 
     found_compact = .false.
     has_compact_markers = .false.
@@ -866,6 +871,21 @@ contains
       call extract_payload_dispatch_entry(trim(entry_text), pack_index, entry_offset, entry_bytes, role_code, &
         layout_code, parsed_ok)
       if (.not. parsed_ok) cycle
+      if (entry_bytes <= 0_i64 .or. role_code <= 0_i32 .or. layout_code <= 0_i32) then
+        write(field_text, '("pack_use",I0,"=")') entry_index
+        entry_text = ""
+        call extract_payload_field_text(payload_text, trim(field_text), entry_text, found_entry)
+        if (found_entry) then
+          call extract_payload_usage_entry(trim(entry_text), usage_offset, usage_bytes, usage_role_code, &
+            usage_layout_code, parsed_usage_ok)
+          if (parsed_usage_ok) then
+            entry_offset = usage_offset
+            entry_bytes = usage_bytes
+            role_code = usage_role_code
+            layout_code = usage_layout_code
+          end if
+        end if
+      end if
       pack_usage%entry_pack_indices(entry_index) = pack_index
       pack_usage%entry_offsets(entry_index) = entry_offset
       pack_usage%entry_bytes(entry_index) = entry_bytes
@@ -1843,11 +1863,14 @@ contains
     call extract_inline_numeric_field(dispatch_entry, "bytes=", bytes_text, found_bytes)
     call extract_inline_numeric_field(dispatch_entry, "role=", role_text, found_role)
     call extract_inline_numeric_field(dispatch_entry, "layout=", layout_text, found_layout)
-    if (.not. found_offset .or. .not. found_bytes .or. .not. found_role .or. .not. found_layout) return
     if (found_pack_index) then
       if (parse_i64_text(pack_index_text, parsed_i64)) then
         pack_index = max(0_i32, int(parsed_i64, kind=i32))
       end if
+    end if
+    if (.not. found_offset .or. .not. found_bytes .or. .not. found_role .or. .not. found_layout) then
+      parsed_ok = (pack_index > 0_i32)
+      return
     end if
     if (.not. parse_i64_text(offset_text, pack_offset)) return
     if (.not. parse_i64_text(bytes_text, pack_bytes)) return
