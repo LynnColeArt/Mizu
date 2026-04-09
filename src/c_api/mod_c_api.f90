@@ -3759,6 +3759,15 @@ contains
     write(tile_path, '(A,".packpayload")') trim(payload_path)
   end function build_cuda_weight_pack_tile_payload_path
 
+  function build_cuda_weight_pack_tile_buffer_path(payload_path) result(tile_path)
+    character(len=*), intent(in) :: payload_path
+    character(len=MAX_PATH_LEN)  :: tile_path
+
+    tile_path = ""
+    if (len_trim(payload_path) == 0) return
+    write(tile_path, '(A,".packbuffer")') trim(payload_path)
+  end function build_cuda_weight_pack_tile_buffer_path
+
   function build_cuda_weight_pack_payload_path(model, execution_route) result(payload_path)
     type(model_state), intent(in) :: model
     integer(i32), intent(in)      :: execution_route
@@ -3829,17 +3838,24 @@ contains
     character(len=(MAX_PATH_LEN * 3) + 12288)    :: pack_payload
     character(len=MAX_PATH_LEN)                  :: tile_path
     character(len=MAX_PATH_LEN)                  :: pack_payload_path
+    character(len=MAX_PATH_LEN)                  :: pack_buffer_path
     character(len=MAX_PATH_LEN)                  :: tile_full_path
     character(len=MAX_PATH_LEN)                  :: pack_payload_full_path
+    character(len=MAX_PATH_LEN)                  :: pack_buffer_full_path
     character(len=MAX_PATH_LEN)                  :: parent_dir
     character(len=MAX_PATH_LEN + 96)             :: field_text
     character(len=128)                           :: hex_text
     integer(i32)                                 :: tensor_index
     integer(i32)                                 :: pack_index
+    integer(i32)                                 :: non_projector_count
     integer(i32)                                 :: role_code
     integer(i32)                                 :: layout_code
     integer(i32)                                 :: page_word_count
+    integer(i32)                                 :: page_byte_count
     integer(i32)                                 :: tile_byte_count
+    integer(i32)                                 :: page_data_offset
+    integer(i32)                                 :: tile_data_offset
+    integer(i32)                                 :: buffer_offset
     integer(i32)                                 :: unit_id
     integer(i32)                                 :: ios
     integer(i64)                                 :: tensor_bytes
@@ -3852,7 +3868,9 @@ contains
     integer(i64)                                 :: tile_hash
     integer(i8)                                  :: sample_bytes(64)
     integer(i32)                                 :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
+    integer(i8)                                  :: page_bytes(MAX_CUDA_PACK_PAGE_WORDS * 4_i32)
     integer(i8)                                  :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
+    integer(i8), allocatable                     :: pack_buffer(:)
     logical                                      :: exists
 
     if (metadata%backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
@@ -3869,17 +3887,26 @@ contains
     if (len_trim(pack_payload_path) == 0) return
     pack_payload_full_path = join_cache_root_with_payload_path(cache_root, pack_payload_path)
     if (len_trim(pack_payload_full_path) == 0) return
+    pack_buffer_path = build_cuda_weight_pack_tile_buffer_path(metadata%payload_path)
+    if (len_trim(pack_buffer_path) == 0) return
+    pack_buffer_full_path = join_cache_root_with_payload_path(cache_root, pack_buffer_path)
+    if (len_trim(pack_buffer_full_path) == 0) return
     inquire(file=trim(tile_full_path), exist=exists)
     if (exists) return
 
     tile_payload = "kind=cuda_weight_pack_tile_cache_v3"
     pack_payload = "kind=cuda_weight_pack_payload_v1"
     pack_index = 0_i32
+    non_projector_count = 0_i32
     pack_offset = 0_i64
     pack_total_bytes = 0_i64
+    buffer_offset = 0_i32
 
     field_text = ""
     write(field_text, '(";pack_payload=",A)') trim(pack_payload_path)
+    call append_payload_fragment(tile_payload, trim(field_text))
+    field_text = ""
+    write(field_text, '(";pack_buffer=",A)') trim(pack_buffer_path)
     call append_payload_fragment(tile_payload, trim(field_text))
 
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
@@ -3888,10 +3915,13 @@ contains
       tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
         model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
       if (tensor_bytes <= 0_i64) cycle
+      non_projector_count = non_projector_count + 1_i32
       pack_total_bytes = align_import_bytes(pack_total_bytes + tensor_bytes)
     end do
 
     if (pack_total_bytes <= 0_i64) return
+    allocate(pack_buffer(max(1_i32, non_projector_count * ((MAX_CUDA_PACK_PAGE_WORDS * 4_i32) + MAX_CUDA_PACK_TILE_BYTES))))
+    pack_buffer = 0_i8
 
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
@@ -3948,11 +3978,19 @@ contains
           layout_code, max(1_i64, model%import_weight_pack_hash), pack_total_bytes, span_hash, &
           pack_materialized_hash, page_hash, page_word_count, page_words)
         if (page_hash > 0_i64 .and. page_word_count > 0_i32) then
+          call pack_i32_words_to_le_bytes_cache(page_words, page_word_count, page_bytes, page_byte_count)
+          call append_pack_buffer_bytes_cache(page_bytes, page_byte_count, pack_buffer, buffer_offset, page_data_offset)
           field_text = ""
           write(field_text, '(";pack",I0,"_page_hash=",I0)') pack_index, page_hash
           call append_payload_fragment(tile_payload, trim(field_text))
           field_text = ""
           write(field_text, '(";pack",I0,"_page_words=",I0)') pack_index, page_word_count
+          call append_payload_fragment(tile_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";pack",I0,"_page_data_offset=",I0)') pack_index, page_data_offset
+          call append_payload_fragment(tile_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";pack",I0,"_page_data_bytes=",I0)') pack_index, page_byte_count
           call append_payload_fragment(tile_payload, trim(field_text))
           hex_text = ""
           call encode_i32_words_as_hex_cache(page_words, page_word_count, hex_text)
@@ -3965,11 +4003,18 @@ contains
           layout_code, max(1_i64, model%import_weight_pack_hash), pack_total_bytes, span_hash, &
           pack_materialized_hash, tile_hash, tile_byte_count, tile_bytes)
         if (tile_hash > 0_i64 .and. tile_byte_count > 0_i32) then
+          call append_pack_buffer_bytes_cache(tile_bytes, tile_byte_count, pack_buffer, buffer_offset, tile_data_offset)
           field_text = ""
           write(field_text, '(";pack",I0,"_tile_hash=",I0)') pack_index, tile_hash
           call append_payload_fragment(tile_payload, trim(field_text))
           field_text = ""
           write(field_text, '(";pack",I0,"_tile_bytes=",I0)') pack_index, tile_byte_count
+          call append_payload_fragment(tile_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";pack",I0,"_tile_data_offset=",I0)') pack_index, tile_data_offset
+          call append_payload_fragment(tile_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";pack",I0,"_tile_data_bytes=",I0)') pack_index, tile_byte_count
           call append_payload_fragment(tile_payload, trim(field_text))
           hex_text = ""
           call encode_bytes_as_hex(tile_bytes, tile_byte_count, hex_text)
@@ -4001,7 +4046,57 @@ contains
     if (ios /= 0_i32) return
     write(unit_id, "(A)", iostat=ios) trim(pack_payload)
     close(unit_id)
+
+    parent_dir = parent_directory_path(pack_buffer_full_path)
+    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+    open(newunit=unit_id, file=trim(pack_buffer_full_path), status="replace", access="stream", &
+      form="unformatted", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+    if (buffer_offset > 0_i32) then
+      write(unit_id, iostat=ios) pack_buffer(1:buffer_offset)
+    end if
+    close(unit_id)
   end subroutine materialize_cuda_weight_pack_tile_cache
+
+  subroutine pack_i32_words_to_le_bytes_cache(word_values, word_count, byte_values, byte_count)
+    integer(i32), intent(in)    :: word_values(:)
+    integer(i32), intent(in)    :: word_count
+    integer(i8), intent(out)    :: byte_values(:)
+    integer(i32), intent(out)   :: byte_count
+    integer(i32)                :: encode_word_count
+    integer(i32)                :: word_index
+    integer(i32)                :: byte_index
+    integer(i32)                :: word_value
+
+    byte_values = 0_i8
+    encode_word_count = max(0_i32, min(word_count, min(int(size(word_values), kind=i32), int(size(byte_values), kind=i32) / 4_i32)))
+    byte_count = encode_word_count * 4_i32
+    do word_index = 1_i32, encode_word_count
+      word_value = word_values(word_index)
+      do byte_index = 0_i32, 3_i32
+        byte_values(((word_index - 1_i32) * 4_i32) + byte_index + 1_i32) = &
+          int(iand(shiftr(word_value, 8 * byte_index), int(z'FF', kind=i32)), kind=i8)
+      end do
+    end do
+  end subroutine pack_i32_words_to_le_bytes_cache
+
+  subroutine append_pack_buffer_bytes_cache(source_bytes, source_count, pack_buffer, buffer_offset, data_offset)
+    integer(i8), intent(in)     :: source_bytes(:)
+    integer(i32), intent(in)    :: source_count
+    integer(i8), intent(inout)  :: pack_buffer(:)
+    integer(i32), intent(inout) :: buffer_offset
+    integer(i32), intent(out)   :: data_offset
+    integer(i32)                :: write_count
+
+    data_offset = 0_i32
+    if (source_count <= 0_i32) return
+    write_count = max(0_i32, min(source_count, int(size(source_bytes), kind=i32)))
+    if (write_count <= 0_i32) return
+    if ((buffer_offset + write_count) > int(size(pack_buffer), kind=i32)) return
+    data_offset = buffer_offset
+    pack_buffer(buffer_offset + 1_i32:buffer_offset + write_count) = source_bytes(1:write_count)
+    buffer_offset = buffer_offset + write_count
+  end subroutine append_pack_buffer_bytes_cache
 
   subroutine extract_payload_dispatch_entry_cache(dispatch_entry, pack_index, pack_offset, pack_bytes, role_code, &
                                                   layout_code, parsed_ok)

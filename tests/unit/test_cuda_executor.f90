@@ -135,6 +135,7 @@ program test_cuda_executor
   character(len=*), parameter :: decode_usage_path = "artifacts/cuda/cuda/plans/decode/usage.plan"
   character(len=*), parameter :: pack_tile_cache_path = "artifacts/cuda/cuda/weights/usage.pack.packtiles"
   character(len=*), parameter :: pack_tile_payload_path = "artifacts/cuda/cuda/weights/usage.pack.packpayload"
+  character(len=*), parameter :: pack_tile_buffer_path = "artifacts/cuda/cuda/weights/usage.pack.packbuffer"
   character(len=*), parameter :: import_bundle_root = "tests/fixtures/models/fixture_import_bundle_tiny/mizu_import"
 
   token_values_a = [3_i32, 5_i32, 7_i32, 11_i32, 13_i32, 17_i32, 19_i32]
@@ -185,14 +186,19 @@ program test_cuda_executor
 
   open(unit=14, file=trim(cache_root) // "/" // trim(pack_tile_cache_path), status="replace", action="write")
   write(14, "(A)") "kind=cuda_weight_pack_tile_cache_v3;pack_payload=" // pack_tile_payload_path // ";" // &
+    "pack_buffer=" // pack_tile_buffer_path // ";" // &
     "pack1_offset=0;pack1_bytes=1089994752;pack1_materialized_hash=9010000000000001;" // &
-    "pack1_page_hash=9100000000000001;pack1_page_words=8;pack1_tile_hash=9200000000000001;pack1_tile_bytes=32;" // &
+    "pack1_page_hash=9100000000000001;pack1_page_words=8;pack1_page_data_offset=0;pack1_page_data_bytes=32;" // &
+    "pack1_tile_hash=9200000000000001;pack1_tile_bytes=32;pack1_tile_data_offset=32;pack1_tile_data_bytes=32;" // &
     "pack2_offset=1089994752;pack2_bytes=25690112;pack2_materialized_hash=9010000000000002;" // &
-    "pack2_page_hash=9100000000000002;pack2_page_words=8;pack2_tile_hash=9200000000000002;pack2_tile_bytes=32;" // &
+    "pack2_page_hash=9100000000000002;pack2_page_words=8;pack2_page_data_offset=64;pack2_page_data_bytes=32;" // &
+    "pack2_tile_hash=9200000000000002;pack2_tile_bytes=32;pack2_tile_data_offset=96;pack2_tile_data_bytes=32;" // &
     "pack3_offset=1115684864;pack3_bytes=14336;pack3_materialized_hash=9010000000000003;" // &
-    "pack3_page_hash=9100000000000003;pack3_page_words=8;pack3_tile_hash=9200000000000003;pack3_tile_bytes=32;" // &
+    "pack3_page_hash=9100000000000003;pack3_page_words=8;pack3_page_data_offset=128;pack3_page_data_bytes=32;" // &
+    "pack3_tile_hash=9200000000000003;pack3_tile_bytes=32;pack3_tile_data_offset=160;pack3_tile_data_bytes=32;" // &
     "pack4_offset=1115699200;pack4_bytes=1089994752;pack4_materialized_hash=9010000000000004;" // &
-    "pack4_page_hash=9100000000000004;pack4_page_words=8;pack4_tile_hash=9200000000000004;pack4_tile_bytes=32;" // &
+    "pack4_page_hash=9100000000000004;pack4_page_words=8;pack4_page_data_offset=192;pack4_page_data_bytes=32;" // &
+    "pack4_tile_hash=9200000000000004;pack4_tile_bytes=32;pack4_tile_data_offset=224;pack4_tile_data_bytes=32;" // &
     "pack_count=4"
   close(14)
 
@@ -208,6 +214,7 @@ program test_cuda_executor
     "pack4_tile_hex=435465768798A9BACBDCEDFE0F10213251606F7E8D9CABBAC9D8E7F605142332;" // &
     "pack_count=4"
   close(15)
+  call write_pack_tile_buffer_fixture(trim(cache_root) // "/" // trim(pack_tile_buffer_path), .false.)
 
   open(unit=12, file=trim(cache_root) // "/" // trim(prefill_usage_path), status="replace", action="write")
   write(12, "(A)") "candidate=prefill_usage;stage=3;format=cuda_bf16_prefill_plan_v1;" // &
@@ -837,25 +844,14 @@ program test_cuda_executor
   call expect_equal_i32("cuda decode pack-dispatch snapshot should label the token projection layout", &
     pack_dispatch_layout_codes(4), 1_i32)
 
-  open(unit=15, file=trim(cache_root) // "/" // trim(pack_tile_payload_path), status="replace", action="write")
-  write(15, "(A)") "kind=cuda_weight_pack_payload_v1;" // &
-    "pack1_page_hex=FFEEDDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEF;" // &
-    "pack1_tile_hex=F0E1D2C3B4A5968778695A4B3C2D1E0F00112233445566778899AABBCCDDEEFF;" // &
-    "pack2_page_hex=EEDDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF0;" // &
-    "pack2_tile_hex=E1D2C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F10;" // &
-    "pack3_page_hex=DDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF001;" // &
-    "pack3_tile_hex=D2C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F1021;" // &
-    "pack4_page_hex=CCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF00112;" // &
-    "pack4_tile_hex=C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F102132;" // &
-    "pack_count=4"
-  close(15)
+  call write_pack_tile_buffer_fixture(trim(cache_root) // "/" // trim(pack_tile_buffer_path), .true.)
 
   call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
     token_value_without_pack_cache, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
     usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
-  call expect_equal_i32("cuda decode with rewritten pack-owned payload should still succeed", status_code, &
+  call expect_equal_i32("cuda decode with rewritten pack-owned buffer should still succeed", status_code, &
     MIZU_STATUS_OK)
-  call expect_true("cuda decode should reflect direct pack-owned payload bytes", &
+  call expect_true("cuda decode should reflect direct pack-owned buffer bytes", &
     token_value_without_pack_cache /= token_value_with_pack_cache)
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
@@ -946,5 +942,94 @@ contains
       error stop 1
     end if
   end subroutine expect_equal_i64
+
+  subroutine write_pack_tile_buffer_fixture(full_path, use_rewritten_bytes)
+    character(len=*), intent(in) :: full_path
+    logical, intent(in)          :: use_rewritten_bytes
+    character(len=64)            :: hex_records(8)
+    integer(i8)                  :: buffer_bytes(256)
+    integer(i32)                 :: record_index
+    integer(i32)                 :: byte_count
+    integer(i32)                 :: offset
+    integer                      :: unit_id
+
+    if (use_rewritten_bytes) then
+      hex_records = [character(len=64) :: &
+        "FFEEDDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEF", &
+        "F0E1D2C3B4A5968778695A4B3C2D1E0F00112233445566778899AABBCCDDEEFF", &
+        "EEDDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF0", &
+        "E1D2C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F10", &
+        "DDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF001", &
+        "D2C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F1021", &
+        "CCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF00112", &
+        "C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F102132" ]
+    else
+      hex_records = [character(len=64) :: &
+        "00112233445566778899AABBCCDDEEFF0123456789ABCDEFFEDCBA9876543210", &
+        "102132435465768798A9BACBDCEDFE0F1E2D3C4B5A69788796A5B4C3D2E1F001", &
+        "112233445566778899AABBCCDDEEFF00123456789ABCDEFF0FEDCBA987654321", &
+        "2132435465768798A9BACBDCEDFE0F102F3E4D5C6B7A8998A7B6C5D4E3F20110", &
+        "2233445566778899AABBCCDDEEFF001223456789ABCDEFF01FEDCBA987654322", &
+        "32435465768798A9BACBDCEDFE0F1021404F5E6D7C8B9AA9B8C7D6E5F4031221", &
+        "33445566778899AABBCCDDEEFF0011223456789ABCDEFF012FEDCBA987654323", &
+        "435465768798A9BACBDCEDFE0F10213251606F7E8D9CABBAC9D8E7F605142332" ]
+    end if
+
+    buffer_bytes = 0_i8
+    offset = 0_i32
+    do record_index = 1_i32, size(hex_records)
+      call decode_fixture_hex(hex_records(record_index), buffer_bytes(offset + 1_i32:), byte_count)
+      offset = offset + byte_count
+    end do
+
+    open(newunit=unit_id, file=trim(full_path), status="replace", access="stream", form="unformatted", action="write")
+    write(unit_id) buffer_bytes(1:offset)
+    close(unit_id)
+  end subroutine write_pack_tile_buffer_fixture
+
+  subroutine decode_fixture_hex(hex_text, byte_values, byte_count)
+    character(len=*), intent(in) :: hex_text
+    integer(i8), intent(out)     :: byte_values(:)
+    integer(i32), intent(out)    :: byte_count
+    integer(i32)                 :: hex_len
+    integer(i32)                 :: pair_count
+    integer(i32)                 :: pair_index
+    integer(i32)                 :: byte_value
+
+    byte_values = 0_i8
+    hex_len = len_trim(hex_text)
+    if (mod(hex_len, 2) /= 0) error stop 1
+    pair_count = min(hex_len / 2_i32, int(size(byte_values), kind=i32))
+    do pair_index = 1_i32, pair_count
+      byte_value = 16_i32 * fixture_hex_digit_value(hex_text(((pair_index - 1_i32) * 2_i32) + 1_i32: &
+        ((pair_index - 1_i32) * 2_i32) + 1_i32)) + &
+        fixture_hex_digit_value(hex_text(((pair_index - 1_i32) * 2_i32) + 2_i32: &
+        ((pair_index - 1_i32) * 2_i32) + 2_i32))
+      if (byte_value < 0_i32) error stop 1
+      if (byte_value > 127_i32) byte_value = byte_value - 256_i32
+      byte_values(pair_index) = int(byte_value, kind=i8)
+    end do
+    byte_count = pair_count
+  end subroutine decode_fixture_hex
+
+  pure integer(i32) function fixture_hex_digit_value(hex_char) result(digit_value)
+    character(len=*), intent(in) :: hex_char
+    integer(i32)                 :: ascii_code
+
+    digit_value = -1_i32
+    if (len_trim(hex_char) <= 0) return
+
+    ascii_code = iachar(hex_char(1:1))
+    select case (ascii_code)
+    case (iachar("0"):iachar("9"))
+      digit_value = ascii_code - iachar("0")
+    case (iachar("A"):iachar("F"))
+      digit_value = 10_i32 + ascii_code - iachar("A")
+    case (iachar("a"):iachar("f"))
+      digit_value = 10_i32 + ascii_code - iachar("a")
+    case default
+      digit_value = -1_i32
+    end select
+  end function fixture_hex_digit_value
 
 end program test_cuda_executor
