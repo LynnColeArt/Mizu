@@ -396,8 +396,14 @@ int main(void) {
     if (!expect_true("cuda weight artifact should retain the final packed tensor entry", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' | grep -q .");
     if (!expect_true("cuda weight pack tile cache should exist", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"kind=cuda_weight_pack_tile_cache_v1\" {} +");
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"kind=cuda_weight_pack_tile_cache_v2\" {} +");
     if (!expect_true("cuda weight pack tile cache should store the expected format marker", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"pack1_materialized_hash=\" {} +");
+    if (!expect_true("cuda weight pack tile cache should store a pack-owned materialization hash", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"pack1_page_source=pack_materialized_v2\" {} +");
+    if (!expect_true("cuda weight pack tile cache should record a pack-owned page source", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"pack1_tile_source=pack_materialized_v2\" {} +");
+    if (!expect_true("cuda weight pack tile cache should record a pack-owned tile source", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"pack1_tile_hex=\" {} +");
     if (!expect_true("cuda weight pack tile cache should store staged tensor tiles", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' -exec grep -q \"pack1_page_hex=\" {} +");

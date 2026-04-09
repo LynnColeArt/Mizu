@@ -751,7 +751,8 @@ contains
     if (len_trim(pack_tile_cache_path) > 0) then
       call load_cuda_artifact_payload(cache_root, trim(pack_tile_cache_path), pack_tile_cache_text, loaded_pack_tile_cache)
       if (loaded_pack_tile_cache) then
-        if (index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v1") <= 0) then
+        if (index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v1") <= 0 .and. &
+            index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v2") <= 0) then
           loaded_pack_tile_cache = .false.
           pack_tile_cache_text = ""
         end if

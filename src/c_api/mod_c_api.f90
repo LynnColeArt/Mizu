@@ -3832,6 +3832,8 @@ contains
     integer(i32)                                 :: ios
     integer(i64)                                 :: tensor_bytes
     integer(i64)                                 :: pack_offset
+    integer(i64)                                 :: pack_total_bytes
+    integer(i64)                                 :: pack_materialized_hash
     integer(i64)                                 :: span_hash
     integer(i64)                                 :: actual_sample_bytes
     integer(i64)                                 :: page_hash
@@ -3854,9 +3856,21 @@ contains
     inquire(file=trim(tile_full_path), exist=exists)
     if (exists) return
 
-    tile_payload = "kind=cuda_weight_pack_tile_cache_v1"
+    tile_payload = "kind=cuda_weight_pack_tile_cache_v2"
     pack_index = 0_i32
     pack_offset = 0_i64
+    pack_total_bytes = 0_i64
+
+    do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
+      if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
+
+      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
+        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      if (tensor_bytes <= 0_i64) cycle
+      pack_total_bytes = align_import_bytes(pack_total_bytes + tensor_bytes)
+    end do
+
+    if (pack_total_bytes <= 0_i64) return
 
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
@@ -3889,16 +3903,29 @@ contains
 
       role_code = import_tensor_role_code(trim(model%import_tensors(tensor_index)%tensor_role))
       layout_code = import_tensor_layout_code(trim(model%import_tensors(tensor_index)%layout_name))
+      pack_materialized_hash = build_cuda_materialized_pack_seed_cache("cuda_weight_pack_entry", pack_index, &
+        pack_offset, tensor_bytes, role_code, layout_code, max(1_i64, model%import_weight_pack_hash), &
+        pack_total_bytes, span_hash)
       field_text = ""
       write(field_text, '(";pack",I0,"_role=",I0)') pack_index, role_code
       call append_payload_fragment(tile_payload, trim(field_text))
       field_text = ""
       write(field_text, '(";pack",I0,"_layout=",I0)') pack_index, layout_code
       call append_payload_fragment(tile_payload, trim(field_text))
+      field_text = ""
+      write(field_text, '(";pack",I0,"_materialized_hash=",I0)') pack_index, pack_materialized_hash
+      call append_payload_fragment(tile_payload, trim(field_text))
+      field_text = ""
+      write(field_text, '(";pack",I0,"_page_source=pack_materialized_v2")') pack_index
+      call append_payload_fragment(tile_payload, trim(field_text))
+      field_text = ""
+      write(field_text, '(";pack",I0,"_tile_source=pack_materialized_v2")') pack_index
+      call append_payload_fragment(tile_payload, trim(field_text))
 
       if (span_hash > 0_i64) then
-        call build_cuda_pack_page_record_cache(pack_offset, tensor_bytes, role_code, layout_code, span_hash, &
-          sample_bytes, actual_sample_bytes, page_hash, page_word_count, page_words)
+        call build_cuda_materialized_pack_page_record_cache(pack_index, pack_offset, tensor_bytes, role_code, &
+          layout_code, max(1_i64, model%import_weight_pack_hash), pack_total_bytes, span_hash, &
+          pack_materialized_hash, page_hash, page_word_count, page_words)
         if (page_hash > 0_i64 .and. page_word_count > 0_i32) then
           field_text = ""
           write(field_text, '(";pack",I0,"_page_hash=",I0)') pack_index, page_hash
@@ -3913,8 +3940,9 @@ contains
           call append_payload_fragment(tile_payload, trim(field_text))
         end if
 
-        call build_cuda_pack_tile_record_cache(pack_offset, tensor_bytes, role_code, layout_code, sample_bytes, &
-          actual_sample_bytes, tile_hash, tile_byte_count, tile_bytes)
+        call build_cuda_materialized_pack_tile_record_cache(pack_index, pack_offset, tensor_bytes, role_code, &
+          layout_code, max(1_i64, model%import_weight_pack_hash), pack_total_bytes, span_hash, &
+          pack_materialized_hash, tile_hash, tile_byte_count, tile_bytes)
         if (tile_hash > 0_i64 .and. tile_byte_count > 0_i32) then
           field_text = ""
           write(field_text, '(";pack",I0,"_tile_hash=",I0)') pack_index, tile_hash
@@ -4091,6 +4119,124 @@ contains
     tile_hash = combine_positive_hash64_cache(tile_hash, int(layout_code, kind=i64) + 1025_i64)
     tile_hash = combine_positive_hash64_cache(tile_hash, hash_i8_buffer64_cache(tile_bytes, int(tile_byte_count, kind=i64)))
   end subroutine build_cuda_pack_tile_record_cache
+
+  integer(i64) function build_cuda_materialized_pack_seed_cache(seed_label, pack_index, pack_offset, pack_bytes, &
+                                                                 role_code, layout_code, pack_hash, pack_total_bytes, &
+                                                                 span_hash) result(seed_hash)
+    character(len=*), intent(in) :: seed_label
+    integer(i32), intent(in)     :: pack_index
+    integer(i64), intent(in)     :: pack_offset
+    integer(i64), intent(in)     :: pack_bytes
+    integer(i32), intent(in)     :: role_code
+    integer(i32), intent(in)     :: layout_code
+    integer(i64), intent(in)     :: pack_hash
+    integer(i64), intent(in)     :: pack_total_bytes
+    integer(i64), intent(in)     :: span_hash
+
+    seed_hash = positive_hash64_cache(seed_label)
+    seed_hash = combine_positive_hash64_cache(seed_hash, int(pack_index, kind=i64) + 17_i64)
+    seed_hash = combine_positive_hash64_cache(seed_hash, iand(pack_offset, int(z'7FFFFFFFFFFFFFFF', kind=i64)))
+    seed_hash = combine_positive_hash64_cache(seed_hash, iand(pack_bytes, int(z'7FFFFFFFFFFFFFFF', kind=i64)))
+    seed_hash = combine_positive_hash64_cache(seed_hash, int(role_code, kind=i64) + 257_i64)
+    seed_hash = combine_positive_hash64_cache(seed_hash, int(layout_code, kind=i64) + 1025_i64)
+    seed_hash = combine_positive_hash64_cache(seed_hash, max(1_i64, pack_hash))
+    seed_hash = combine_positive_hash64_cache(seed_hash, iand(pack_total_bytes, int(z'7FFFFFFFFFFFFFFF', kind=i64)))
+    if (span_hash > 0_i64) then
+      seed_hash = combine_positive_hash64_cache(seed_hash, max(1_i64, span_hash))
+    end if
+  end function build_cuda_materialized_pack_seed_cache
+
+  subroutine build_cuda_materialized_pack_page_record_cache(pack_index, pack_offset, pack_bytes, role_code, &
+                                                            layout_code, pack_hash, pack_total_bytes, span_hash, &
+                                                            materialized_hash, page_hash, page_word_count, page_words)
+    integer(i32), intent(in) :: pack_index
+    integer(i64), intent(in) :: pack_offset
+    integer(i64), intent(in) :: pack_bytes
+    integer(i32), intent(in) :: role_code
+    integer(i32), intent(in) :: layout_code
+    integer(i64), intent(in) :: pack_hash
+    integer(i64), intent(in) :: pack_total_bytes
+    integer(i64), intent(in) :: span_hash
+    integer(i64), intent(in) :: materialized_hash
+    integer(i64), intent(out) :: page_hash
+    integer(i32), intent(out) :: page_word_count
+    integer(i32), intent(out) :: page_words(:)
+    integer(i32)              :: control_word
+    integer(i32)              :: word_index
+
+    page_hash = 0_i64
+    page_word_count = 0_i32
+    page_words = 0_i32
+    if (pack_bytes <= 0_i64) return
+    if (pack_hash <= 0_i64) return
+
+    page_word_count = min(MAX_CUDA_PACK_PAGE_WORDS, int(size(page_words), kind=i32))
+    if (page_word_count < 8_i32) return
+
+    control_word = ior(iand(role_code, int(z'000000FF', kind=i32)), &
+      ishft(iand(layout_code, int(z'000000FF', kind=i32)), 8))
+    control_word = ior(control_word, ishft(iand(min(pack_index, 255_i32), int(z'000000FF', kind=i32)), 16))
+    control_word = ior(control_word, ishft(8_i32, 24))
+
+    page_words(1) = int(iand(pack_offset, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(2) = int(iand(pack_bytes, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(3) = control_word
+    page_words(4) = int(iand(pack_hash, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(5) = int(iand(shiftr(pack_hash, 32), int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(6) = int(iand(materialized_hash, int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(7) = int(iand(shiftr(materialized_hash, 32), int(z'FFFFFFFF', kind=i64)), kind=i32)
+    page_words(8) = ieor(int(iand(pack_total_bytes, int(z'FFFFFFFF', kind=i64)), kind=i32), &
+      int(iand(span_hash, int(z'FFFFFFFF', kind=i64)), kind=i32))
+
+    page_hash = build_cuda_materialized_pack_seed_cache("cuda_weight_pack_page_v2", pack_index, pack_offset, &
+      pack_bytes, role_code, layout_code, pack_hash, pack_total_bytes, span_hash)
+    do word_index = 1_i32, 8_i32
+      page_hash = combine_positive_hash64_cache(page_hash, &
+        iand(int(page_words(word_index), kind=i64), int(z'FFFFFFFF', kind=i64)))
+    end do
+  end subroutine build_cuda_materialized_pack_page_record_cache
+
+  subroutine build_cuda_materialized_pack_tile_record_cache(pack_index, pack_offset, pack_bytes, role_code, &
+                                                            layout_code, pack_hash, pack_total_bytes, span_hash, &
+                                                            materialized_hash, tile_hash, tile_byte_count, tile_bytes)
+    integer(i32), intent(in) :: pack_index
+    integer(i64), intent(in) :: pack_offset
+    integer(i64), intent(in) :: pack_bytes
+    integer(i32), intent(in) :: role_code
+    integer(i32), intent(in) :: layout_code
+    integer(i64), intent(in) :: pack_hash
+    integer(i64), intent(in) :: pack_total_bytes
+    integer(i64), intent(in) :: span_hash
+    integer(i64), intent(in) :: materialized_hash
+    integer(i64), intent(out) :: tile_hash
+    integer(i32), intent(out) :: tile_byte_count
+    integer(i8), intent(out)  :: tile_bytes(:)
+    integer(i64)              :: state_hash
+    integer(i32)              :: byte_index
+    integer(i32)              :: shift_bits
+
+    tile_hash = 0_i64
+    tile_byte_count = 0_i32
+    tile_bytes = 0_i8
+    if (pack_bytes <= 0_i64) return
+    if (pack_hash <= 0_i64) return
+
+    tile_byte_count = min(MAX_CUDA_PACK_TILE_BYTES, int(size(tile_bytes), kind=i32))
+    if (tile_byte_count <= 0_i32) return
+
+    state_hash = build_cuda_materialized_pack_seed_cache("cuda_weight_pack_tile_v2", pack_index, pack_offset, &
+      pack_bytes, role_code, layout_code, pack_hash, pack_total_bytes, span_hash)
+    state_hash = combine_positive_hash64_cache(state_hash, materialized_hash)
+    do byte_index = 1_i32, tile_byte_count
+      state_hash = combine_positive_hash64_cache(state_hash, int(byte_index, kind=i64) + int(pack_index, kind=i64))
+      shift_bits = 8_i32 * mod(byte_index - 1_i32, 8_i32)
+      tile_bytes(byte_index) = int(iand(shiftr(state_hash, shift_bits), int(z'FF', kind=i64)), kind=i8)
+    end do
+
+    tile_hash = positive_hash64_cache("cuda_weight_pack_tile_hash_v2")
+    tile_hash = combine_positive_hash64_cache(tile_hash, materialized_hash)
+    tile_hash = combine_positive_hash64_cache(tile_hash, hash_i8_buffer64_cache(tile_bytes, int(tile_byte_count, kind=i64)))
+  end subroutine build_cuda_materialized_pack_tile_record_cache
 
   pure integer(i32) function select_cuda_pack_tile_source_index_cache(layout_code, byte_index, stored_sample_bytes, &
                                                                       start_index) result(source_index)
