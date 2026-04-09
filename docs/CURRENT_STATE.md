@@ -5,9 +5,9 @@ Last updated: 2026-04-09
 ## Latest Checkpoint
 
 - current milestone: CUDA weight-pack `.packtiles` caches now index a typed
-  binary `.packbuffer` warm-path payload, with a small header and per-pack
-  directory plus readable `.packpayload` fallback, so staged page/tile bytes
-  can be hydrated from backend-owned cache records with less text parsing
+  binary `.packbuffer` warm-path payload, and pack-indexed dispatch records
+  now restore bridge-facing offset/bytes/role/layout from that per-pack
+  directory instead of trusting surrounding text
 - current milestone: the loader now understands a first concrete imported
   asset-bundle shape through `mizu_import/`, with validated tensor, modality,
   and projector inventories layered on top of the logical root manifest
@@ -66,6 +66,10 @@ Last updated: 2026-04-09
   and the staged page/tile bytes themselves, with a readable `.packpayload`
   fallback kept alongside it, and the CUDA executor now hydrates that buffer
   directly instead of depending on embedded `.packtiles` previews
+- when compact CUDA `pack_dispatch*` entries carry explicit `pack=` indices,
+  the executor now restores offset, byte span, role, and layout from that
+  typed `.packbuffer` directory before launching the bridge, so warm execution
+  depends less on surrounding dispatch text
 - when those pack-owned `.packtiles` payloads are available, CUDA execution now
   prefers their materialized hash identity over raw importer-span identity, and
   the direct executor path now allocates enough artifact text capacity to carry

@@ -151,6 +151,10 @@ Current implementation status:
   and staged page/tile bytes, with a readable `.packpayload` fallback kept
   alongside it, and the CUDA executor now hydrates that buffer directly
   instead of depending on embedded `.packtiles` previews
+- when compact CUDA `pack_dispatch*` entries carry explicit `pack=` indices,
+  the executor now restores offset, byte span, role, and layout from that
+  typed `.packbuffer` directory before launching the bridge, so warm execution
+  depends less on surrounding dispatch text
 - when those pack-owned `.packtiles` payloads are available, CUDA execution now
   prefers their materialized hash identity over raw importer-span identity, and
   the direct executor path now allocates enough artifact text capacity to carry

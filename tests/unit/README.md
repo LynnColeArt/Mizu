@@ -141,6 +141,9 @@ bodies.
     page/tile bytes, keep `.packpayload` as a readable fallback, and change
     decode behavior when the staged binary buffer is rewritten for the same
     usage profile
+  - validates compact CUDA `pack_dispatch*` entries with explicit `pack=`
+    indices now restore offset, byte span, role, and layout from that typed
+    `.packbuffer` directory even if the surrounding dispatch text is wrong
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub
