@@ -38,6 +38,7 @@ program test_cuda_executor
   integer(i32) :: token_value_with_other_context
   integer(i32) :: token_value_with_pack_cache
   integer(i32) :: token_value_with_pack_index_override
+  integer(i32) :: token_value_with_dispatch_buffer_only
   integer(i32) :: token_value_without_pack_cache
   integer(i32) :: context_byte_count_a
   integer(i32) :: context_byte_count_b
@@ -135,6 +136,7 @@ program test_cuda_executor
   character(len=*), parameter :: decode_path = "artifacts/cuda/cuda/plans/decode/test.plan"
   character(len=*), parameter :: prefill_usage_path = "artifacts/cuda/cuda/plans/prefill/usage.plan"
   character(len=*), parameter :: decode_usage_path = "artifacts/cuda/cuda/plans/decode/usage.plan"
+  character(len=*), parameter :: decode_dispatch_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.dispatchbuffer"
   character(len=*), parameter :: pack_tile_cache_path = "artifacts/cuda/cuda/weights/usage.pack.packtiles"
   character(len=*), parameter :: pack_tile_payload_path = "artifacts/cuda/cuda/weights/usage.pack.packpayload"
   character(len=*), parameter :: pack_tile_buffer_path = "artifacts/cuda/cuda/weights/usage.pack.packbuffer"
@@ -173,6 +175,8 @@ program test_cuda_executor
     cache_root // "/artifacts/cuda/cuda/plans/decode " // cache_root // "/artifacts/cuda/cuda/weights", &
     exitstat=shell_status)
   call expect_equal_i32("cuda executor fixture dirs should be created", int(shell_status, kind=i32), 0_i32)
+  call write_pack_dispatch_buffer_fixture(trim(cache_root) // "/" // trim(decode_dispatch_buffer_path), 4_i32, &
+    2222222222222222_i64)
 
   open(unit=9, file=trim(cache_root) // "/" // trim(projector_path), status="replace", action="write")
   write(9, "(A)") "candidate=projector;stage=2;workspace=8388608;format=cuda_u8_bf16_projector_plan_v1"
@@ -249,6 +253,7 @@ program test_cuda_executor
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
+    "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
@@ -869,6 +874,7 @@ program test_cuda_executor
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
     "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
+    "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
     "pack_span_root=" // import_bundle_root // ";" // &
     "pack_use1=token_embeddings|embedding_table|offset=0|" // &
     "bytes=1089994752|layout=row_major;" // &
@@ -948,6 +954,47 @@ program test_cuda_executor
   call expect_equal_i32("cuda direct pack-buffer replay should restore the first tensor role from the binary buffer", &
     pack_dispatch_role_codes(1), 1_i32)
   call expect_equal_i32("cuda direct pack-buffer replay should restore the final tensor layout from the binary buffer", &
+    pack_dispatch_layout_codes(4), 1_i32)
+
+  open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
+  write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
+    "pack_use_kind=cuda_decode_pack_usage_v1;" // &
+    "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
+    "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
+    "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
+    "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
+    "pack_span_root=" // import_bundle_root // ";" // &
+    "pack_dispatch1=pack=1;" // &
+    "pack_dispatch2=pack=2;" // &
+    "pack_dispatch3=pack=3;" // &
+    "pack_dispatch4=pack=4;" // &
+    "pack_dispatch_count=4"
+  close(13)
+
+  call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
+    token_value_with_dispatch_buffer_only, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
+  call expect_equal_i32("cuda decode with dispatch-buffer-only plan should still succeed", status_code, MIZU_STATUS_OK)
+  call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
+    artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
+    summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda dispatch-buffer-only replay should preserve readable lineage", snapshot_valid)
+  call expect_equal_i64("cuda dispatch-buffer-only replay should preserve artifact lineage", artifact_hash, &
+    usage_decode_artifact_hash)
+  call expect_equal_i32("cuda dispatch-buffer-only replay should preserve token identity", &
+    token_value_with_dispatch_buffer_only, token_value_with_pack_index_override)
+  call extract_cuda_context_pack_dispatch_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, &
+    pack_dispatch_offsets, pack_dispatch_bytes, pack_dispatch_role_codes, pack_dispatch_layout_codes, &
+    pack_dispatch_count, snapshot_valid)
+  call expect_true("cuda dispatch-buffer-only replay should retain a readable dispatch snapshot", snapshot_valid)
+  call expect_equal_i32("cuda dispatch-buffer-only replay should keep four live entries", pack_dispatch_count, 4_i32)
+  call expect_equal_i64("cuda dispatch-buffer-only replay should restore the first tensor offset from the binary buffers", &
+    pack_dispatch_offsets(1), 0_i64)
+  call expect_equal_i64("cuda dispatch-buffer-only replay should restore the token projection bytes from the binary buffers", &
+    pack_dispatch_bytes(4), 1089994752_i64)
+  call expect_equal_i32("cuda dispatch-buffer-only replay should restore the first tensor role from the binary buffers", &
+    pack_dispatch_role_codes(1), 1_i32)
+  call expect_equal_i32("cuda dispatch-buffer-only replay should restore the final tensor layout from the binary buffers", &
     pack_dispatch_layout_codes(4), 1_i32)
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
@@ -1136,6 +1183,44 @@ contains
     write(unit_id) buffer_bytes(1:data_offset)
     close(unit_id)
   end subroutine write_pack_tile_buffer_fixture
+
+  subroutine write_pack_dispatch_buffer_fixture(full_path, entry_count, usage_hash)
+    character(len=*), intent(in) :: full_path
+    integer(i32), intent(in)     :: entry_count
+    integer(i64), intent(in)     :: usage_hash
+    integer(i32), parameter      :: CUDA_DISPATCH_BUFFER_MAGIC = int(z'53445A4D', kind=i32)
+    integer(i32), parameter      :: CUDA_DISPATCH_BUFFER_VERSION = 1_i32
+    integer(i32), parameter      :: CUDA_DISPATCH_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter      :: CUDA_DISPATCH_BUFFER_ENTRY_BYTES = 16_i32
+    integer(i8)                  :: buffer_bytes(128)
+    integer(i32)                 :: record_index
+    integer(i32)                 :: data_offset
+    integer(i32)                 :: live_entry_count
+    integer                      :: unit_id
+
+    buffer_bytes = 0_i8
+    live_entry_count = max(0_i32, min(entry_count, 4_i32))
+    data_offset = CUDA_DISPATCH_BUFFER_HEADER_BYTES
+
+    do record_index = 1_i32, live_entry_count
+      call write_fixture_i32_le(buffer_bytes, data_offset + 0_i32, record_index)
+      call write_fixture_i32_le(buffer_bytes, data_offset + 4_i32, record_index)
+      call write_fixture_i64_le(buffer_bytes, data_offset + 8_i32, 0_i64)
+      data_offset = data_offset + CUDA_DISPATCH_BUFFER_ENTRY_BYTES
+    end do
+
+    call write_fixture_i32_le(buffer_bytes, 0_i32, CUDA_DISPATCH_BUFFER_MAGIC)
+    call write_fixture_i32_le(buffer_bytes, 4_i32, CUDA_DISPATCH_BUFFER_VERSION)
+    call write_fixture_i32_le(buffer_bytes, 8_i32, CUDA_DISPATCH_BUFFER_HEADER_BYTES)
+    call write_fixture_i32_le(buffer_bytes, 12_i32, CUDA_DISPATCH_BUFFER_ENTRY_BYTES)
+    call write_fixture_i32_le(buffer_bytes, 16_i32, live_entry_count)
+    call write_fixture_i32_le(buffer_bytes, 20_i32, live_entry_count)
+    call write_fixture_i64_le(buffer_bytes, 24_i32, usage_hash)
+
+    open(newunit=unit_id, file=trim(full_path), status="replace", access="stream", form="unformatted", action="write")
+    write(unit_id) buffer_bytes(1:data_offset)
+    close(unit_id)
+  end subroutine write_pack_dispatch_buffer_fixture
 
   subroutine decode_fixture_hex(hex_text, byte_values, byte_count)
     character(len=*), intent(in) :: hex_text

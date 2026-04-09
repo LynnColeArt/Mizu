@@ -3491,6 +3491,10 @@ contains
   end subroutine materialize_artifact_payload
 
   subroutine append_cuda_pack_span_cache_payload(cache_root, metadata, payload_text, payload_bytes)
+    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_MAGIC = int(z'53445A4D', kind=i32)
+    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_VERSION = 1_i32
+    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_ENTRY_BYTES = 16_i32
     character(len=*), intent(in)              :: cache_root
     type(artifact_metadata_record), intent(in) :: metadata
     character(len=*), intent(inout)           :: payload_text
@@ -3499,9 +3503,11 @@ contains
     character(len=(MAX_PATH_LEN * 2) + 4096)  :: tile_payload
     character(len=MAX_PATH_LEN)               :: sidecar_path
     character(len=MAX_PATH_LEN)               :: tile_path
+    character(len=MAX_PATH_LEN)               :: dispatch_buffer_path
     character(len=MAX_PATH_LEN)               :: pack_tile_path
     character(len=MAX_PATH_LEN)               :: full_path
     character(len=MAX_PATH_LEN)               :: tile_full_path
+    character(len=MAX_PATH_LEN)               :: dispatch_buffer_full_path
     character(len=MAX_PATH_LEN)               :: parent_dir
     character(len=MAX_PATH_LEN)               :: span_root
     character(len=MAX_PATH_LEN)               :: path_text
@@ -3527,13 +3533,21 @@ contains
     integer(i32)                              :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
     integer(i32)                              :: tile_byte_count
     integer(i8)                               :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
+    integer(i8)                               :: dispatch_buffer(CUDA_DISPATCH_BUFFER_HEADER_BYTES + &
+                                                     (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_DISPATCH_BUFFER_ENTRY_BYTES))
+    integer(i32)                              :: dispatch_pack_indices(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    integer(i32)                              :: dispatch_buffer_offset
+    integer(i32)                              :: dispatch_entry_count
+    integer(i64)                              :: usage_hash
     logical                                   :: exists
     logical                                   :: found_count
+    logical                                   :: found_usage_hash
     logical                                   :: found_root
     logical                                   :: found_entry
     logical                                   :: found_path
     logical                                   :: found_sample_bytes
     logical                                   :: found_sidecar
+    logical                                   :: found_dispatch_buffer
     logical                                   :: found_pack_tile
     logical                                   :: has_entries
     logical                                   :: has_tiles
@@ -3557,12 +3571,20 @@ contains
     sidecar_path = build_cuda_pack_span_cache_path(metadata%payload_path)
     if (len_trim(sidecar_path) == 0) return
     tile_path = build_cuda_pack_tile_cache_path(metadata%payload_path)
+    dispatch_buffer_path = build_cuda_pack_dispatch_buffer_path(metadata%payload_path)
 
     path_text = ""
     call extract_payload_field_text_cache(payload_text, "pack_span_cache=", path_text, found_sidecar)
     if (.not. found_sidecar) then
       field_text = ""
       write(field_text, '(";pack_span_cache=",A)') trim(sidecar_path)
+      call append_payload_fragment(payload_text, trim(field_text))
+    end if
+    path_text = ""
+    call extract_payload_field_text_cache(payload_text, "pack_dispatch_buffer=", path_text, found_dispatch_buffer)
+    if (.not. found_dispatch_buffer .and. len_trim(dispatch_buffer_path) > 0) then
+      field_text = ""
+      write(field_text, '(";pack_dispatch_buffer=",A)') trim(dispatch_buffer_path)
       call append_payload_fragment(payload_text, trim(field_text))
     end if
 
@@ -3577,6 +3599,15 @@ contains
     has_entries = .false.
     tile_payload = "kind=cuda_pack_tile_cache_v1"
     has_tiles = .false.
+    dispatch_pack_indices = 0_i32
+    dispatch_buffer = 0_i8
+    dispatch_entry_count = 0_i32
+    usage_hash = 0_i64
+    field_text = ""
+    call extract_payload_field_text_cache(payload_text, "pack_use_hash=", field_text, found_usage_hash)
+    if (found_usage_hash) then
+      if (.not. parse_i64_text_cache(field_text, usage_hash)) usage_hash = 0_i64
+    end if
     pack_tile_path = ""
     call extract_payload_field_text_cache(payload_text, "pack_ref_tile_cache=", pack_tile_path, found_pack_tile)
     if (.not. found_pack_tile) then
@@ -3654,6 +3685,9 @@ contains
         call append_payload_fragment(sidecar_payload, trim(field_text))
       end if
       if (parsed_dispatch) then
+        if (pack_index > 0_i32 .and. entry_index <= MAX_IMPORT_STAGE_PACK_DISPATCH) then
+          dispatch_pack_indices(entry_index) = pack_index
+        end if
         if (pack_index > 0_i32) then
           field_text = ""
           write(field_text, '(";entry",I0,"_pack=",I0)') entry_index, pack_index
@@ -3705,6 +3739,23 @@ contains
 
     if (.not. has_entries) return
 
+    dispatch_buffer_offset = CUDA_DISPATCH_BUFFER_HEADER_BYTES
+    do entry_index = 1_i32, entry_limit
+      if (dispatch_pack_indices(entry_index) <= 0_i32) cycle
+      dispatch_entry_count = dispatch_entry_count + 1_i32
+      call store_pack_buffer_i32_cache(dispatch_buffer, dispatch_buffer_offset + 0_i32, dispatch_pack_indices(entry_index))
+      call store_pack_buffer_i32_cache(dispatch_buffer, dispatch_buffer_offset + 4_i32, entry_index)
+      call store_pack_buffer_i64_cache(dispatch_buffer, dispatch_buffer_offset + 8_i32, 0_i64)
+      dispatch_buffer_offset = dispatch_buffer_offset + CUDA_DISPATCH_BUFFER_ENTRY_BYTES
+    end do
+    call store_pack_buffer_i32_cache(dispatch_buffer, 0_i32, CUDA_DISPATCH_BUFFER_MAGIC)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 4_i32, CUDA_DISPATCH_BUFFER_VERSION)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 8_i32, CUDA_DISPATCH_BUFFER_HEADER_BYTES)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 12_i32, CUDA_DISPATCH_BUFFER_ENTRY_BYTES)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 16_i32, dispatch_entry_count)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 20_i32, dispatch_entry_count)
+    call store_pack_buffer_i64_cache(dispatch_buffer, 24_i32, usage_hash)
+
     field_text = ""
     write(field_text, '(";entry_count=",I0)') entry_limit
     call append_payload_fragment(sidecar_payload, trim(field_text))
@@ -3721,6 +3772,20 @@ contains
     if (ios /= 0_i32) return
     write(unit_id, "(A)", iostat=ios) trim(sidecar_payload)
     close(unit_id)
+
+    if (len_trim(dispatch_buffer_path) > 0) then
+      dispatch_buffer_full_path = join_cache_root_with_payload_path(cache_root, dispatch_buffer_path)
+      if (len_trim(dispatch_buffer_full_path) > 0) then
+        parent_dir = parent_directory_path(dispatch_buffer_full_path)
+        if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+        open(newunit=unit_id, file=trim(dispatch_buffer_full_path), status="replace", access="stream", &
+          form="unformatted", action="write", iostat=ios)
+        if (ios == 0_i32) then
+          write(unit_id, iostat=ios) dispatch_buffer(1:dispatch_buffer_offset)
+          close(unit_id)
+        end if
+      end if
+    end if
 
     if (.not. has_tiles) return
     tile_full_path = join_cache_root_with_payload_path(cache_root, tile_path)
@@ -3750,6 +3815,15 @@ contains
     if (len_trim(payload_path) == 0) return
     write(tile_path, '(A,".tilecache")') trim(payload_path)
   end function build_cuda_pack_tile_cache_path
+
+  function build_cuda_pack_dispatch_buffer_path(payload_path) result(buffer_path)
+    character(len=*), intent(in) :: payload_path
+    character(len=MAX_PATH_LEN)  :: buffer_path
+
+    buffer_path = ""
+    if (len_trim(payload_path) == 0) return
+    write(buffer_path, '(A,".dispatchbuffer")') trim(payload_path)
+  end function build_cuda_pack_dispatch_buffer_path
 
   function build_cuda_weight_pack_tile_cache_path(payload_path) result(tile_path)
     character(len=*), intent(in) :: payload_path

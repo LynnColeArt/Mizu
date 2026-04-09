@@ -399,6 +399,15 @@ contains
     write(cache_path, '(A,".spancache")') trim(artifact_path)
   end function build_pack_span_cache_artifact_path
 
+  function build_pack_dispatch_buffer_artifact_path(artifact_path) result(cache_path)
+    character(len=*), intent(in) :: artifact_path
+    character(len=MAX_PATH_LEN)  :: cache_path
+
+    cache_path = ""
+    if (len_trim(artifact_path) == 0) return
+    write(cache_path, '(A,".dispatchbuffer")') trim(artifact_path)
+  end function build_pack_dispatch_buffer_artifact_path
+
   function build_pack_tile_cache_artifact_path(artifact_path) result(cache_path)
     character(len=*), intent(in) :: artifact_path
     character(len=MAX_PATH_LEN)  :: cache_path
@@ -984,6 +993,7 @@ contains
     character(len=MAX_PATH_LEN)                  :: pack_tile_cache_path
     character(len=MAX_PATH_LEN)                  :: pack_tile_payload_path
     character(len=MAX_PATH_LEN)                  :: pack_tile_buffer_path
+    character(len=MAX_PATH_LEN)                  :: dispatch_buffer_path
     character(len=MAX_PATH_LEN)                  :: tile_cache_path
     character(len=64)                            :: key_text
     character(len=64)                            :: value_text
@@ -1009,6 +1019,7 @@ contains
     logical                                      :: loaded_pack_tile_cache
     logical                                      :: loaded_pack_tile_payload
     logical                                      :: loaded_pack_tile_buffer
+    logical                                      :: loaded_dispatch_buffer
     logical                                      :: loaded_tile_cache
     logical                                      :: required_entry_found
     logical                                      :: found_pack_record
@@ -1026,11 +1037,17 @@ contains
     integer(i8)                                  :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
     integer(i64)                                 :: materialized_hash
     integer(i8), allocatable                     :: pack_tile_buffer_bytes(:)
+    integer(i8), allocatable                     :: dispatch_buffer_bytes(:)
     integer(i32)                                 :: pack_tile_buffer_count
+    integer(i32)                                 :: dispatch_buffer_count
+    logical                                      :: found_dispatch_buffer_path
+    logical                                      :: applied_dispatch_buffer
 
     loaded_cached = .false.
     pack_tile_buffer_count = 0_i32
+    dispatch_buffer_count = 0_i32
     if (allocated(pack_tile_buffer_bytes)) deallocate(pack_tile_buffer_bytes)
+    if (allocated(dispatch_buffer_bytes)) deallocate(dispatch_buffer_bytes)
     if (len_trim(cache_root) == 0) return
 
     cache_path = ""
@@ -1128,9 +1145,22 @@ contains
         pack_tile_buffer_count, loaded_pack_tile_buffer)
     end if
 
+    dispatch_buffer_path = ""
+    loaded_dispatch_buffer = .false.
+    call extract_payload_field_text(payload_text, "pack_dispatch_buffer=", dispatch_buffer_path, found_dispatch_buffer_path)
+    if (.not. found_dispatch_buffer_path) dispatch_buffer_path = build_pack_dispatch_buffer_artifact_path(artifact_path)
+    if (len_trim(dispatch_buffer_path) > 0) then
+      call load_cuda_artifact_blob(cache_root, trim(dispatch_buffer_path), dispatch_buffer_bytes, &
+        dispatch_buffer_count, loaded_dispatch_buffer)
+    end if
+
     if (.not. allocated(pack_tile_buffer_bytes)) then
       allocate(pack_tile_buffer_bytes(1))
       pack_tile_buffer_bytes = 0_i8
+    end if
+    if (.not. allocated(dispatch_buffer_bytes)) then
+      allocate(dispatch_buffer_bytes(1))
+      dispatch_buffer_bytes = 0_i8
     end if
 
     tile_cache_text = ""
@@ -1146,6 +1176,12 @@ contains
           tile_cache_text = ""
         end if
       end if
+    end if
+
+    applied_dispatch_buffer = .false.
+    if (loaded_dispatch_buffer .and. (loaded_pack_tile_cache .or. loaded_pack_tile_payload .or. loaded_pack_tile_buffer)) then
+      call hydrate_pack_dispatch_buffer_selection(dispatch_buffer_bytes, dispatch_buffer_count, pack_usage, &
+        applied_dispatch_buffer)
     end if
 
     required_entry_found = .false.
@@ -1310,9 +1346,91 @@ contains
     call refresh_compact_pack_usage_summary(pack_usage)
 
     if (allocated(pack_tile_buffer_bytes)) deallocate(pack_tile_buffer_bytes)
+    if (allocated(dispatch_buffer_bytes)) deallocate(dispatch_buffer_bytes)
     loaded_cached = required_entry_found .and. &
-      (loaded_span_cache .or. loaded_pack_tile_cache .or. loaded_pack_tile_payload .or. loaded_pack_tile_buffer)
+      (loaded_span_cache .or. loaded_pack_tile_cache .or. loaded_pack_tile_payload .or. loaded_pack_tile_buffer .or. &
+       applied_dispatch_buffer)
   end subroutine hydrate_cached_pack_span_profile
+
+  subroutine hydrate_pack_dispatch_buffer_selection(buffer_bytes, buffer_count, pack_usage, applied_ok)
+    integer(i32), parameter :: CUDA_DISPATCH_BUFFER_MAGIC = int(z'53445A4D', kind=i32)
+    integer(i32), parameter :: CUDA_DISPATCH_BUFFER_VERSION = 1_i32
+    integer(i32), parameter :: CUDA_DISPATCH_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter :: CUDA_DISPATCH_BUFFER_ENTRY_BYTES = 16_i32
+    integer(i8), intent(in)                     :: buffer_bytes(:)
+    integer(i32), intent(in)                    :: buffer_count
+    type(cuda_pack_usage_profile), intent(inout) :: pack_usage
+    logical, intent(out)                        :: applied_ok
+    type(cuda_pack_usage_profile)               :: decoded_usage
+    integer(i32)                                :: parsed_magic
+    integer(i32)                                :: parsed_version
+    integer(i32)                                :: parsed_header_bytes
+    integer(i32)                                :: parsed_entry_bytes
+    integer(i32)                                :: parsed_entry_count
+    integer(i32)                                :: parsed_usage_count
+    integer(i64)                                :: parsed_usage_hash
+    integer(i32)                                :: entry_index
+    integer(i32)                                :: entry_offset
+    integer(i32)                                :: pack_index
+    integer(i32)                                :: ignored_i32
+    integer(i64)                                :: ignored_i64
+    logical                                     :: read_ok
+
+    applied_ok = .false.
+    if (buffer_count < CUDA_DISPATCH_BUFFER_HEADER_BYTES) return
+
+    call read_buffer_i32(buffer_bytes, buffer_count, 0_i32, parsed_magic, read_ok)
+    if (.not. read_ok) return
+    if (parsed_magic /= CUDA_DISPATCH_BUFFER_MAGIC) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 4_i32, parsed_version, read_ok)
+    if (.not. read_ok) return
+    if (parsed_version /= CUDA_DISPATCH_BUFFER_VERSION) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 8_i32, parsed_header_bytes, read_ok)
+    if (.not. read_ok) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 12_i32, parsed_entry_bytes, read_ok)
+    if (.not. read_ok) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 16_i32, parsed_entry_count, read_ok)
+    if (.not. read_ok) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 20_i32, parsed_usage_count, read_ok)
+    if (.not. read_ok) return
+    call read_buffer_i64(buffer_bytes, buffer_count, 24_i32, parsed_usage_hash, read_ok)
+    if (.not. read_ok) return
+    if (parsed_header_bytes < CUDA_DISPATCH_BUFFER_HEADER_BYTES) return
+    if (parsed_entry_bytes < CUDA_DISPATCH_BUFFER_ENTRY_BYTES) return
+    if (parsed_entry_count <= 0_i32) return
+    if ((parsed_header_bytes + ((parsed_entry_count - 1_i32) * parsed_entry_bytes) + CUDA_DISPATCH_BUFFER_ENTRY_BYTES) > &
+        buffer_count) return
+
+    decoded_usage = cuda_pack_usage_profile()
+    decoded_usage%span_root = pack_usage%span_root
+    decoded_usage%usage_hash = parsed_usage_hash
+
+    do entry_index = 1_i32, min(parsed_entry_count, MAX_CUDA_PACK_DISPATCH_ENTRIES)
+      entry_offset = parsed_header_bytes + ((entry_index - 1_i32) * parsed_entry_bytes)
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 0_i32, pack_index, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 4_i32, ignored_i32, read_ok)
+      if (.not. read_ok) cycle
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 8_i32, ignored_i64, read_ok)
+      if (.not. read_ok) cycle
+      if (pack_index <= 0_i32) cycle
+      decoded_usage%entry_pack_indices(entry_index) = pack_index
+      decoded_usage%usage_count = decoded_usage%usage_count + 1_i32
+    end do
+
+    if (decoded_usage%usage_count <= 0_i32) return
+    if (decoded_usage%usage_hash == 0_i64) then
+      decoded_usage%usage_hash = positive_hash64("cuda_dispatch_buffer_selection")
+      do entry_index = 1_i32, decoded_usage%usage_count
+        decoded_usage%usage_hash = combine_positive_hash64(decoded_usage%usage_hash, &
+          int(decoded_usage%entry_pack_indices(entry_index), kind=i64))
+      end do
+    end if
+    if (parsed_usage_count > 0_i32) decoded_usage%usage_count = min(parsed_usage_count, decoded_usage%usage_count)
+    decoded_usage%has_usage = .true.
+    pack_usage = decoded_usage
+    applied_ok = .true.
+  end subroutine hydrate_pack_dispatch_buffer_selection
 
   subroutine extract_weight_pack_tile_cache_record(cache_text, payload_text, buffer_bytes, buffer_count, buffer_loaded, &
                                                    pack_index, pack_offset, pack_bytes, resolved_pack_index, &
