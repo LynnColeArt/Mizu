@@ -10,6 +10,11 @@ Last updated: 2026-04-09
   sidecar generation and execution restore bridge-facing offset/bytes/role/
   layout from `pack_use*` plus that per-pack binary directory instead of
   trusting surrounding text
+- current milestone: CUDA prefill/decode plans now also materialize a small
+  binary `.dispatchbuffer` sidecar carrying selected packed-entry indices and
+  a normalized usage hash, and warm execution now prefers that binary
+  selection list over textual `pack_use*` recovery when the cached sidecars
+  are present
 - current milestone: the loader now understands a first concrete imported
   asset-bundle shape through `mizu_import/`, with validated tensor, modality,
   and projector inventories layered on top of the logical root manifest
@@ -91,6 +96,10 @@ Last updated: 2026-04-09
   `pack=<index>` dispatch records, so warm execution can address the
   weight-pack tile cache by packed entry identity instead of relying on
   offset/byte matching in plan text
+- those same CUDA prefill/decode artifacts now also carry direct
+  `pack_dispatch_buffer=` references to a tiny binary selection sidecar, so
+  warm replay can recover selected packed-entry indices without depending on
+  textual `pack_use*` recovery
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact

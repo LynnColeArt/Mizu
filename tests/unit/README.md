@@ -144,6 +144,9 @@ bodies.
   - validates compact CUDA `pack_dispatch*` entries can now collapse to
     `pack=<index>` and still restore offset, byte span, role, and layout from
     `pack_use*` plus the typed `.packbuffer` directory
+  - validates a compact CUDA decode plan can now replay from a binary
+    `pack_dispatch_buffer=` sidecar plus `.packbuffer` even when textual
+    `pack_use*` entries are removed from the plan payload
   - validates those same compact CUDA decode plans now keep token identity and
     stored artifact lineage stable when typed `.packbuffer` resolution matches,
     even if one artifact uses offset/byte dispatch text and another uses
