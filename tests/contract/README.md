@@ -51,8 +51,10 @@ These suites cover the `API-C*` portion of
     the selected imported tensor spans
   - verifies those `.spancache` sidecars now also retain compact staged
     pack-page records for the selected imported tensor spans
-  - verifies those `.spancache` sidecars now also retain compact staged
-    tensor-tile payloads for the selected imported tensor spans
+  - verifies those `.spancache` sidecars now also reference dedicated
+    `.tilecache` payloads for the selected imported tensor spans
+  - verifies those `.tilecache` payloads retain staged tensor-tile records for
+    the selected imported tensor spans
   - verifies the public API can drive CUDA-owned stub prefill and decode paths
   - verifies session-state transitions across staging, prefill, decode,
     `park`, and `resume`

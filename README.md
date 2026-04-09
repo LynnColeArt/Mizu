@@ -133,10 +133,10 @@ Current implementation status:
   pack-page records derived from the selected imported tensor spans, and the
   CUDA bridge now prefers those structured page words before falling back to
   raw sampled span bytes
-- those same CUDA `.spancache` sidecars now also retain compact staged
-  tensor-tile payloads derived from imported tensor bytes, and the CUDA
-  bridge now prefers those tile bytes before falling back to page words or
-  raw sampled span bytes
+- CUDA prefill and decode now also materialize narrow `.tilecache` payloads
+  under `cache_root`, referenced by the `v4` `.spancache` sidecars, and the
+  CUDA bridge now prefers those staged tile bytes before falling back to page
+  words or raw sampled span bytes
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside payload

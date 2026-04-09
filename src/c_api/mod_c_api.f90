@@ -3487,8 +3487,11 @@ contains
     character(len=*), intent(inout)           :: payload_text
     integer(i64), intent(inout)               :: payload_bytes
     character(len=(MAX_PATH_LEN * 6) + 4096)  :: sidecar_payload
+    character(len=(MAX_PATH_LEN * 2) + 4096)  :: tile_payload
     character(len=MAX_PATH_LEN)               :: sidecar_path
+    character(len=MAX_PATH_LEN)               :: tile_path
     character(len=MAX_PATH_LEN)               :: full_path
+    character(len=MAX_PATH_LEN)               :: tile_full_path
     character(len=MAX_PATH_LEN)               :: parent_dir
     character(len=MAX_PATH_LEN)               :: span_root
     character(len=MAX_PATH_LEN)               :: path_text
@@ -3521,6 +3524,7 @@ contains
     logical                                   :: found_sample_bytes
     logical                                   :: found_sidecar
     logical                                   :: has_entries
+    logical                                   :: has_tiles
     logical                                   :: parsed_dispatch
 
     if (metadata%backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
@@ -3540,6 +3544,7 @@ contains
 
     sidecar_path = build_cuda_pack_span_cache_path(metadata%payload_path)
     if (len_trim(sidecar_path) == 0) return
+    tile_path = build_cuda_pack_tile_cache_path(metadata%payload_path)
 
     path_text = ""
     call extract_payload_field_text_cache(payload_text, "pack_span_cache=", path_text, found_sidecar)
@@ -3556,8 +3561,15 @@ contains
     inquire(file=trim(full_path), exist=exists)
     if (exists) return
 
-    sidecar_payload = "kind=cuda_pack_span_cache_v3"
+    sidecar_payload = "kind=cuda_pack_span_cache_v4"
     has_entries = .false.
+    tile_payload = "kind=cuda_pack_tile_cache_v1"
+    has_tiles = .false.
+    if (len_trim(tile_path) > 0) then
+      field_text = ""
+      write(field_text, '(";tile_cache=",A)') trim(tile_path)
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+    end if
 
     do entry_index = 1_i32, entry_limit
       write(field_text, '("pack_span",I0,"=")') entry_index
@@ -3637,6 +3649,16 @@ contains
           field_text = ""
           write(field_text, '(";entry",I0,"_tile_hex=",A)') entry_index, trim(hex_text)
           call append_payload_fragment(sidecar_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";entry",I0,"_tile_hash=",I0)') entry_index, tile_hash
+          call append_payload_fragment(tile_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";entry",I0,"_tile_bytes=",I0)') entry_index, tile_byte_count
+          call append_payload_fragment(tile_payload, trim(field_text))
+          field_text = ""
+          write(field_text, '(";entry",I0,"_tile_hex=",A)') entry_index, trim(hex_text)
+          call append_payload_fragment(tile_payload, trim(field_text))
+          has_tiles = .true.
         end if
       end if
       has_entries = .true.
@@ -3647,6 +3669,11 @@ contains
     field_text = ""
     write(field_text, '(";entry_count=",I0)') entry_limit
     call append_payload_fragment(sidecar_payload, trim(field_text))
+    if (has_tiles) then
+      field_text = ""
+      write(field_text, '(";entry_count=",I0)') entry_limit
+      call append_payload_fragment(tile_payload, trim(field_text))
+    end if
 
     parent_dir = parent_directory_path(full_path)
     if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
@@ -3654,6 +3681,16 @@ contains
     open(newunit=unit_id, file=trim(full_path), status="replace", action="write", iostat=ios)
     if (ios /= 0_i32) return
     write(unit_id, "(A)", iostat=ios) trim(sidecar_payload)
+    close(unit_id)
+
+    if (.not. has_tiles) return
+    tile_full_path = join_cache_root_with_payload_path(cache_root, tile_path)
+    if (len_trim(tile_full_path) == 0) return
+    parent_dir = parent_directory_path(tile_full_path)
+    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+    open(newunit=unit_id, file=trim(tile_full_path), status="replace", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+    write(unit_id, "(A)", iostat=ios) trim(tile_payload)
     close(unit_id)
   end subroutine append_cuda_pack_span_cache_payload
 
@@ -3665,6 +3702,15 @@ contains
     if (len_trim(payload_path) == 0) return
     write(sidecar_path, '(A,".spancache")') trim(payload_path)
   end function build_cuda_pack_span_cache_path
+
+  function build_cuda_pack_tile_cache_path(payload_path) result(tile_path)
+    character(len=*), intent(in) :: payload_path
+    character(len=MAX_PATH_LEN)  :: tile_path
+
+    tile_path = ""
+    if (len_trim(payload_path) == 0) return
+    write(tile_path, '(A,".tilecache")') trim(payload_path)
+  end function build_cuda_pack_tile_cache_path
 
   subroutine extract_payload_dispatch_entry_cache(dispatch_entry, pack_offset, pack_bytes, role_code, layout_code, &
                                                   parsed_ok)

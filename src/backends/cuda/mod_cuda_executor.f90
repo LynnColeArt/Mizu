@@ -338,6 +338,15 @@ contains
     write(cache_path, '(A,".spancache")') trim(artifact_path)
   end function build_pack_span_cache_artifact_path
 
+  function build_pack_tile_cache_artifact_path(artifact_path) result(cache_path)
+    character(len=*), intent(in) :: artifact_path
+    character(len=MAX_PATH_LEN)  :: cache_path
+
+    cache_path = ""
+    if (len_trim(artifact_path) == 0) return
+    write(cache_path, '(A,".tilecache")') trim(artifact_path)
+  end function build_pack_tile_cache_artifact_path
+
   integer(i64) function positive_hash64(text) result(hash_value)
     character(len=*), intent(in) :: text
 
@@ -660,12 +669,15 @@ contains
     type(cuda_pack_usage_profile), intent(inout) :: pack_usage
     logical, intent(out)                         :: loaded_cached
     character(len=1024)                          :: cache_text
+    character(len=4096)                          :: tile_cache_text
     character(len=MAX_PATH_LEN)                  :: cache_path
+    character(len=MAX_PATH_LEN)                  :: tile_cache_path
     character(len=64)                            :: key_text
     character(len=64)                            :: value_text
     integer(i32)                                 :: entry_index
     integer(i64)                                 :: parsed_i64
     logical                                      :: found_cache_path
+    logical                                      :: found_tile_cache_path
     logical                                      :: found_hash
     logical                                      :: found_bytes
     logical                                      :: found_page_hash
@@ -675,6 +687,7 @@ contains
     logical                                      :: found_tile_bytes
     logical                                      :: found_tile_hex
     logical                                      :: loaded_ok
+    logical                                      :: loaded_tile_cache
     logical                                      :: required_entry_found
     integer(i64)                                 :: page_hash
     integer(i32)                                 :: page_word_count
@@ -695,7 +708,23 @@ contains
     if (.not. loaded_ok) return
     if (index(cache_text, "kind=cuda_pack_span_cache_v1") <= 0 .and. &
         index(cache_text, "kind=cuda_pack_span_cache_v2") <= 0 .and. &
-        index(cache_text, "kind=cuda_pack_span_cache_v3") <= 0) return
+        index(cache_text, "kind=cuda_pack_span_cache_v3") <= 0 .and. &
+        index(cache_text, "kind=cuda_pack_span_cache_v4") <= 0) return
+
+    tile_cache_text = ""
+    tile_cache_path = ""
+    loaded_tile_cache = .false.
+    call extract_payload_field_text(cache_text, "tile_cache=", tile_cache_path, found_tile_cache_path)
+    if (.not. found_tile_cache_path) tile_cache_path = build_pack_tile_cache_artifact_path(artifact_path)
+    if (len_trim(tile_cache_path) > 0) then
+      call load_cuda_artifact_payload(cache_root, trim(tile_cache_path), tile_cache_text, loaded_tile_cache)
+      if (loaded_tile_cache) then
+        if (index(tile_cache_text, "kind=cuda_pack_tile_cache_v1") <= 0) then
+          loaded_tile_cache = .false.
+          tile_cache_text = ""
+        end if
+      end if
+    end if
 
     required_entry_found = .false.
     do entry_index = 1_i32, MAX_CUDA_PACK_DISPATCH_ENTRIES
@@ -765,7 +794,11 @@ contains
 
       write(key_text, '("entry",I0,"_tile_hash=")') entry_index
       value_text = ""
-      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hash)
+      if (loaded_tile_cache) then
+        call extract_payload_field_text(tile_cache_text, trim(key_text), value_text, found_tile_hash)
+      else
+        call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hash)
+      end if
       tile_hash = 0_i64
       if (found_tile_hash) then
         if (.not. parse_i64_text(value_text, tile_hash)) return
@@ -773,7 +806,11 @@ contains
 
       write(key_text, '("entry",I0,"_tile_bytes=")') entry_index
       value_text = ""
-      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_bytes)
+      if (loaded_tile_cache) then
+        call extract_payload_field_text(tile_cache_text, trim(key_text), value_text, found_tile_bytes)
+      else
+        call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_bytes)
+      end if
       tile_byte_count = 0_i32
       if (found_tile_bytes) then
         if (.not. parse_i64_text(value_text, parsed_i64)) return
@@ -782,7 +819,11 @@ contains
 
       write(key_text, '("entry",I0,"_tile_hex=")') entry_index
       value_text = ""
-      call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hex)
+      if (loaded_tile_cache) then
+        call extract_payload_field_text(tile_cache_text, trim(key_text), value_text, found_tile_hex)
+      else
+        call extract_payload_field_text(cache_text, trim(key_text), value_text, found_tile_hex)
+      end if
       tile_bytes = 0_i8
       if (found_tile_bytes .and. found_tile_hex .and. tile_byte_count > 0_i32) then
         call decode_hex_to_tile_bytes(trim(value_text), tile_bytes, tile_byte_count)
