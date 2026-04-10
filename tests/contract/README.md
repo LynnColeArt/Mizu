@@ -142,12 +142,12 @@ These suites cover the `API-C*` portion of
     lives in `.execbuffer` plus the typed weight-pack cache and `.tilecache`
     is only a fallback for older cache layouts
   - verifies newly generated CUDA weight-pack artifacts no longer materialize
-    `.packtiles`, because generated model-load artifacts now reference
-    `.packpayload` plus typed `.packbuffer` directly and `.packtiles` is only
-    a fallback for older cache layouts
+    `.packtiles` or `.packpayload`, because generated model-load artifacts now
+    reference typed `.packbuffer` directly and those older sidecars are only
+    fallbacks for older cache layouts
   - verifies generated CUDA projector artifacts now reference
-    `pack_ref_tile_payload=` and `pack_ref_tile_buffer=` directly, and no
-    longer require a `pack_ref_tile_cache=` hint
+    `pack_ref_tile_buffer=` directly, and no longer require
+    `pack_ref_tile_cache=` or `pack_ref_tile_payload=` hints
   - verifies that same public CUDA flow still replays identically when warm
     execution falls back from richer tile/page cache shapes to leaner binary
     sidecars, because the CUDA bridge now derives staged execution from the
