@@ -172,6 +172,9 @@ bodies.
   - validates generated CUDA prefill/decode sidecars now still replay
     correctly after the transient textual pack-record expansion is removed
     from the hot artifact builder
+  - validates the same hot CUDA plans now still replay correctly after the
+    post-build compaction pass is removed, because they are emitted directly in
+    compact stable-metadata form
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub

@@ -155,6 +155,7 @@ These are the highest-leverage next tasks.
 - [x] Compact generated CUDA prefill/decode plans down to stable stage metadata after sidecar materialization
 - [x] Verify generated CUDA warm replay still works when compact plans rely on artifact-derived binary sidecars instead of textual compact markers
 - [x] Materialize CUDA prefill/decode sidecars directly from imported tensor inventory instead of first expanding transient textual `pack_use*`, `pack_dispatch*`, and `pack_span*` payload records
+- [x] Emit CUDA prefill/decode plans directly in compact stable-metadata form so the hot path no longer needs a post-build compaction pass
 - [x] Persist staged CUDA pack-page records beside cached tensor spans
 - [x] Persist staged CUDA tensor-tile records beside cached tensor spans
 - [x] Materialize dedicated CUDA `.tilecache` payloads under `cache_root`
