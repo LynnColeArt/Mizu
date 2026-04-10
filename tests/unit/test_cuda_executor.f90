@@ -39,6 +39,7 @@ program test_cuda_executor
   integer(i32) :: token_value_with_other_context
   integer(i32) :: token_value_with_pack_cache
   integer(i32) :: token_value_with_pack_index_override
+  integer(i32) :: token_value_with_static_text_override
   integer(i32) :: token_value_with_dispatch_buffer_only
   integer(i32) :: token_value_without_pack_cache
   integer(i32) :: context_byte_count_a
@@ -941,6 +942,30 @@ program test_cuda_executor
     artifact_hash, usage_decode_artifact_hash)
   call expect_equal_i32("cuda decode with pack-index override should preserve token identity from the pack buffer", &
     token_value_with_pack_index_override, token_value_without_pack_cache)
+
+  open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
+  write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
+    "pack_ref_hash=0000000000001234;pack_ref_count=1;pack_ref_bytes=4096;" // &
+    "weight_pack_hash=0000000000005678;weight_pack_count=2;weight_pack_bytes=8192;" // &
+    "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
+    "pack_ref_tile_buffer=" // pack_tile_buffer_path // ";" // &
+    "pack_usage_buffer=" // decode_usage_buffer_path // ";" // &
+    "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
+    "pack_span_buffer=" // decode_span_buffer_path
+  close(13)
+
+  call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
+    token_value_with_static_text_override, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
+  call expect_equal_i32("cuda decode with stale static pack text should still succeed", status_code, MIZU_STATUS_OK)
+  call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
+    artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
+    summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda decode with stale static pack text should preserve readable lineage", snapshot_valid)
+  call expect_equal_i64("cuda decode with stale static pack text should preserve artifact lineage from the pack buffer", &
+    artifact_hash, usage_decode_artifact_hash)
+  call expect_equal_i32("cuda decode with stale static pack text should preserve token identity from the pack buffer", &
+    token_value_with_static_text_override, token_value_with_pack_index_override)
 
   call execute_command_line("rm -f " // cache_root // "/" // pack_tile_cache_path, exitstat=shell_status)
   call expect_equal_i32("cuda direct pack-buffer index cleanup should succeed", int(shell_status, kind=i32), 0_i32)

@@ -140,6 +140,12 @@ static int is_binary_sidecar_redundant_fragment(const char *fragment) {
     if (strncmp(fragment, "pack_dispatch_count=", 20) == 0) return 1;
     if (strncmp(fragment, "pack_span_root=", 15) == 0) return 1;
     if (strncmp(fragment, "pack_span_cache=", 16) == 0) return 1;
+    if (strncmp(fragment, "pack_ref_hash=", 14) == 0) return 1;
+    if (strncmp(fragment, "pack_ref_bytes=", 15) == 0) return 1;
+    if (strncmp(fragment, "pack_ref_count=", 15) == 0) return 1;
+    if (strncmp(fragment, "weight_pack_hash=", 17) == 0) return 1;
+    if (strncmp(fragment, "weight_pack_bytes=", 18) == 0) return 1;
+    if (strncmp(fragment, "weight_pack_count=", 18) == 0) return 1;
     if (strncmp(fragment, "pack_ref_artifact=", 18) == 0) return 1;
     if (strncmp(fragment, "pack_ref_tile_cache=", 20) == 0) return 1;
 
@@ -693,6 +699,18 @@ int main(void) {
     }
     if (!expect_true("cuda binary-only decode plan should drop textual weight-pack artifact hints",
                      !file_contains_substring(decode_plan_path, "pack_ref_artifact="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual pack-ref static dependency hints",
+                     !file_contains_substring(decode_plan_path, "pack_ref_hash=") &&
+                     !file_contains_substring(decode_plan_path, "pack_ref_bytes=") &&
+                     !file_contains_substring(decode_plan_path, "pack_ref_count="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual weight-pack lineage dependency hints",
+                     !file_contains_substring(decode_plan_path, "weight_pack_hash=") &&
+                     !file_contains_substring(decode_plan_path, "weight_pack_bytes=") &&
+                     !file_contains_substring(decode_plan_path, "weight_pack_count="))) {
         return 1;
     }
     if (!expect_true("cuda binary-only decode plan should retain a usage-buffer reference",

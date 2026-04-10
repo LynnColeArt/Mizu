@@ -171,7 +171,8 @@ contains
     call hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached_spans)
     if (.not. loaded_cached_spans) call hydrate_payload_pack_span_profile(pack_usage)
     if (payload_uses_compact_pack_usage(payload_text)) then
-      call build_compact_pack_artifact_hash(payload_text, pack_usage, artifact_hash, has_pack_dependency)
+      call build_compact_pack_artifact_hash(cache_root, artifact_path, payload_text, pack_usage, artifact_hash, &
+        has_pack_dependency)
     else
       artifact_hash = positive_hash64(trim(payload_text))
       call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
@@ -262,7 +263,8 @@ contains
     call hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached_spans)
     if (.not. loaded_cached_spans) call hydrate_payload_pack_span_profile(pack_usage)
     if (payload_uses_compact_pack_usage(payload_text)) then
-      call build_compact_pack_artifact_hash(payload_text, pack_usage, artifact_hash, has_pack_dependency)
+      call build_compact_pack_artifact_hash(cache_root, artifact_path, payload_text, pack_usage, artifact_hash, &
+        has_pack_dependency)
     else
       artifact_hash = positive_hash64(trim(payload_text))
       call extract_payload_pack_dependency_hash(payload_text, pack_dependency_hash, has_pack_dependency)
@@ -493,7 +495,10 @@ contains
       (index(payload_text, "pack_span_buffer=") > 0)
   end function payload_uses_compact_pack_usage
 
-  subroutine build_compact_pack_artifact_hash(payload_text, pack_usage, artifact_hash, has_dependency)
+  subroutine build_compact_pack_artifact_hash(cache_root, artifact_path, payload_text, pack_usage, artifact_hash, &
+                                              has_dependency)
+    character(len=*), intent(in)             :: cache_root
+    character(len=*), intent(in)             :: artifact_path
     character(len=*), intent(in)             :: payload_text
     type(cuda_pack_usage_profile), intent(in) :: pack_usage
     integer(i64), intent(out)                :: artifact_hash
@@ -504,7 +509,8 @@ contains
     logical                                  :: has_resolved_usage
 
     artifact_hash = hash_normalized_payload_fragments(payload_text)
-    call extract_payload_pack_static_dependency_hash(payload_text, static_dependency_hash, has_static_dependency)
+    call extract_resolved_pack_static_dependency_hash(cache_root, artifact_path, payload_text, static_dependency_hash, &
+      has_static_dependency)
     call build_resolved_pack_usage_dependency_hash(pack_usage, resolved_usage_hash, has_resolved_usage)
 
     has_dependency = has_static_dependency .or. has_resolved_usage
@@ -592,6 +598,18 @@ contains
       is_volatile = .true.
     else if (index(fragment_text, "pack_dispatch_count=") == 1) then
       is_volatile = .true.
+    else if (index(fragment_text, "pack_ref_hash=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_ref_bytes=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_ref_count=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "weight_pack_hash=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "weight_pack_bytes=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "weight_pack_count=") == 1) then
+      is_volatile = .true.
     else if (index(fragment_text, "pack_usage_buffer=") == 1) then
       is_volatile = .true.
     else if (index(fragment_text, "pack_span_root=") == 1) then
@@ -639,7 +657,83 @@ contains
     is_digit = (character_text(1:1) >= "0" .and. character_text(1:1) <= "9")
   end function is_ascii_digit
 
-  subroutine extract_payload_pack_static_dependency_hash(payload_text, dependency_hash, has_dependency)
+  subroutine extract_resolved_pack_static_dependency_hash(cache_root, artifact_path, payload_text, dependency_hash, &
+                                                          has_dependency)
+    character(len=*), intent(in) :: cache_root
+    character(len=*), intent(in) :: artifact_path
+    character(len=*), intent(in) :: payload_text
+    integer(i64), intent(out)    :: dependency_hash
+    logical, intent(out)         :: has_dependency
+    character(len=CUDA_ARTIFACT_TEXT_CAPACITY) :: pack_tile_cache_text
+    character(len=MAX_PATH_LEN)  :: pack_tile_cache_path
+    character(len=MAX_PATH_LEN)  :: pack_tile_buffer_path
+    integer(i8), allocatable     :: pack_tile_buffer_bytes(:)
+    integer(i32)                 :: pack_tile_buffer_count
+    logical                      :: found_pack_tile_cache_path
+    logical                      :: found_pack_tile_buffer_path
+    logical                      :: loaded_pack_tile_cache
+    logical                      :: loaded_pack_tile_buffer
+
+    dependency_hash = 0_i64
+    has_dependency = .false.
+    pack_tile_cache_text = ""
+    pack_tile_cache_path = ""
+    pack_tile_buffer_path = ""
+    pack_tile_buffer_count = 0_i32
+    loaded_pack_tile_cache = .false.
+    loaded_pack_tile_buffer = .false.
+    found_pack_tile_cache_path = .false.
+    found_pack_tile_buffer_path = .false.
+    if (allocated(pack_tile_buffer_bytes)) deallocate(pack_tile_buffer_bytes)
+
+    call extract_payload_field_text(payload_text, "pack_ref_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
+    if (.not. found_pack_tile_cache_path) then
+      call extract_payload_field_text(payload_text, "pack_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
+    end if
+    if (.not. found_pack_tile_cache_path) pack_tile_cache_path = build_weight_pack_tile_cache_artifact_path(artifact_path)
+    if (len_trim(pack_tile_cache_path) > 0) then
+      call load_cuda_artifact_payload(cache_root, trim(pack_tile_cache_path), pack_tile_cache_text, loaded_pack_tile_cache)
+      if (loaded_pack_tile_cache) then
+        if (index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v1") <= 0 .and. &
+            index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v2") <= 0 .and. &
+            index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v3") <= 0 .and. &
+            index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v4") <= 0) then
+          loaded_pack_tile_cache = .false.
+          pack_tile_cache_text = ""
+        end if
+      end if
+    end if
+
+    if (loaded_pack_tile_cache) then
+      call extract_payload_field_text(pack_tile_cache_text, "pack_buffer=", pack_tile_buffer_path, &
+        found_pack_tile_buffer_path)
+    end if
+    if (.not. found_pack_tile_buffer_path) then
+      call extract_payload_field_text(payload_text, "pack_ref_tile_buffer=", pack_tile_buffer_path, &
+        found_pack_tile_buffer_path)
+      if (.not. found_pack_tile_buffer_path) then
+        call extract_payload_field_text(payload_text, "pack_buffer=", pack_tile_buffer_path, &
+          found_pack_tile_buffer_path)
+      end if
+    end if
+    if (.not. found_pack_tile_buffer_path .and. len_trim(pack_tile_cache_path) > 0) then
+      pack_tile_buffer_path = build_weight_pack_tile_buffer_artifact_path(artifact_path)
+      found_pack_tile_buffer_path = (len_trim(pack_tile_buffer_path) > 0)
+    end if
+    if (len_trim(pack_tile_buffer_path) > 0) then
+      call load_cuda_artifact_blob(cache_root, trim(pack_tile_buffer_path), pack_tile_buffer_bytes, &
+        pack_tile_buffer_count, loaded_pack_tile_buffer)
+    end if
+    if (loaded_pack_tile_buffer) then
+      call build_weight_pack_buffer_dependency_hash(pack_tile_buffer_bytes, pack_tile_buffer_count, dependency_hash, &
+        has_dependency)
+      if (has_dependency) return
+    end if
+
+    call extract_text_pack_static_dependency_hash(payload_text, dependency_hash, has_dependency)
+  end subroutine extract_resolved_pack_static_dependency_hash
+
+  subroutine extract_text_pack_static_dependency_hash(payload_text, dependency_hash, has_dependency)
     character(len=*), intent(in) :: payload_text
     integer(i64), intent(out)    :: dependency_hash
     logical, intent(out)         :: has_dependency
@@ -675,7 +769,42 @@ contains
       dependency_hash = combine_positive_hash64(max(1_i64, dependency_hash), positive_hash64(trim(pack_count_text)))
       has_dependency = .true.
     end if
-  end subroutine extract_payload_pack_static_dependency_hash
+  end subroutine extract_text_pack_static_dependency_hash
+
+  subroutine build_weight_pack_buffer_dependency_hash(buffer_bytes, buffer_count, dependency_hash, has_dependency)
+    integer(i32), parameter    :: CUDA_PACK_BUFFER_MAGIC = int(z'42505A4D', kind=i32)
+    integer(i32), parameter    :: CUDA_PACK_BUFFER_VERSION = 1_i32
+    integer(i8), intent(in)    :: buffer_bytes(:)
+    integer(i32), intent(in)   :: buffer_count
+    integer(i64), intent(out)  :: dependency_hash
+    logical, intent(out)       :: has_dependency
+    integer(i32)               :: parsed_magic
+    integer(i32)               :: parsed_version
+    integer(i32)               :: parsed_pack_count
+    logical                    :: read_ok
+
+    dependency_hash = 0_i64
+    has_dependency = .false.
+    if (buffer_count <= 0_i32) return
+    if (int(size(buffer_bytes), kind=i32) <= 0_i32) return
+
+    call read_buffer_i32(buffer_bytes, buffer_count, 0_i32, parsed_magic, read_ok)
+    if (.not. read_ok) return
+    if (parsed_magic /= CUDA_PACK_BUFFER_MAGIC) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 4_i32, parsed_version, read_ok)
+    if (.not. read_ok) return
+    if (parsed_version /= CUDA_PACK_BUFFER_VERSION) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 16_i32, parsed_pack_count, read_ok)
+    if (.not. read_ok) return
+    if (parsed_pack_count <= 0_i32) return
+
+    dependency_hash = combine_positive_hash64(1_i64, positive_hash64("cuda_weight_pack_buffer_v1"))
+    dependency_hash = combine_positive_hash64(dependency_hash, int(parsed_pack_count, kind=i64))
+    dependency_hash = combine_positive_hash64(dependency_hash, int(buffer_count, kind=i64))
+    dependency_hash = combine_positive_hash64(dependency_hash, &
+      hash_i8_buffer64(buffer_bytes, int(buffer_count, kind=i64)))
+    has_dependency = .true.
+  end subroutine build_weight_pack_buffer_dependency_hash
 
   subroutine extract_payload_pack_dependency_hash(payload_text, dependency_hash, has_dependency)
     character(len=*), intent(in) :: payload_text
