@@ -140,6 +140,7 @@ static int is_binary_sidecar_redundant_fragment(const char *fragment) {
     if (strncmp(fragment, "pack_dispatch_count=", 20) == 0) return 1;
     if (strncmp(fragment, "pack_span_root=", 15) == 0) return 1;
     if (strncmp(fragment, "pack_span_cache=", 16) == 0) return 1;
+    if (strncmp(fragment, "pack_ref_tile_cache=", 20) == 0) return 1;
 
     return 0;
 }
@@ -683,6 +684,10 @@ int main(void) {
     }
     if (!expect_true("cuda binary-only decode plan should retain a direct pack-buffer reference",
                      file_contains_substring(decode_plan_path, "pack_ref_tile_buffer="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual weight-pack tile-cache hints",
+                     !file_contains_substring(decode_plan_path, "pack_ref_tile_cache="))) {
         return 1;
     }
     if (!expect_true("cuda binary-only decode plan should retain a usage-buffer reference",
