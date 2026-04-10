@@ -169,6 +169,9 @@ bodies.
     identity when the plan payload is reduced to stable stage metadata only,
     because warm replay can derive compactness and sidecar locations directly
     from artifact identity
+  - validates generated CUDA prefill/decode sidecars now still replay
+    correctly after the transient textual pack-record expansion is removed
+    from the hot artifact builder
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub

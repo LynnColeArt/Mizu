@@ -48,6 +48,9 @@ These suites cover the `API-C*` portion of
     stage metadata instead of retaining textual `pack_dependency=`,
     `pack_use*`, `pack_dispatch*`, `pack_span*`, or `pack_span_cache=`
     fragments
+  - verifies those CUDA prefill/decode sidecars are now built directly from
+    imported tensor inventory and stage kind rather than by scraping transient
+    verbose pack records back out of the generated plan text
   - verifies those `.spancache` sidecars now retain staged sample bytes for
     the selected imported tensor spans
   - verifies those `.spancache` sidecars now also retain compact staged

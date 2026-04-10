@@ -187,6 +187,10 @@ Current implementation status:
 - direct `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` refs are no
   longer needed in plan text, because those sidecars are derived from artifact
   identity at runtime
+- CUDA prefill/decode sidecars are now materialized directly from the imported
+  tensor inventory and stage kind, so the hot path no longer depends on a
+  transient textual `pack_use*` / `pack_dispatch*` / `pack_span*` expansion
+  before compaction
 - compact CUDA warm artifact lineage now also ignores `pack_use_kind=` and
   `pack_dispatch_kind=` marker text, so binary-sidecar-only plans and older
   text-plus-buffer plans converge on the same replay identity when they resolve
