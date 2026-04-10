@@ -163,6 +163,10 @@ bodies.
   - validates those same compact CUDA decode plans can still restore their
     bridge-facing dispatch from direct `pack_ref_tile_buffer=` references even
     after the `.packtiles` text index is removed
+  - validates those same compact CUDA decode plans now keep token identity and
+    stored artifact lineage stable even when stale textual static weight-pack
+    hints are present, because warm replay derives that dependency from the
+    typed `.packbuffer`
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub

@@ -119,9 +119,11 @@ These suites cover the `API-C*` portion of
     `pack_ref_tile_buffer=` and derive the rest of the weight-pack cache shape
     from artifact identity
   - verifies that same public CUDA flow still replays identically after the
-    generated decode plan also drops the textual `pack_ref_artifact` hint,
-    because once `pack_ref_tile_buffer=` is present warm replay can recover the
-    pack-owned binary buffer directly and derive the remaining weight-pack
-    cache shape from artifact identity
+    generated decode plan also drops the textual static weight-pack hints
+    `pack_ref_artifact=`, `pack_ref_hash=`, `pack_ref_bytes=`,
+    `pack_ref_count=`, `weight_pack_hash=`, `weight_pack_bytes=`, and
+    `weight_pack_count=`, because once `pack_ref_tile_buffer=` is present warm
+    replay can derive static pack dependency from the typed `.packbuffer`
+    directly instead of those text fields
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path
