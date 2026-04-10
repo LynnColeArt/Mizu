@@ -149,6 +149,7 @@ static int is_binary_sidecar_redundant_fragment(const char *fragment) {
     if (strncmp(fragment, "pack_ref_artifact=", 18) == 0) return 1;
     if (strncmp(fragment, "pack_ref_tile_cache=", 20) == 0) return 1;
     if (strncmp(fragment, "pack_ref_tile_buffer=", 21) == 0) return 1;
+    if (strncmp(fragment, "pack_dependency=", 16) == 0) return 1;
     if (strncmp(fragment, "pack_usage_buffer=", 18) == 0) return 1;
     if (strncmp(fragment, "pack_dispatch_buffer=", 21) == 0) return 1;
     if (strncmp(fragment, "pack_span_buffer=", 17) == 0) return 1;
@@ -583,25 +584,29 @@ int main(void) {
     if (!expect_true("cuda projector artifact should reference the weight-pack binary buffer directly", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill -type f | grep -q .");
     if (!expect_true("cuda prefill artifact file should exist", command_status == 0)) return 1;
+    command_status = system("grep -R \"stage=3;.*format=cuda_bf16_prefill_plan_v1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should retain stable stage metadata", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_dependency=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should no longer require a textual pack dependency marker", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_ref_bytes=2205693952\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain the packed tensor byte dependency", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer require textual packed-byte dependency hints", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_use_kind=cuda_prefill_pack_usage_v1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain a prefill tensor-usage record", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer retain textual tensor-usage markers", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_use_count=3\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain the expected prefill tensor-usage count", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer retain textual usage-count hints", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_use_bytes=1115699200\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain the expected prefill tensor-usage bytes", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer retain textual usage-byte hints", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_dispatch_count=3\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain the expected compact dispatch count", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer retain textual dispatch-count hints", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_dispatch1=pack=1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain the first compact pack-index dispatch entry", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer retain textual pack-index dispatch entries", command_status != 0)) return 1;
     snprintf(command_buffer, sizeof(command_buffer),
              "grep -R \"pack_span_root=%s/mizu_import\" %s/artifacts/cuda/cuda/plans/prefill >/dev/null",
              fixture_runtime_root, persist_root);
     command_status = system(command_buffer);
-    if (!expect_true("cuda prefill artifact should retain the imported bundle root for tensor spans", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer require a textual span-root hint", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_span1=weights/token_embeddings.bin|sample_bytes=64\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain the first imported tensor-span record", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer retain textual tensor-span records", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_span_cache=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should no longer require a span-cache sidecar hint", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_span_buffer=artifacts/cuda/cuda/plans/prefill/.*\\.spanbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
@@ -615,17 +620,21 @@ int main(void) {
     command_status = system("grep -R \"pack_dispatch_buffer=artifacts/cuda/cuda/plans/prefill/.*\\.dispatchbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should no longer require a compact dispatch-buffer hint", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_use1=token_embeddings|embedding_table|offset=0|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should retain the first prefill tensor-usage entry", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer retain textual tensor-usage entries", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f | grep -q .");
     if (!expect_true("cuda decode artifact file should exist", command_status == 0)) return 1;
+    command_status = system("grep -R \"stage=4;.*format=cuda_bf16_decode_plan_v1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should retain stable stage metadata", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_dependency=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should no longer require a textual pack dependency marker", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_use_kind=cuda_decode_pack_usage_v1\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
-    if (!expect_true("cuda decode artifact should retain a decode tensor-usage record", command_status == 0)) return 1;
+    if (!expect_true("cuda decode artifact should no longer retain textual tensor-usage markers", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_use_count=4\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
-    if (!expect_true("cuda decode artifact should retain the expected decode tensor-usage count", command_status == 0)) return 1;
+    if (!expect_true("cuda decode artifact should no longer retain textual usage-count hints", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_dispatch4=pack=4\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
-    if (!expect_true("cuda decode artifact should retain the final compact pack-index dispatch entry", command_status == 0)) return 1;
+    if (!expect_true("cuda decode artifact should no longer retain textual pack-index dispatch entries", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_span4=weights/lm_head.bin|sample_bytes=64\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
-    if (!expect_true("cuda decode artifact should retain the final imported tensor-span record", command_status == 0)) return 1;
+    if (!expect_true("cuda decode artifact should no longer retain textual tensor-span records", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_span_cache=\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should no longer require a span-cache sidecar hint", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_span_buffer=artifacts/cuda/cuda/plans/decode/.*\\.spanbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
@@ -639,7 +648,7 @@ int main(void) {
     command_status = system("grep -R \"pack_dispatch_buffer=artifacts/cuda/cuda/plans/decode/.*\\.dispatchbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should no longer require a compact dispatch-buffer hint", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_use4=lm_head|token_projection|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
-    if (!expect_true("cuda decode artifact should retain the final decode tensor-usage entry", command_status == 0)) return 1;
+    if (!expect_true("cuda decode artifact should no longer retain textual tensor-usage entries", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.dispatchbuffer' | grep -q .");
     if (!expect_true("cuda dispatch-buffer sidecar should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.dispatchbuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a4453\"' _ {} \\;");
@@ -699,6 +708,10 @@ int main(void) {
     }
     if (!expect_true("cuda binary-only decode plan should drop direct pack-buffer references",
                      !file_contains_substring(decode_plan_path, "pack_ref_tile_buffer="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual pack dependency markers",
+                     !file_contains_substring(decode_plan_path, "pack_dependency="))) {
         return 1;
     }
     if (!expect_true("cuda binary-only decode plan should drop textual weight-pack tile-cache hints",

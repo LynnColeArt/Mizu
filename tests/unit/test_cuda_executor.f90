@@ -989,8 +989,7 @@ program test_cuda_executor
     pack_tile_payload_path, pack_tile_buffer_path)
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
-  write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
-    "pack_dependency=cuda_import_weight_pack_v1"
+  write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1"
   close(13)
 
   call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &

@@ -170,7 +170,7 @@ contains
     call extract_payload_pack_usage_profile(payload_text, pack_usage)
     call hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached_spans)
     if (.not. loaded_cached_spans) call hydrate_payload_pack_span_profile(pack_usage)
-    if (payload_uses_compact_pack_usage(payload_text)) then
+    if (payload_uses_compact_pack_usage(cache_root, artifact_path, payload_text)) then
       call build_compact_pack_artifact_hash(cache_root, artifact_path, payload_text, pack_usage, artifact_hash, &
         has_pack_dependency)
     else
@@ -262,7 +262,7 @@ contains
     call extract_payload_pack_usage_profile(payload_text, pack_usage)
     call hydrate_cached_pack_span_profile(cache_root, artifact_path, payload_text, pack_usage, loaded_cached_spans)
     if (.not. loaded_cached_spans) call hydrate_payload_pack_span_profile(pack_usage)
-    if (payload_uses_compact_pack_usage(payload_text)) then
+    if (payload_uses_compact_pack_usage(cache_root, artifact_path, payload_text)) then
       call build_compact_pack_artifact_hash(cache_root, artifact_path, payload_text, pack_usage, artifact_hash, &
         has_pack_dependency)
     else
@@ -485,7 +485,9 @@ contains
     if (hash_value == 0_i64) hash_value = 1_i64
   end function combine_positive_hash64
 
-  logical function payload_uses_compact_pack_usage(payload_text) result(is_compact)
+  logical function payload_uses_compact_pack_usage(cache_root, artifact_path, payload_text) result(is_compact)
+    character(len=*), intent(in) :: cache_root
+    character(len=*), intent(in) :: artifact_path
     character(len=*), intent(in) :: payload_text
 
     is_compact = (index(payload_text, "pack_use_kind=") > 0) .or. &
@@ -494,7 +496,54 @@ contains
       (index(payload_text, "pack_usage_buffer=") > 0) .or. &
       (index(payload_text, "pack_dispatch_buffer=") > 0) .or. &
       (index(payload_text, "pack_span_buffer=") > 0)
+    if (.not. is_compact) then
+      is_compact = artifact_has_compact_pack_sidecars(cache_root, artifact_path)
+    end if
   end function payload_uses_compact_pack_usage
+
+  logical function artifact_has_compact_pack_sidecars(cache_root, artifact_path) result(has_sidecars)
+    character(len=*), intent(in) :: cache_root
+    character(len=*), intent(in) :: artifact_path
+    character(len=MAX_PATH_LEN)  :: full_path
+    logical                      :: exists
+
+    has_sidecars = .false.
+    if (len_trim(cache_root) == 0) return
+    if (len_trim(artifact_path) == 0) return
+
+    full_path = join_cache_root_with_payload_path(cache_root, build_pack_usage_buffer_artifact_path(artifact_path))
+    if (len_trim(full_path) > 0) then
+      inquire(file=trim(full_path), exist=exists)
+      if (exists) then
+        has_sidecars = .true.
+        return
+      end if
+    end if
+
+    full_path = join_cache_root_with_payload_path(cache_root, build_pack_dispatch_buffer_artifact_path(artifact_path))
+    if (len_trim(full_path) > 0) then
+      inquire(file=trim(full_path), exist=exists)
+      if (exists) then
+        has_sidecars = .true.
+        return
+      end if
+    end if
+
+    full_path = join_cache_root_with_payload_path(cache_root, build_pack_span_buffer_artifact_path(artifact_path))
+    if (len_trim(full_path) > 0) then
+      inquire(file=trim(full_path), exist=exists)
+      if (exists) then
+        has_sidecars = .true.
+        return
+      end if
+    end if
+
+    full_path = join_cache_root_with_payload_path(cache_root, build_pack_span_cache_artifact_path(artifact_path))
+    if (len_trim(full_path) > 0) then
+      inquire(file=trim(full_path), exist=exists)
+      if (exists) has_sidecars = .true.
+    end if
+  end function artifact_has_compact_pack_sidecars
 
   subroutine build_compact_pack_artifact_hash(cache_root, artifact_path, payload_text, pack_usage, artifact_hash, &
                                               has_dependency)
@@ -598,6 +647,8 @@ contains
     else if (index(fragment_text, "pack_dispatch_kind=") == 1) then
       is_volatile = .true.
     else if (index(fragment_text, "pack_dispatch_count=") == 1) then
+      is_volatile = .true.
+    else if (index(fragment_text, "pack_dependency=") == 1) then
       is_volatile = .true.
     else if (index(fragment_text, "pack_ref_hash=") == 1) then
       is_volatile = .true.
