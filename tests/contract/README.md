@@ -125,6 +125,10 @@ These suites cover the `API-C*` portion of
     direct weight-pack buffer hint and the intermediate weight-pack
     `.packtiles` file are both gone, because the binary `.usagebuffer`
     sidecar now persists the resolved `.packbuffer` path
+  - verifies that same public CUDA flow still replays identically after the
+    plan-local `.usagebuffer`, `.dispatchbuffer`, `.spanbuffer`, and
+    `.spancache` sidecars are gone too, because the binary `.execbuffer`
+    now also persists the resolved weight-pack `.packbuffer` path
   - verifies that same public CUDA flow still replays identically when warm
     execution falls back from richer tile/page cache shapes to leaner binary
     sidecars, because the CUDA bridge now derives staged execution from the

@@ -170,6 +170,11 @@ bodies.
     because the `.usagebuffer` sidecar now persists the resolved
     weight-pack `.packbuffer` path
   - validates that same binary-first CUDA decode replay still preserves token
+    identity after the plan-local `.usagebuffer`, `.dispatchbuffer`,
+    `.spanbuffer`, and `.spancache` sidecars are removed, because the
+    `.execbuffer` sidecar now also persists the resolved weight-pack
+    `.packbuffer` path
+  - validates that same binary-first CUDA decode replay still preserves token
     identity when the plan payload is reduced to stable stage metadata only,
     because warm replay can derive compactness and sidecar locations directly
     from artifact identity

@@ -245,6 +245,10 @@ Current implementation status:
 - CUDA `.usagebuffer` sidecars now also persist the resolved weight-pack
   `.packbuffer` path, so compact warm replay can still recover typed pack
   records after the intermediate `.packtiles` text index is missing
+- CUDA `.execbuffer` sidecars now also persist that resolved weight-pack
+  `.packbuffer` path, so compact warm replay preserves static pack dependency
+  and canonical pack records even after `.usagebuffer`, `.dispatchbuffer`,
+  `.spanbuffer`, and `.spancache` have been removed
 - that same binary-first CUDA warm path now replays correctly even after the
   generated plan has no direct weight-pack buffer hint and the weight-pack
   `.packtiles` file is removed, because execution and artifact identity can
