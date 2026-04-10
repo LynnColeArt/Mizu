@@ -172,6 +172,11 @@ Last updated: 2026-04-09
   `.packbuffer` path, so compact warm replay preserves static pack dependency
   and canonical pack records even after `.usagebuffer`, `.dispatchbuffer`,
   `.spanbuffer`, and `.spancache` are gone
+- generated CUDA `prefill` and `decode` artifacts now rely on `.execbuffer`
+  plus the typed weight-pack cache as the primary plan-local binary warm-path
+  record, and no longer emit new `.usagebuffer`, `.dispatchbuffer`, or
+  `.spanbuffer` sidecars; the executor still supports those older buffers as
+  compatibility fallbacks for manual fixtures and older cache layouts
 - that same binary-first CUDA warm contract path now also replays correctly
   after the plan has no direct weight-pack buffer hint and the weight-pack
   `.packtiles` file has been removed, because execution and artifact identity

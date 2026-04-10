@@ -129,6 +129,10 @@ These suites cover the `API-C*` portion of
     plan-local `.usagebuffer`, `.dispatchbuffer`, `.spanbuffer`, and
     `.spancache` sidecars are gone too, because the binary `.execbuffer`
     now also persists the resolved weight-pack `.packbuffer` path
+  - verifies newly generated CUDA warm artifacts no longer materialize fresh
+    plan-local `.usagebuffer`, `.dispatchbuffer`, or `.spanbuffer` files, so
+    `.execbuffer` plus the typed weight-pack cache is the primary generated
+    warm-path layout and the older buffers remain compatibility fallbacks
   - verifies that same public CUDA flow still replays identically when warm
     execution falls back from richer tile/page cache shapes to leaner binary
     sidecars, because the CUDA bridge now derives staged execution from the

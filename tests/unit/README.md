@@ -174,6 +174,10 @@ bodies.
     `.spanbuffer`, and `.spancache` sidecars are removed, because the
     `.execbuffer` sidecar now also persists the resolved weight-pack
     `.packbuffer` path
+  - keeps explicit `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer`
+    fixtures as backward-compatibility coverage even though newly generated
+    CUDA warm artifacts now prefer `.execbuffer` plus the typed weight-pack
+    cache as the primary binary record
   - validates that same binary-first CUDA decode replay still preserves token
     identity when the plan payload is reduced to stable stage metadata only,
     because warm replay can derive compactness and sidecar locations directly
