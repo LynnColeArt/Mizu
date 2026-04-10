@@ -664,31 +664,68 @@ contains
     character(len=*), intent(in) :: payload_text
     integer(i64), intent(out)    :: dependency_hash
     logical, intent(out)         :: has_dependency
+    character(len=CUDA_ARTIFACT_TEXT_CAPACITY) :: pack_span_cache_text
     character(len=CUDA_ARTIFACT_TEXT_CAPACITY) :: pack_tile_cache_text
+    character(len=MAX_PATH_LEN)  :: pack_span_cache_path
     character(len=MAX_PATH_LEN)  :: pack_tile_cache_path
     character(len=MAX_PATH_LEN)  :: pack_tile_buffer_path
+    character(len=MAX_PATH_LEN)  :: usage_buffer_path
     integer(i8), allocatable     :: pack_tile_buffer_bytes(:)
+    integer(i8), allocatable     :: usage_buffer_bytes(:)
     integer(i32)                 :: pack_tile_buffer_count
+    integer(i32)                 :: usage_buffer_count
+    logical                      :: found_pack_span_cache_path
     logical                      :: found_pack_tile_cache_path
     logical                      :: found_pack_tile_buffer_path
+    logical                      :: found_usage_buffer_path
+    logical                      :: loaded_pack_span_cache
     logical                      :: loaded_pack_tile_cache
     logical                      :: loaded_pack_tile_buffer
+    logical                      :: loaded_usage_buffer
 
     dependency_hash = 0_i64
     has_dependency = .false.
+    pack_span_cache_text = ""
     pack_tile_cache_text = ""
+    pack_span_cache_path = ""
     pack_tile_cache_path = ""
     pack_tile_buffer_path = ""
+    usage_buffer_path = ""
     pack_tile_buffer_count = 0_i32
+    usage_buffer_count = 0_i32
+    loaded_pack_span_cache = .false.
     loaded_pack_tile_cache = .false.
     loaded_pack_tile_buffer = .false.
+    loaded_usage_buffer = .false.
+    found_pack_span_cache_path = .false.
     found_pack_tile_cache_path = .false.
     found_pack_tile_buffer_path = .false.
+    found_usage_buffer_path = .false.
     if (allocated(pack_tile_buffer_bytes)) deallocate(pack_tile_buffer_bytes)
+    if (allocated(usage_buffer_bytes)) deallocate(usage_buffer_bytes)
+
+    call extract_payload_field_text(payload_text, "pack_span_cache=", pack_span_cache_path, found_pack_span_cache_path)
+    if (.not. found_pack_span_cache_path) pack_span_cache_path = build_pack_span_cache_artifact_path(artifact_path)
+    if (len_trim(pack_span_cache_path) > 0) then
+      call load_cuda_artifact_payload(cache_root, trim(pack_span_cache_path), pack_span_cache_text, loaded_pack_span_cache)
+      if (loaded_pack_span_cache) then
+        if (index(pack_span_cache_text, "kind=cuda_pack_span_cache_v1") <= 0 .and. &
+            index(pack_span_cache_text, "kind=cuda_pack_span_cache_v2") <= 0 .and. &
+            index(pack_span_cache_text, "kind=cuda_pack_span_cache_v3") <= 0 .and. &
+            index(pack_span_cache_text, "kind=cuda_pack_span_cache_v4") <= 0) then
+          loaded_pack_span_cache = .false.
+          pack_span_cache_text = ""
+        end if
+      end if
+    end if
 
     call extract_payload_field_text(payload_text, "pack_ref_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
     if (.not. found_pack_tile_cache_path) then
       call extract_payload_field_text(payload_text, "pack_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
+    end if
+    if (.not. found_pack_tile_cache_path .and. loaded_pack_span_cache) then
+      call extract_payload_field_text(pack_span_cache_text, "pack_tile_cache=", pack_tile_cache_path, &
+        found_pack_tile_cache_path)
     end if
     if (.not. found_pack_tile_cache_path) pack_tile_cache_path = build_weight_pack_tile_cache_artifact_path(artifact_path)
     if (len_trim(pack_tile_cache_path) > 0) then
@@ -718,7 +755,18 @@ contains
     end if
     if (.not. found_pack_tile_buffer_path .and. len_trim(pack_tile_cache_path) > 0) then
       pack_tile_buffer_path = build_weight_pack_tile_buffer_artifact_path(artifact_path)
-      found_pack_tile_buffer_path = (len_trim(pack_tile_buffer_path) > 0)
+    end if
+    if (.not. found_pack_tile_buffer_path) then
+      call extract_payload_field_text(payload_text, "pack_usage_buffer=", usage_buffer_path, found_usage_buffer_path)
+      if (.not. found_usage_buffer_path) usage_buffer_path = build_pack_usage_buffer_artifact_path(artifact_path)
+      if (len_trim(usage_buffer_path) > 0) then
+        call load_cuda_artifact_blob(cache_root, trim(usage_buffer_path), usage_buffer_bytes, usage_buffer_count, &
+          loaded_usage_buffer)
+        if (loaded_usage_buffer) then
+          call extract_pack_usage_buffer_pack_tile_buffer_path(usage_buffer_bytes, usage_buffer_count, &
+            pack_tile_buffer_path, found_pack_tile_buffer_path)
+        end if
+      end if
     end if
     if (len_trim(pack_tile_buffer_path) > 0) then
       call load_cuda_artifact_blob(cache_root, trim(pack_tile_buffer_path), pack_tile_buffer_bytes, &
@@ -1334,7 +1382,6 @@ contains
     end if
     if (.not. found_pack_tile_buffer_path .and. len_trim(pack_tile_cache_path) > 0) then
       pack_tile_buffer_path = build_weight_pack_tile_buffer_artifact_path(artifact_path)
-      found_pack_tile_buffer_path = (len_trim(pack_tile_buffer_path) > 0)
     end if
     if (len_trim(pack_tile_payload_path) > 0) then
       call load_cuda_artifact_payload(cache_root, trim(pack_tile_payload_path), pack_tile_payload_text, &
@@ -1370,6 +1417,14 @@ contains
     if (len_trim(usage_buffer_path) > 0) then
       call load_cuda_artifact_blob(cache_root, trim(usage_buffer_path), usage_buffer_bytes, &
         usage_buffer_count, loaded_usage_buffer)
+    end if
+    if (.not. found_pack_tile_buffer_path .and. loaded_usage_buffer) then
+      call extract_pack_usage_buffer_pack_tile_buffer_path(usage_buffer_bytes, usage_buffer_count, pack_tile_buffer_path, &
+        found_pack_tile_buffer_path)
+    end if
+    if (.not. loaded_pack_tile_buffer .and. len_trim(pack_tile_buffer_path) > 0) then
+      call load_cuda_artifact_blob(cache_root, trim(pack_tile_buffer_path), pack_tile_buffer_bytes, &
+        pack_tile_buffer_count, loaded_pack_tile_buffer)
     end if
 
     span_buffer_path = ""
@@ -1693,8 +1748,9 @@ contains
 
   subroutine hydrate_pack_usage_buffer_summary(buffer_bytes, buffer_count, pack_usage, applied_ok)
     integer(i32), parameter                      :: CUDA_USAGE_BUFFER_MAGIC = int(z'42555A4D', kind=i32)
-    integer(i32), parameter                      :: CUDA_USAGE_BUFFER_VERSION = 1_i32
-    integer(i32), parameter                      :: CUDA_USAGE_BUFFER_HEADER_BYTES = 64_i32
+    integer(i32), parameter                      :: CUDA_USAGE_BUFFER_VERSION_V1 = 1_i32
+    integer(i32), parameter                      :: CUDA_USAGE_BUFFER_VERSION_V2 = 2_i32
+    integer(i32), parameter                      :: CUDA_USAGE_BUFFER_HEADER_BYTES_V1 = 64_i32
     integer(i8), intent(in)                      :: buffer_bytes(:)
     integer(i32), intent(in)                     :: buffer_count
     type(cuda_pack_usage_profile), intent(inout) :: pack_usage
@@ -1712,17 +1768,17 @@ contains
     logical                                      :: read_ok
 
     applied_ok = .false.
-    if (buffer_count < CUDA_USAGE_BUFFER_HEADER_BYTES) return
+    if (buffer_count < CUDA_USAGE_BUFFER_HEADER_BYTES_V1) return
 
     call read_buffer_i32(buffer_bytes, buffer_count, 0_i32, parsed_magic, read_ok)
     if (.not. read_ok) return
     if (parsed_magic /= CUDA_USAGE_BUFFER_MAGIC) return
     call read_buffer_i32(buffer_bytes, buffer_count, 4_i32, parsed_version, read_ok)
     if (.not. read_ok) return
-    if (parsed_version /= CUDA_USAGE_BUFFER_VERSION) return
+    if (parsed_version /= CUDA_USAGE_BUFFER_VERSION_V1 .and. parsed_version /= CUDA_USAGE_BUFFER_VERSION_V2) return
     call read_buffer_i32(buffer_bytes, buffer_count, 8_i32, parsed_header_bytes, read_ok)
     if (.not. read_ok) return
-    if (parsed_header_bytes < CUDA_USAGE_BUFFER_HEADER_BYTES) return
+    if (parsed_header_bytes < CUDA_USAGE_BUFFER_HEADER_BYTES_V1) return
     call read_buffer_i32(buffer_bytes, buffer_count, 12_i32, parsed_usage_count, read_ok)
     if (.not. read_ok) return
     call read_buffer_i32(buffer_bytes, buffer_count, 16_i32, ignored_i32, read_ok)
@@ -1749,6 +1805,51 @@ contains
     pack_usage%has_usage = (pack_usage%usage_count > 0_i32)
     applied_ok = .true.
   end subroutine hydrate_pack_usage_buffer_summary
+
+  subroutine extract_pack_usage_buffer_pack_tile_buffer_path(buffer_bytes, buffer_count, pack_tile_buffer_path, &
+                                                             found_path)
+    integer(i32), parameter :: CUDA_USAGE_BUFFER_MAGIC = int(z'42555A4D', kind=i32)
+    integer(i32), parameter :: CUDA_USAGE_BUFFER_VERSION_V2 = 2_i32
+    integer(i32), parameter :: CUDA_USAGE_BUFFER_HEADER_BYTES_V1 = 64_i32
+    integer(i8), intent(in)  :: buffer_bytes(:)
+    integer(i32), intent(in) :: buffer_count
+    character(len=*), intent(out) :: pack_tile_buffer_path
+    logical, intent(out)     :: found_path
+    integer(i32)             :: parsed_magic
+    integer(i32)             :: parsed_version
+    integer(i32)             :: parsed_header_bytes
+    integer(i32)             :: parsed_path_bytes
+    integer(i32)             :: parsed_path_offset
+    integer(i32)             :: path_index
+    logical                  :: read_ok
+
+    pack_tile_buffer_path = ""
+    found_path = .false.
+    if (buffer_count < CUDA_USAGE_BUFFER_HEADER_BYTES_V1) return
+
+    call read_buffer_i32(buffer_bytes, buffer_count, 0_i32, parsed_magic, read_ok)
+    if (.not. read_ok) return
+    if (parsed_magic /= CUDA_USAGE_BUFFER_MAGIC) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 4_i32, parsed_version, read_ok)
+    if (.not. read_ok) return
+    if (parsed_version /= CUDA_USAGE_BUFFER_VERSION_V2) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 8_i32, parsed_header_bytes, read_ok)
+    if (.not. read_ok) return
+    if (parsed_header_bytes < 72_i32) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 64_i32, parsed_path_bytes, read_ok)
+    if (.not. read_ok) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 68_i32, parsed_path_offset, read_ok)
+    if (.not. read_ok) return
+    if (parsed_path_bytes <= 0_i32) return
+    if (parsed_path_offset < parsed_header_bytes) return
+    if ((parsed_path_offset + parsed_path_bytes) > buffer_count) return
+
+    do path_index = 1_i32, min(parsed_path_bytes, len(pack_tile_buffer_path))
+      pack_tile_buffer_path(path_index:path_index) = achar(iand(int(buffer_bytes(parsed_path_offset + path_index), kind=i32), &
+        int(z'FF', kind=i32)))
+    end do
+    found_path = (len_trim(pack_tile_buffer_path) > 0)
+  end subroutine extract_pack_usage_buffer_pack_tile_buffer_path
 
   subroutine hydrate_pack_dispatch_buffer_selection(buffer_bytes, buffer_count, pack_usage, applied_ok)
     integer(i32), parameter :: CUDA_DISPATCH_BUFFER_MAGIC = int(z'53445A4D', kind=i32)

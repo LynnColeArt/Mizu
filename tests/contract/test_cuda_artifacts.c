@@ -148,6 +148,7 @@ static int is_binary_sidecar_redundant_fragment(const char *fragment) {
     if (strncmp(fragment, "weight_pack_count=", 18) == 0) return 1;
     if (strncmp(fragment, "pack_ref_artifact=", 18) == 0) return 1;
     if (strncmp(fragment, "pack_ref_tile_cache=", 20) == 0) return 1;
+    if (strncmp(fragment, "pack_ref_tile_buffer=", 21) == 0) return 1;
 
     return 0;
 }
@@ -604,8 +605,10 @@ int main(void) {
     if (!expect_true("cuda prefill artifact should reference a span-buffer sidecar", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_usage_buffer=artifacts/cuda/cuda/plans/prefill/.*\\.usagebuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should reference a usage-buffer sidecar", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_ref_tile_cache=artifacts/cuda/cuda/weights/\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
+    if (!expect_true("cuda prefill artifact should no longer require a direct weight-pack tile-cache reference", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_ref_tile_buffer=artifacts/cuda/cuda/weights/.*\\.packbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
-    if (!expect_true("cuda prefill artifact should reference the weight-pack binary buffer directly", command_status == 0)) return 1;
+    if (!expect_true("cuda prefill artifact should no longer require a direct weight-pack binary buffer reference", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_dispatch_buffer=artifacts/cuda/cuda/plans/prefill/.*\\.dispatchbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
     if (!expect_true("cuda prefill artifact should reference a compact dispatch buffer", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use1=token_embeddings|embedding_table|offset=0|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill >/dev/null");
@@ -626,8 +629,10 @@ int main(void) {
     if (!expect_true("cuda decode artifact should reference a span-buffer sidecar", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_usage_buffer=artifacts/cuda/cuda/plans/decode/.*\\.usagebuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should reference a usage-buffer sidecar", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack_ref_tile_cache=artifacts/cuda/cuda/weights/\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
+    if (!expect_true("cuda decode artifact should no longer require a direct weight-pack tile-cache reference", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_ref_tile_buffer=artifacts/cuda/cuda/weights/.*\\.packbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
-    if (!expect_true("cuda decode artifact should reference the weight-pack binary buffer directly", command_status == 0)) return 1;
+    if (!expect_true("cuda decode artifact should no longer require a direct weight-pack binary buffer reference", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_dispatch_buffer=artifacts/cuda/cuda/plans/decode/.*\\.dispatchbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should reference a compact dispatch buffer", command_status == 0)) return 1;
     command_status = system("grep -R \"pack_use4=lm_head|token_projection|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
@@ -689,8 +694,8 @@ int main(void) {
                      write_text_file(decode_plan_path, decode_binary_only_text))) {
         return 1;
     }
-    if (!expect_true("cuda binary-only decode plan should retain a direct pack-buffer reference",
-                     file_contains_substring(decode_plan_path, "pack_ref_tile_buffer="))) {
+    if (!expect_true("cuda binary-only decode plan should drop direct pack-buffer references",
+                     !file_contains_substring(decode_plan_path, "pack_ref_tile_buffer="))) {
         return 1;
     }
     if (!expect_true("cuda binary-only decode plan should drop textual weight-pack tile-cache hints",
