@@ -135,6 +135,11 @@ Last updated: 2026-04-09
   `pack_use_hash`, so the warm contract path can drop textual `pack_use_*`
   summary fields as well and still replay identically from stable static plan
   metadata plus `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer`
+- that same public CUDA warm contract path now also replays correctly after a
+  generated decode plan drops the textual `pack_span_root` and
+  `pack_span_cache` hints, because the warm path can derive those sidecar
+  locations from artifact identity and use the persisted binary span records
+  directly
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact

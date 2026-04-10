@@ -221,6 +221,10 @@ Current implementation status:
   textual `pack_use_*` summary fields too and still replay identically from
   stable plan metadata plus `.usagebuffer`, `.dispatchbuffer`, and
   `.spanbuffer`
+- that same public CUDA warm path now also tolerates generated decode plans
+  with textual `pack_span_root` and `pack_span_cache` hints removed, because
+  warm replay can derive sidecar paths from the artifact path and recover span
+  identity directly from the persisted binary sidecars
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
   sources change, which keeps the public-path tests from silently running stale
   executables
