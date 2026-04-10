@@ -608,6 +608,8 @@ contains
       is_volatile = .true.
     else if (index(fragment_text, "pack_ref_tile_cache=") == 1) then
       is_volatile = .true.
+    else if (index(fragment_text, "pack_ref_artifact=") == 1) then
+      is_volatile = .true.
     else if (index(fragment_text, "pack_ref_tile_buffer=") == 1) then
       is_volatile = .true.
     else if (index(fragment_text, "pack_buffer=") == 1) then
