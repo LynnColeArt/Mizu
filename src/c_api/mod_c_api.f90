@@ -1996,26 +1996,28 @@ contains
     write(field_text, '(";tensor_bytes=",I0)') model%import_tensor_bytes
     call append_payload_fragment(payload_text, trim(field_text))
 
-    field_text = ""
-    write(field_text, '(";weight_pack_bytes=",I0)') model%import_weight_pack_bytes
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";weight_pack_hash=",Z16.16)') model%import_weight_pack_hash
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";weight_pack_count=",I0)') model%import_weight_pack_count
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    if (len_trim(model%import_projector_artifact_path) > 0) then
+    if (stage_kind == MIZU_STAGE_MODEL_LOAD .or. stage_kind == MIZU_STAGE_PROJECTOR) then
       field_text = ""
-      write(field_text, '(";projector_artifact=",A)') trim(model%import_projector_artifact_path)
+      write(field_text, '(";weight_pack_bytes=",I0)') model%import_weight_pack_bytes
       call append_payload_fragment(payload_text, trim(field_text))
 
       field_text = ""
-      write(field_text, '(";projector_bytes=",I0)') model%import_projector_bytes
+      write(field_text, '(";weight_pack_hash=",Z16.16)') model%import_weight_pack_hash
       call append_payload_fragment(payload_text, trim(field_text))
+
+      field_text = ""
+      write(field_text, '(";weight_pack_count=",I0)') model%import_weight_pack_count
+      call append_payload_fragment(payload_text, trim(field_text))
+
+      if (len_trim(model%import_projector_artifact_path) > 0) then
+        field_text = ""
+        write(field_text, '(";projector_artifact=",A)') trim(model%import_projector_artifact_path)
+        call append_payload_fragment(payload_text, trim(field_text))
+
+        field_text = ""
+        write(field_text, '(";projector_bytes=",I0)') model%import_projector_bytes
+        call append_payload_fragment(payload_text, trim(field_text))
+      end if
     end if
 
     if (stage_kind == MIZU_STAGE_MODEL_LOAD) then
@@ -2400,154 +2402,6 @@ contains
     if (write_count <= 0_i32) return
     payload_text(start_index:start_index + write_count - 1_i32) = fragment(1:write_count)
   end subroutine append_payload_fragment
-
-  subroutine compact_cuda_stage_payload_text(payload_text, payload_bytes)
-    character(len=*), intent(inout) :: payload_text
-    integer(i64), intent(inout)     :: payload_bytes
-    character(len=len(payload_text)) :: compact_text
-    character(len=len(payload_text)) :: fragment_text
-    integer(i32)                    :: fragment_start
-    integer(i32)                    :: fragment_end
-    integer(i32)                    :: separator_index
-    integer(i32)                    :: fragment_len
-
-    compact_text = ""
-    if (len_trim(payload_text) == 0) then
-      payload_bytes = 1_i64
-      return
-    end if
-
-    fragment_start = 1_i32
-    do while (fragment_start <= len_trim(payload_text))
-      separator_index = index(payload_text(fragment_start:len_trim(payload_text)), ";")
-      if (separator_index <= 0_i32) then
-        fragment_end = len_trim(payload_text)
-      else
-        fragment_end = fragment_start + separator_index - 2_i32
-      end if
-
-      if (fragment_end >= fragment_start) then
-        fragment_text = ""
-        fragment_len = min(fragment_end - fragment_start + 1_i32, len(fragment_text))
-        if (fragment_len > 0_i32) then
-          fragment_text(1:fragment_len) = payload_text(fragment_start:fragment_start + fragment_len - 1_i32)
-          if (len_trim(fragment_text) > 0 .and. .not. compact_payload_fragment_is_volatile_pack_field(trim(fragment_text))) then
-            if (len_trim(compact_text) > 0) call append_payload_fragment(compact_text, ";")
-            call append_payload_fragment(compact_text, trim(fragment_text))
-          end if
-        end if
-      end if
-
-      if (separator_index <= 0_i32) exit
-      fragment_start = fragment_end + 2_i32
-    end do
-
-    payload_text = ""
-    if (len_trim(compact_text) > 0) payload_text(1:len_trim(compact_text)) = compact_text(1:len_trim(compact_text))
-    payload_bytes = int(len_trim(payload_text) + 1_i64, kind=i64)
-  end subroutine compact_cuda_stage_payload_text
-
-  logical function compact_payload_fragment_is_volatile_pack_field(fragment_text) result(is_volatile)
-    character(len=*), intent(in) :: fragment_text
-
-    is_volatile = .false.
-    if (len_trim(fragment_text) == 0) return
-
-    if (compact_fragment_has_indexed_prefix(fragment_text, "pack_use")) then
-      is_volatile = .true.
-      return
-    end if
-    if (compact_fragment_has_indexed_prefix(fragment_text, "pack_dispatch")) then
-      is_volatile = .true.
-      return
-    end if
-    if (compact_fragment_has_indexed_prefix(fragment_text, "pack_span")) then
-      is_volatile = .true.
-      return
-    end if
-
-    if (index(fragment_text, "pack_use_hash=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_use_kind=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_use_bytes=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_use_count=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_use_first_offset=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_use_last_offset=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_use_last_bytes=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_dispatch_hash=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_dispatch_kind=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_dispatch_count=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_dependency=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_ref_hash=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_ref_bytes=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_ref_count=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "weight_pack_hash=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "weight_pack_bytes=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "weight_pack_count=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_usage_buffer=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_span_root=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_span_cache=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_span_buffer=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_dispatch_buffer=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_tile_cache=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "tile_cache=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_ref_tile_cache=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_ref_artifact=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_ref_tile_payload=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_ref_tile_buffer=") == 1) then
-      is_volatile = .true.
-    else if (index(fragment_text, "pack_buffer=") == 1) then
-      is_volatile = .true.
-    end if
-  end function compact_payload_fragment_is_volatile_pack_field
-
-  logical function compact_fragment_has_indexed_prefix(fragment_text, prefix_text) result(matches_prefix)
-    character(len=*), intent(in) :: fragment_text
-    character(len=*), intent(in) :: prefix_text
-    integer(i32)                 :: prefix_len
-
-    matches_prefix = .false.
-    prefix_len = len_trim(prefix_text)
-    if (prefix_len <= 0_i32) return
-    if (len_trim(fragment_text) <= prefix_len) return
-    if (fragment_text(1:prefix_len) /= prefix_text(1:prefix_len)) return
-    if (.not. compact_is_ascii_digit(fragment_text(prefix_len + 1_i32:prefix_len + 1_i32))) return
-    matches_prefix = .true.
-  end function compact_fragment_has_indexed_prefix
-
-  logical function compact_is_ascii_digit(character_text) result(is_digit)
-    character(len=*), intent(in) :: character_text
-
-    is_digit = .false.
-    if (len_trim(character_text) <= 0) return
-    is_digit = (character_text(1:1) >= "0" .and. character_text(1:1) <= "9")
-  end function compact_is_ascii_digit
 
   pure integer(i64) function estimate_manifest_tensor_bytes(dtype, rank, shape) result(byte_count)
     integer(i32), intent(in) :: dtype
@@ -3505,9 +3359,6 @@ contains
           call append_cuda_pack_span_cache_payload(trim(cache_root), metadata, payload_text, payload_bytes, model)
         else
           call append_cuda_pack_span_cache_payload(trim(cache_root), metadata, payload_text, payload_bytes)
-        end if
-        if (stage_kind == MIZU_STAGE_PREFILL .or. stage_kind == MIZU_STAGE_DECODE) then
-          call compact_cuda_stage_payload_text(payload_text, payload_bytes)
         end if
         call materialize_artifact_payload(trim(cache_root), metadata, trim(payload_text), payload_bytes)
       end if
