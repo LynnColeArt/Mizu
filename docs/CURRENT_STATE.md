@@ -1,6 +1,6 @@
 # Mizu Current State
 
-Last updated: 2026-04-09
+Last updated: 2026-04-10
 
 ## Latest Checkpoint
 
@@ -10,6 +10,10 @@ Last updated: 2026-04-09
   span sidecar state, and it now normalizes each packed entry to one canonical
   material source order `tile -> page -> sampled span` so warm replay stays
   stable even when different cache shapes expose different sidecar richness
+- current milestone: generated CUDA weight-pack artifacts now point directly to
+  typed `.packbuffer` plus readable `.packpayload` siblings instead of
+  materializing new `.packtiles` indexes, and generated projector artifacts now
+  depend on those direct pack records instead of a weight-pack tile-cache hint
 - current milestone: CUDA weight-pack `.packtiles` caches now index a typed
   binary `.packbuffer` warm-path payload, generated prefill/decode plans now
   collapse compact dispatch text down to `pack=<index>` entries, and both
@@ -185,6 +189,13 @@ Last updated: 2026-04-09
   plan-local `.tilecache` files, because the generated hot-path tile record
   now lives in `.execbuffer` plus the typed weight-pack cache; `.tilecache`
   remains supported as a compatibility fallback for older warm-cache layouts
+- generated CUDA model-load artifacts also no longer emit new weight-pack
+  `.packtiles` indexes, because the generated weight-pack warm record now lives
+  directly in `.packbuffer` plus readable `.packpayload` siblings; `.packtiles`
+  remain supported as a compatibility fallback for older warm-cache layouts
+- generated CUDA projector artifacts now reference `pack_ref_tile_payload=` and
+  `pack_ref_tile_buffer=` directly, and no longer require a
+  `pack_ref_tile_cache=` index hint
 - that same binary-first CUDA warm contract path now also replays correctly
   after the plan has no direct weight-pack buffer hint and the weight-pack
   `.packtiles` file has been removed, because execution and artifact identity

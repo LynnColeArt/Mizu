@@ -263,6 +263,14 @@ Current implementation status:
   new plan-local `.tilecache` files, because the generated hot-path tile record
   now lives in `.execbuffer` plus the typed weight-pack cache; `.tilecache`
   remains a compatibility fallback for older cache layouts and explicit tests
+- generated CUDA model-load artifacts also no longer materialize new
+  weight-pack `.packtiles` indexes, because the generated weight-pack warm
+  record now lives directly in `.packbuffer` plus readable `.packpayload`
+  siblings; `.packtiles` remain a compatibility fallback for older cache
+  layouts and explicit tests
+- generated CUDA projector artifacts now reference `pack_ref_tile_payload=`
+  and `pack_ref_tile_buffer=` directly, and no longer require a
+  `pack_ref_tile_cache=` index hint
 - that same binary-first CUDA warm path now replays correctly even after the
   generated plan has no direct weight-pack buffer hint and the weight-pack
   `.packtiles` file is removed, because execution and artifact identity can

@@ -141,6 +141,13 @@ These suites cover the `API-C*` portion of
     materialize plan-local `.tilecache`, because the generated tile record now
     lives in `.execbuffer` plus the typed weight-pack cache and `.tilecache`
     is only a fallback for older cache layouts
+  - verifies newly generated CUDA weight-pack artifacts no longer materialize
+    `.packtiles`, because generated model-load artifacts now reference
+    `.packpayload` plus typed `.packbuffer` directly and `.packtiles` is only
+    a fallback for older cache layouts
+  - verifies generated CUDA projector artifacts now reference
+    `pack_ref_tile_payload=` and `pack_ref_tile_buffer=` directly, and no
+    longer require a `pack_ref_tile_cache=` hint
   - verifies that same public CUDA flow still replays identically when warm
     execution falls back from richer tile/page cache shapes to leaner binary
     sidecars, because the CUDA bridge now derives staged execution from the
