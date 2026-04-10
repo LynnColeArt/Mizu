@@ -187,8 +187,8 @@ contains
     if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
     call launch_cuda_prefill(payload_hash, artifact_hash, pack_usage%usage_hash, pack_usage%usage_bytes, &
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
-      pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
-      pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      pack_usage%usage_count, pack_usage%entry_pack_indices, pack_usage%entry_offsets, pack_usage%entry_bytes, &
+      pack_usage%role_codes, pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
       pack_usage%entry_page_hashes, pack_usage%entry_page_word_counts, pack_usage%entry_page_words, &
       pack_usage%entry_tile_hashes, pack_usage%entry_tile_byte_counts, pack_usage%entry_tile_bytes, &
       pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
@@ -285,8 +285,8 @@ contains
     if (present(workspace_bytes)) workspace_bytes_local = workspace_bytes
     call launch_cuda_decode(payload_hash, artifact_hash, pack_usage%usage_hash, pack_usage%usage_bytes, &
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
-      pack_usage%usage_count, pack_usage%entry_offsets, pack_usage%entry_bytes, pack_usage%role_codes, &
-      pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      pack_usage%usage_count, pack_usage%entry_pack_indices, pack_usage%entry_offsets, pack_usage%entry_bytes, &
+      pack_usage%role_codes, pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
       pack_usage%entry_page_hashes, pack_usage%entry_page_word_counts, pack_usage%entry_page_words, &
       pack_usage%entry_tile_hashes, pack_usage%entry_tile_byte_counts, pack_usage%entry_tile_bytes, &
       pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &

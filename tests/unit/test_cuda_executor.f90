@@ -168,12 +168,12 @@ program test_cuda_executor
   call query_cuda_device_info(cuda_info, bridge_status_code)
   call expect_equal_i32("cuda bridge device probe should succeed", bridge_status_code, MIZU_STATUS_OK)
   using_stub_bridge = (trim(cuda_info%device_name) == "cuda_stub")
-  expected_token_value = merge(1241_i32, 3479_i32, using_stub_bridge)
-  expected_token_value_step_2 = merge(3752_i32, 3781_i32, using_stub_bridge)
-  expected_token_value_page_3 = merge(2885_i32, 3107_i32, using_stub_bridge)
-  expected_token_value_page_4 = merge(1900_i32, 1557_i32, using_stub_bridge)
-  expected_token_value_page_5 = merge(2246_i32, 531_i32, using_stub_bridge)
-  expected_token_value_with_other_context = merge(2182_i32, 3022_i32, using_stub_bridge)
+  expected_token_value = merge(505_i32, 1534_i32, using_stub_bridge)
+  expected_token_value_step_2 = merge(651_i32, 265_i32, using_stub_bridge)
+  expected_token_value_page_3 = merge(165_i32, 3233_i32, using_stub_bridge)
+  expected_token_value_page_4 = merge(475_i32, 564_i32, using_stub_bridge)
+  expected_token_value_page_5 = merge(1300_i32, 20_i32, using_stub_bridge)
+  expected_token_value_with_other_context = merge(99_i32, 2198_i32, using_stub_bridge)
 
   shell_status = 0
   call execute_command_line("rm -rf " // cache_root // " && mkdir -p " // cache_root // &

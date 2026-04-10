@@ -43,7 +43,8 @@ module mod_cuda_bridge
 
     subroutine c_mizu_cuda_bridge_prefill(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
                                           first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
-                                          pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
+                                          pack_entry_pack_indices, pack_entry_offsets, pack_entry_bytes, &
+                                          pack_role_codes, pack_layout_codes, &
                                           pack_entry_span_hashes, pack_entry_span_bytes, &
                                           pack_entry_page_hashes, pack_entry_page_word_counts, &
                                           pack_entry_page_words, &
@@ -63,6 +64,7 @@ module mod_cuda_bridge
       integer(c_int64_t), value      :: last_pack_offset
       integer(c_int64_t), value      :: last_pack_bytes
       integer(c_int32_t), value      :: pack_usage_count
+      type(c_ptr), value             :: pack_entry_pack_indices
       type(c_ptr), value             :: pack_entry_offsets
       type(c_ptr), value             :: pack_entry_bytes
       type(c_ptr), value             :: pack_role_codes
@@ -107,7 +109,8 @@ module mod_cuda_bridge
 
     subroutine c_mizu_cuda_bridge_decode(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
                                          first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
-                                         pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
+                                         pack_entry_pack_indices, pack_entry_offsets, pack_entry_bytes, &
+                                         pack_role_codes, pack_layout_codes, &
                                          pack_entry_span_hashes, pack_entry_span_bytes, &
                                          pack_entry_page_hashes, pack_entry_page_word_counts, &
                                          pack_entry_page_words, &
@@ -129,6 +132,7 @@ module mod_cuda_bridge
       integer(c_int64_t), value      :: last_pack_offset
       integer(c_int64_t), value      :: last_pack_bytes
       integer(c_int32_t), value      :: pack_usage_count
+      type(c_ptr), value             :: pack_entry_pack_indices
       type(c_ptr), value             :: pack_entry_offsets
       type(c_ptr), value             :: pack_entry_bytes
       type(c_ptr), value             :: pack_role_codes
@@ -199,7 +203,8 @@ contains
 
   subroutine launch_cuda_prefill(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
                                  first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
-                                 pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
+                                 pack_entry_pack_indices, pack_entry_offsets, pack_entry_bytes, &
+                                 pack_role_codes, pack_layout_codes, &
                                  pack_entry_span_hashes, pack_entry_span_bytes, &
                                  pack_entry_page_hashes, pack_entry_page_word_counts, pack_entry_page_words, &
                                  pack_entry_tile_hashes, pack_entry_tile_byte_counts, pack_entry_tile_bytes, &
@@ -215,6 +220,7 @@ contains
     integer(i64), intent(in)  :: last_pack_offset
     integer(i64), intent(in)  :: last_pack_bytes
     integer(i32), intent(in)  :: pack_usage_count
+    integer(i32), intent(in)  :: pack_entry_pack_indices(:)
     integer(i64), intent(in)  :: pack_entry_offsets(:)
     integer(i64), intent(in)  :: pack_entry_bytes(:)
     integer(i32), intent(in)  :: pack_role_codes(:)
@@ -243,6 +249,7 @@ contains
     integer(c_int32_t)        :: context_byte_count_c
     integer(c_int32_t)        :: status_code_c
     type(c_ptr)               :: workspace_buffer_c
+    type(c_ptr)               :: pack_entry_pack_indices_c
     type(c_ptr)               :: pack_entry_offsets_c
     type(c_ptr)               :: pack_entry_bytes_c
     type(c_ptr)               :: pack_role_codes_c
@@ -265,6 +272,7 @@ contains
     integer(c_int64_t)        :: modal_byte_count_c
     integer(i32)              :: pack_entry_limit
     integer(i32)              :: sample_size_limit
+    integer(c_i32), target    :: pack_entry_pack_indices_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target    :: pack_role_codes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target    :: pack_layout_codes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_int64_t), target :: pack_entry_offsets_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
@@ -284,6 +292,7 @@ contains
     integer(c_i8), target               :: context_bytes_copy(MAX_LIVE_CONTEXT_BYTES)
 
     workspace_buffer_c = c_null_ptr
+    pack_entry_pack_indices_c = c_null_ptr
     pack_entry_offsets_c = c_null_ptr
     pack_entry_bytes_c = c_null_ptr
     pack_role_codes_c = c_null_ptr
@@ -306,6 +315,7 @@ contains
     modal_byte_count_c = 0_c_int64_t
     context_byte_count_c = 0_c_int32_t
     pack_entry_limit = 0_i32
+    pack_entry_pack_indices_copy = 0_c_i32
     pack_entry_offsets_copy = 0_c_int64_t
     pack_entry_bytes_copy = 0_c_int64_t
     pack_role_codes_copy = 0_c_i32
@@ -344,6 +354,7 @@ contains
     end if
     if (size(pack_entry_offsets) > 0) then
       pack_entry_limit = min(MAX_CUDA_PACK_DISPATCH_ENTRIES, int(size(pack_entry_offsets), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_pack_indices), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_bytes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_role_codes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_layout_codes), kind=i32))
@@ -357,6 +368,7 @@ contains
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_tile_bytes, dim=2), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_span_sample_sizes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_span_samples, dim=2), kind=i32))
+      pack_entry_pack_indices_copy(1:pack_entry_limit) = int(pack_entry_pack_indices(1:pack_entry_limit), kind=c_i32)
       pack_entry_offsets_copy(1:pack_entry_limit) = int(pack_entry_offsets(1:pack_entry_limit), kind=c_int64_t)
       pack_entry_bytes_copy(1:pack_entry_limit) = int(pack_entry_bytes(1:pack_entry_limit), kind=c_int64_t)
       pack_role_codes_copy(1:pack_entry_limit) = int(pack_role_codes(1:pack_entry_limit), kind=c_i32)
@@ -377,6 +389,7 @@ contains
         pack_entry_span_samples_copy(1:sample_size_limit, 1:pack_entry_limit) = &
           int(pack_entry_span_samples(1:sample_size_limit, 1:pack_entry_limit), kind=c_i8)
       end if
+      pack_entry_pack_indices_c = c_loc(pack_entry_pack_indices_copy(1))
       pack_entry_offsets_c = c_loc(pack_entry_offsets_copy(1))
       pack_entry_bytes_c = c_loc(pack_entry_bytes_copy(1))
       pack_role_codes_c = c_loc(pack_role_codes_copy(1))
@@ -397,7 +410,7 @@ contains
       int(pack_usage_hash, kind=c_int64_t), int(pack_usage_bytes, kind=c_int64_t), &
       int(first_pack_offset, kind=c_int64_t), int(last_pack_offset, kind=c_int64_t), &
       int(last_pack_bytes, kind=c_int64_t), int(pack_usage_count, kind=c_int32_t), &
-      pack_entry_offsets_c, pack_entry_bytes_c, pack_role_codes_c, pack_layout_codes_c, &
+      pack_entry_pack_indices_c, pack_entry_offsets_c, pack_entry_bytes_c, pack_role_codes_c, pack_layout_codes_c, &
       pack_entry_span_hashes_c, pack_entry_span_bytes_c, pack_entry_page_hashes_c, &
       pack_entry_page_word_counts_c, pack_entry_page_words_c, pack_entry_tile_hashes_c, &
       pack_entry_tile_byte_counts_c, pack_entry_tile_bytes_c, pack_entry_span_sample_sizes_c, &
@@ -447,7 +460,8 @@ contains
 
   subroutine launch_cuda_decode(payload_hash, artifact_hash, pack_usage_hash, pack_usage_bytes, &
                                 first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
-                                pack_entry_offsets, pack_entry_bytes, pack_role_codes, pack_layout_codes, &
+                                pack_entry_pack_indices, pack_entry_offsets, pack_entry_bytes, &
+                                pack_role_codes, pack_layout_codes, &
                                 pack_entry_span_hashes, pack_entry_span_bytes, &
                                 pack_entry_page_hashes, pack_entry_page_word_counts, pack_entry_page_words, &
                                 pack_entry_tile_hashes, pack_entry_tile_byte_counts, pack_entry_tile_bytes, &
@@ -464,6 +478,7 @@ contains
     integer(i64), intent(in)  :: last_pack_offset
     integer(i64), intent(in)  :: last_pack_bytes
     integer(i32), intent(in)  :: pack_usage_count
+    integer(i32), intent(in)  :: pack_entry_pack_indices(:)
     integer(i64), intent(in)  :: pack_entry_offsets(:)
     integer(i64), intent(in)  :: pack_entry_bytes(:)
     integer(i32), intent(in)  :: pack_role_codes(:)
@@ -497,6 +512,7 @@ contains
     integer(c_int32_t)        :: context_byte_count_c
     integer(c_int32_t)        :: updated_context_byte_count_c
     type(c_ptr)               :: workspace_buffer_c
+    type(c_ptr)               :: pack_entry_pack_indices_c
     type(c_ptr)               :: pack_entry_offsets_c
     type(c_ptr)               :: pack_entry_bytes_c
     type(c_ptr)               :: pack_role_codes_c
@@ -516,6 +532,7 @@ contains
     integer(c_int64_t)        :: workspace_bytes_c
     integer(i32)              :: pack_entry_limit
     integer(i32)              :: sample_size_limit
+    integer(c_i32), target    :: pack_entry_pack_indices_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target    :: pack_role_codes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_i32), target    :: pack_layout_codes_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
     integer(c_int64_t), target :: pack_entry_offsets_copy(MAX_CUDA_PACK_DISPATCH_ENTRIES)
@@ -534,6 +551,7 @@ contains
     integer(c_i8), target               :: updated_context_bytes_copy(MAX_LIVE_CONTEXT_BYTES)
 
     workspace_buffer_c = c_null_ptr
+    pack_entry_pack_indices_c = c_null_ptr
     pack_entry_offsets_c = c_null_ptr
     pack_entry_bytes_c = c_null_ptr
     pack_role_codes_c = c_null_ptr
@@ -554,6 +572,7 @@ contains
     context_byte_count_c = 0_c_int32_t
     updated_context_byte_count_c = 0_c_int32_t
     pack_entry_limit = 0_i32
+    pack_entry_pack_indices_copy = 0_c_i32
     pack_entry_offsets_copy = 0_c_int64_t
     pack_entry_bytes_copy = 0_c_int64_t
     pack_role_codes_copy = 0_c_i32
@@ -586,6 +605,7 @@ contains
     if (present(updated_context_bytes)) updated_context_bytes_c = c_loc(updated_context_bytes_copy(1))
     if (size(pack_entry_offsets) > 0) then
       pack_entry_limit = min(MAX_CUDA_PACK_DISPATCH_ENTRIES, int(size(pack_entry_offsets), kind=i32))
+      pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_pack_indices), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_bytes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_role_codes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_layout_codes), kind=i32))
@@ -599,6 +619,7 @@ contains
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_tile_bytes, dim=2), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_span_sample_sizes), kind=i32))
       pack_entry_limit = min(pack_entry_limit, int(size(pack_entry_span_samples, dim=2), kind=i32))
+      pack_entry_pack_indices_copy(1:pack_entry_limit) = int(pack_entry_pack_indices(1:pack_entry_limit), kind=c_i32)
       pack_entry_offsets_copy(1:pack_entry_limit) = int(pack_entry_offsets(1:pack_entry_limit), kind=c_int64_t)
       pack_entry_bytes_copy(1:pack_entry_limit) = int(pack_entry_bytes(1:pack_entry_limit), kind=c_int64_t)
       pack_role_codes_copy(1:pack_entry_limit) = int(pack_role_codes(1:pack_entry_limit), kind=c_i32)
@@ -619,6 +640,7 @@ contains
         pack_entry_span_samples_copy(1:sample_size_limit, 1:pack_entry_limit) = &
           int(pack_entry_span_samples(1:sample_size_limit, 1:pack_entry_limit), kind=c_i8)
       end if
+      pack_entry_pack_indices_c = c_loc(pack_entry_pack_indices_copy(1))
       pack_entry_offsets_c = c_loc(pack_entry_offsets_copy(1))
       pack_entry_bytes_c = c_loc(pack_entry_bytes_copy(1))
       pack_role_codes_c = c_loc(pack_role_codes_copy(1))
@@ -639,7 +661,7 @@ contains
       int(pack_usage_hash, kind=c_int64_t), int(pack_usage_bytes, kind=c_int64_t), &
       int(first_pack_offset, kind=c_int64_t), int(last_pack_offset, kind=c_int64_t), &
       int(last_pack_bytes, kind=c_int64_t), int(pack_usage_count, kind=c_int32_t), &
-      pack_entry_offsets_c, pack_entry_bytes_c, pack_role_codes_c, pack_layout_codes_c, &
+      pack_entry_pack_indices_c, pack_entry_offsets_c, pack_entry_bytes_c, pack_role_codes_c, pack_layout_codes_c, &
       pack_entry_span_hashes_c, pack_entry_span_bytes_c, pack_entry_page_hashes_c, &
       pack_entry_page_word_counts_c, pack_entry_page_words_c, pack_entry_tile_hashes_c, &
       pack_entry_tile_byte_counts_c, pack_entry_tile_bytes_c, pack_entry_span_sample_sizes_c, &

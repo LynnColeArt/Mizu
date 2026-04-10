@@ -148,6 +148,103 @@ static uint64_t mix_pack_tile_bytes(uint64_t seed,
     return seed;
 }
 
+static uint64_t read_pack_index_bits(const int32_t *pack_entry_pack_indices,
+                                     int32_t usage_index) {
+    if (pack_entry_pack_indices == NULL) return UINT64_C(0);
+    if (pack_entry_pack_indices[usage_index] <= 0) return UINT64_C(0);
+    return (uint64_t)(uint32_t)pack_entry_pack_indices[usage_index];
+}
+
+static uint64_t mix_pack_entry_descriptor(uint64_t seed,
+                                          const int32_t *pack_entry_pack_indices,
+                                          const int64_t *pack_entry_offsets,
+                                          const int64_t *pack_entry_bytes,
+                                          const int32_t *pack_role_codes,
+                                          const int32_t *pack_layout_codes,
+                                          int32_t usage_index) {
+    uint64_t pack_index_bits;
+
+    pack_index_bits = read_pack_index_bits(pack_entry_pack_indices, usage_index);
+    seed = mix_u64(seed ^ (pack_index_bits << 20) ^
+        ((uint64_t)(uint32_t)(usage_index + 1) << 40));
+
+    if (pack_entry_offsets == NULL || pack_entry_bytes == NULL ||
+        pack_role_codes == NULL || pack_layout_codes == NULL) {
+        return seed;
+    }
+
+    return mix_u64(seed ^
+        (uint64_t)pack_entry_offsets[usage_index] ^
+        (uint64_t)pack_entry_bytes[usage_index] ^
+        ((uint64_t)(uint32_t)pack_role_codes[usage_index] << 32) ^
+        ((uint64_t)(uint32_t)pack_layout_codes[usage_index] << 48) ^
+        (pack_index_bits << 8));
+}
+
+static uint64_t build_pack_execution_seed(uint64_t base_seed,
+                                          uint64_t pack_usage_hash,
+                                          uint64_t pack_usage_bytes,
+                                          uint64_t first_pack_offset,
+                                          uint64_t last_pack_offset,
+                                          uint64_t last_pack_bytes,
+                                          int32_t pack_usage_count,
+                                          const int32_t *pack_entry_pack_indices,
+                                          const int64_t *pack_entry_offsets,
+                                          const int64_t *pack_entry_bytes,
+                                          const int32_t *pack_role_codes,
+                                          const int32_t *pack_layout_codes,
+                                          const int64_t *pack_entry_span_hashes,
+                                          const int64_t *pack_entry_span_bytes,
+                                          const int64_t *pack_entry_page_hashes,
+                                          const int32_t *pack_entry_page_word_counts,
+                                          const int32_t *pack_entry_page_words,
+                                          const int64_t *pack_entry_tile_hashes,
+                                          const int32_t *pack_entry_tile_byte_counts,
+                                          const int8_t *pack_entry_tile_bytes,
+                                          const int32_t *pack_entry_span_sample_sizes,
+                                          const int8_t *pack_entry_span_samples) {
+    uint64_t seed;
+    int32_t usage_index;
+
+    seed = mix_u64(base_seed ^ pack_usage_hash);
+    seed = mix_u64(seed ^ pack_usage_bytes ^
+        (first_pack_offset << 1) ^ (last_pack_offset << 3) ^ (last_pack_bytes << 5) ^
+        ((uint64_t)(uint32_t)pack_usage_count << 48));
+
+    for (usage_index = 0; usage_index < pack_usage_count &&
+         usage_index < MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT; ++usage_index) {
+        uint64_t entry_seed;
+        const int has_tile_bytes = (pack_entry_tile_byte_counts != NULL &&
+            pack_entry_tile_byte_counts[usage_index] > 0);
+        const int has_page_words = (pack_entry_page_word_counts != NULL &&
+            pack_entry_page_word_counts[usage_index] > 0);
+        const int has_span_samples = (pack_entry_span_sample_sizes != NULL &&
+            pack_entry_span_sample_sizes[usage_index] > 0);
+
+        entry_seed = mix_pack_entry_descriptor(seed, pack_entry_pack_indices, pack_entry_offsets,
+            pack_entry_bytes, pack_role_codes, pack_layout_codes, usage_index);
+        if (pack_entry_span_hashes != NULL && pack_entry_span_bytes != NULL) {
+            entry_seed = mix_u64(entry_seed ^
+                (uint64_t)pack_entry_span_hashes[usage_index] ^
+                (uint64_t)pack_entry_span_bytes[usage_index] ^
+                ((uint64_t)(uint32_t)(usage_index + 1) << 16));
+        }
+        if (has_tile_bytes) {
+            entry_seed = mix_pack_tile_bytes(entry_seed, pack_entry_tile_hashes,
+                pack_entry_tile_byte_counts, pack_entry_tile_bytes, usage_index);
+        } else if (has_page_words) {
+            entry_seed = mix_pack_page_words(entry_seed, pack_entry_page_hashes,
+                pack_entry_page_word_counts, pack_entry_page_words, usage_index);
+        } else if (has_span_samples) {
+            entry_seed = mix_span_sample_bytes(entry_seed, pack_entry_span_sample_sizes,
+                pack_entry_span_samples, usage_index);
+        }
+        seed = mix_u64(seed ^ entry_seed ^
+            (read_pack_index_bits(pack_entry_pack_indices, usage_index) << 12));
+    }
+    return seed;
+}
+
 static uint32_t compute_context_checksum(const uint8_t *bytes, int32_t stored_count) {
     uint32_t checksum;
     int32_t index;
@@ -1426,6 +1523,7 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
                               int64_t last_pack_offset,
                               int64_t last_pack_bytes,
                               int32_t pack_usage_count,
+                              const int32_t *pack_entry_pack_indices,
                               const int64_t *pack_entry_offsets,
                               const int64_t *pack_entry_bytes,
                               const int32_t *pack_role_codes,
@@ -1474,37 +1572,33 @@ void mizu_cuda_bridge_prefill(int64_t payload_hash,
         }
     }
     tensor_seed = mix_u64(tensor_seed ^ ((uint64_t)(uint32_t)staged_modal_count << 33));
-    workspace_seed = mix_u64((uint64_t)payload_hash ^ tensor_seed ^ (uint64_t)pack_usage_hash);
-    workspace_seed = mix_u64(workspace_seed ^ (uint64_t)pack_usage_bytes ^ (uint64_t)first_pack_offset ^
-        (uint64_t)last_pack_offset ^ (uint64_t)last_pack_bytes ^
-        (uint64_t)(uint32_t)pack_usage_count);
-    for (index = 0; index < pack_usage_count && index < MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT; ++index) {
-        if (pack_entry_offsets == NULL || pack_entry_bytes == NULL || pack_role_codes == NULL ||
-            pack_layout_codes == NULL) break;
-        workspace_seed = mix_u64(workspace_seed ^
-            (uint64_t)pack_entry_offsets[index] ^
-            (uint64_t)pack_entry_bytes[index] ^
-            ((uint64_t)(uint32_t)pack_role_codes[index] << 32) ^
-            ((uint64_t)(uint32_t)pack_layout_codes[index] << 48) ^
-            (uint64_t)(uint32_t)(index + 1));
-        if (pack_entry_span_hashes != NULL && pack_entry_span_bytes != NULL) {
-            workspace_seed = mix_u64(workspace_seed ^
-                (uint64_t)pack_entry_span_hashes[index] ^
-                (uint64_t)pack_entry_span_bytes[index] ^
-                ((uint64_t)(uint32_t)(index + 1) << 16));
-        }
-        workspace_seed = mix_pack_tile_bytes(workspace_seed, pack_entry_tile_hashes,
-                                             pack_entry_tile_byte_counts, pack_entry_tile_bytes, index);
-        if (pack_entry_tile_byte_counts == NULL || pack_entry_tile_byte_counts[index] <= 0) {
-            workspace_seed = mix_pack_page_words(workspace_seed, pack_entry_page_hashes,
-                                                 pack_entry_page_word_counts, pack_entry_page_words, index);
-        }
-        if ((pack_entry_tile_byte_counts == NULL || pack_entry_tile_byte_counts[index] <= 0) &&
-            (pack_entry_page_word_counts == NULL || pack_entry_page_word_counts[index] <= 0)) {
-            workspace_seed = mix_span_sample_bytes(workspace_seed, pack_entry_span_sample_sizes,
-                                                   pack_entry_span_samples, index);
-        }
-    }
+    workspace_seed = build_pack_execution_seed(
+        (uint64_t)artifact_hash ^ mix_u64((uint64_t)payload_hash),
+        (uint64_t)pack_usage_hash,
+        (uint64_t)pack_usage_bytes,
+        (uint64_t)first_pack_offset,
+        (uint64_t)last_pack_offset,
+        (uint64_t)last_pack_bytes,
+        pack_usage_count,
+        pack_entry_pack_indices,
+        pack_entry_offsets,
+        pack_entry_bytes,
+        pack_role_codes,
+        pack_layout_codes,
+        pack_entry_span_hashes,
+        pack_entry_span_bytes,
+        pack_entry_page_hashes,
+        pack_entry_page_word_counts,
+        pack_entry_page_words,
+        pack_entry_tile_hashes,
+        pack_entry_tile_byte_counts,
+        pack_entry_tile_bytes,
+        pack_entry_span_sample_sizes,
+        pack_entry_span_samples);
+    workspace_seed = mix_u64(workspace_seed ^ tensor_seed ^
+        (uint64_t)token_count ^
+        ((uint64_t)modal_byte_count << 20) ^
+        ((uint64_t)(uint32_t)staged_modal_count << 44));
     build_prefill_state_block(workspace_seed, (uint64_t)artifact_hash, token_count, modal_byte_count,
                               staged_modal_count, *consumed_token_count, state_lanes, &summary_word);
     fill_prefill_context_bytes(workspace_seed, (uint64_t)artifact_hash, (uint64_t)pack_usage_hash,
@@ -1545,6 +1639,7 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                              int64_t last_pack_offset,
                              int64_t last_pack_bytes,
                              int32_t pack_usage_count,
+                             const int32_t *pack_entry_pack_indices,
                              const int64_t *pack_entry_offsets,
                              const int64_t *pack_entry_bytes,
                              const int32_t *pack_role_codes,
@@ -1572,7 +1667,6 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                              int32_t *token_value,
                              int32_t *stop_reason,
                              int32_t *status_code) {
-    int32_t index;
     uint64_t seed;
     uint64_t current_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES];
     uint64_t next_state_lanes[MIZU_CUDA_CONTEXT_STATE_LANES];
@@ -1634,42 +1728,33 @@ void mizu_cuda_bridge_decode(int64_t payload_hash,
                                  current_page_committed_tokens, current_page_free_slots, current_page_epochs,
                                  current_page_recycle_epochs, current_page_logical_ids, current_page_flags,
                                  &current_window_meta, &current_state_image_digest);
-    seed = (uint64_t)payload_hash;
+    seed = build_pack_execution_seed(
+        (uint64_t)artifact_hash ^ mix_u64((uint64_t)payload_hash),
+        (uint64_t)pack_usage_hash,
+        (uint64_t)pack_usage_bytes,
+        (uint64_t)first_pack_offset,
+        (uint64_t)last_pack_offset,
+        (uint64_t)last_pack_bytes,
+        pack_usage_count,
+        pack_entry_pack_indices,
+        pack_entry_offsets,
+        pack_entry_bytes,
+        pack_role_codes,
+        pack_layout_codes,
+        pack_entry_span_hashes,
+        pack_entry_span_bytes,
+        pack_entry_page_hashes,
+        pack_entry_page_word_counts,
+        pack_entry_page_words,
+        pack_entry_tile_hashes,
+        pack_entry_tile_byte_counts,
+        pack_entry_tile_bytes,
+        pack_entry_span_sample_sizes,
+        pack_entry_span_samples);
     seed = mix_u64(seed ^ current_state_lanes[0] ^ current_state_lanes[1]);
     seed = mix_u64(seed ^ current_state_lanes[2] ^ current_state_lanes[3] ^ summary_word);
-    seed = mix_u64(seed ^ current_window_meta ^ current_state_image_digest);
-    seed = mix_u64(seed ^ (uint64_t)pack_usage_hash ^ (uint64_t)pack_usage_bytes ^
-        (uint64_t)first_pack_offset ^ (uint64_t)last_pack_offset ^
-        (uint64_t)last_pack_bytes ^ (uint64_t)(uint32_t)pack_usage_count);
-    for (index = 0; index < pack_usage_count && index < MIZU_CUDA_CONTEXT_PACK_DISPATCH_COUNT; ++index) {
-        if (pack_entry_offsets == NULL || pack_entry_bytes == NULL || pack_role_codes == NULL ||
-            pack_layout_codes == NULL) break;
-        seed = mix_u64(seed ^
-            (uint64_t)pack_entry_offsets[index] ^
-            (uint64_t)pack_entry_bytes[index] ^
-            ((uint64_t)(uint32_t)pack_role_codes[index] << 32) ^
-            ((uint64_t)(uint32_t)pack_layout_codes[index] << 48) ^
-            (uint64_t)(uint32_t)(index + 1));
-        if (pack_entry_span_hashes != NULL && pack_entry_span_bytes != NULL) {
-            seed = mix_u64(seed ^
-                (uint64_t)pack_entry_span_hashes[index] ^
-                (uint64_t)pack_entry_span_bytes[index] ^
-                ((uint64_t)(uint32_t)(index + 1) << 16));
-        }
-        seed = mix_pack_tile_bytes(seed, pack_entry_tile_hashes,
-                                   pack_entry_tile_byte_counts, pack_entry_tile_bytes, index);
-        if (pack_entry_tile_byte_counts == NULL || pack_entry_tile_byte_counts[index] <= 0) {
-            seed = mix_pack_page_words(seed, pack_entry_page_hashes,
-                                       pack_entry_page_word_counts, pack_entry_page_words, index);
-        }
-        if ((pack_entry_tile_byte_counts == NULL || pack_entry_tile_byte_counts[index] <= 0) &&
-            (pack_entry_page_word_counts == NULL || pack_entry_page_word_counts[index] <= 0)) {
-            seed = mix_span_sample_bytes(seed, pack_entry_span_sample_sizes, pack_entry_span_samples, index);
-        }
-    }
-    seed ^= (uint64_t)kv_before * UINT64_C(0x9e3779b97f4a7c15);
-    seed ^= (uint64_t)token_budget * UINT64_C(0xbf58476d1ce4e5b9);
-    seed = mix_u64(seed);
+    seed = mix_u64(seed ^ current_window_meta ^ current_state_image_digest ^
+        (uint64_t)kv_before ^ ((uint64_t)token_budget << 24));
 
     *emitted_token_count = token_budget > 0 ? 1 : 0;
     *token_value = 1 + (int32_t)(seed % UINT64_C(4095));
