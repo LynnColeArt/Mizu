@@ -542,17 +542,11 @@ int main(void) {
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' | grep -q .");
     if (!expect_true("generated cuda weight artifacts should no longer materialize pack tile-cache indexes", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_payload=artifacts/cuda/cuda/weights/.*\\.packpayload\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
-    if (!expect_true("cuda weight artifact should reference the dedicated pack payload directly", command_status == 0)) return 1;
+    if (!expect_true("generated cuda weight artifacts should no longer reference pack payload sidecars", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_buffer=artifacts/cuda/cuda/weights/.*\\.packbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("cuda weight artifact should reference the dedicated pack buffer directly", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packpayload' | grep -q .");
-    if (!expect_true("cuda weight pack payload should exist", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packpayload' -exec grep -q \"kind=cuda_weight_pack_payload_v1\" {} +");
-    if (!expect_true("cuda weight pack payload should store the expected format marker", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packpayload' -exec grep -q \"pack1_tile_hex=\" {} +");
-    if (!expect_true("cuda weight pack payload should store staged tensor tiles", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packpayload' -exec grep -q \"pack1_page_hex=\" {} +");
-    if (!expect_true("cuda weight pack payload should store staged page records", command_status == 0)) return 1;
+    if (!expect_true("generated cuda weight artifacts should no longer materialize pack payload sidecars", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packbuffer' | grep -q .");
     if (!expect_true("cuda weight pack buffer should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packbuffer' -size +0c | grep -q .");
@@ -574,7 +568,7 @@ int main(void) {
     command_status = system("grep -R \"pack_ref_tile_cache=artifacts/cuda/cuda/weights/\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
     if (!expect_true("cuda projector artifact should no longer require a weight-pack tile-cache index", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_ref_tile_payload=artifacts/cuda/cuda/weights/.*\\.packpayload\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
-    if (!expect_true("cuda projector artifact should reference the weight-pack payload directly", command_status == 0)) return 1;
+    if (!expect_true("generated cuda projector artifacts should no longer require a weight-pack payload sidecar", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_ref_tile_buffer=artifacts/cuda/cuda/weights/.*\\.packbuffer\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");
     if (!expect_true("cuda projector artifact should reference the weight-pack binary buffer directly", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/prefill -type f | grep -q .");
