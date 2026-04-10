@@ -3480,19 +3480,14 @@ contains
     character(len=*), intent(in)               :: payload_text
     integer(i64), intent(inout)                :: payload_bytes
     type(model_state), intent(in)              :: model
-    character(len=(MAX_PATH_LEN * 2) + 4096)   :: tile_payload
-    character(len=MAX_PATH_LEN)                :: tile_path
     character(len=MAX_PATH_LEN)                :: exec_buffer_path
     character(len=MAX_PATH_LEN)                :: pack_tile_path
     character(len=MAX_PATH_LEN)                :: pack_tile_buffer_path
     character(len=MAX_PATH_LEN)                :: weight_payload_path
-    character(len=MAX_PATH_LEN)                :: tile_full_path
     character(len=MAX_PATH_LEN)                :: exec_buffer_full_path
     character(len=MAX_PATH_LEN)                :: parent_dir
     character(len=MAX_PATH_LEN)                :: span_root
     character(len=MAX_PATH_LEN)                :: dispatch_span_paths(MAX_IMPORT_STAGE_PACK_DISPATCH)
-    character(len=128)                         :: hex_text
-    character(len=320)                         :: field_text
     integer(i32)                               :: entry_index
     integer(i32)                               :: unit_id
     integer(i32)                               :: ios
@@ -3536,8 +3531,6 @@ contains
     integer(i8)                                :: exec_buffer(CUDA_EXEC_BUFFER_CAPACITY)
     logical                                    :: exists
     logical                                    :: has_entries
-    logical                                    :: has_tiles
-
     payload_bytes = int(len_trim(payload_text) + 1_i64, kind=i64)
     if (.not. model%has_import_bundle) return
 
@@ -3550,7 +3543,6 @@ contains
 
     exec_buffer_path = build_cuda_pack_execution_buffer_path(metadata%payload_path)
     if (len_trim(exec_buffer_path) == 0) return
-    tile_path = build_cuda_pack_tile_cache_path(metadata%payload_path)
     exec_buffer_full_path = join_cache_root_with_payload_path(cache_root, exec_buffer_path)
     if (len_trim(exec_buffer_full_path) == 0) return
     inquire(file=trim(exec_buffer_full_path), exist=exists)
@@ -3564,10 +3556,8 @@ contains
       pack_tile_buffer_path = build_cuda_weight_pack_tile_buffer_path(trim(weight_payload_path))
     end if
 
-    tile_payload = "kind=cuda_pack_tile_cache_v1"
     exec_buffer = 0_i8
     has_entries = .false.
-    has_tiles = .false.
     exec_entry_count = 0_i32
     exec_buffer_offset = CUDA_EXEC_BUFFER_HEADER_BYTES + &
       (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_EXEC_BUFFER_ENTRY_BYTES)
@@ -3595,20 +3585,6 @@ contains
 
       call build_cuda_pack_tile_record_cache(dispatch_offsets(entry_index), dispatch_bytes(entry_index), role_code, &
         layout_code, sample_bytes, actual_sample_bytes, tile_hash, tile_byte_count, tile_bytes)
-      if (tile_hash > 0_i64 .and. tile_byte_count > 0_i32) then
-        hex_text = ""
-        call encode_bytes_as_hex(tile_bytes, tile_byte_count, hex_text)
-        field_text = ""
-        write(field_text, '(";entry",I0,"_tile_hash=",I0)') entry_index, tile_hash
-        call append_payload_fragment(tile_payload, trim(field_text))
-        field_text = ""
-        write(field_text, '(";entry",I0,"_tile_bytes=",I0)') entry_index, tile_byte_count
-        call append_payload_fragment(tile_payload, trim(field_text))
-        field_text = ""
-        write(field_text, '(";entry",I0,"_tile_hex=",A)') entry_index, trim(hex_text)
-        call append_payload_fragment(tile_payload, trim(field_text))
-        has_tiles = .true.
-      end if
 
       exec_entry_count = exec_entry_count + 1_i32
       exec_record_offset = CUDA_EXEC_BUFFER_HEADER_BYTES + &
@@ -3705,28 +3681,12 @@ contains
       exec_buffer_offset = exec_path_offset + exec_path_bytes
     end if
 
-    if (has_tiles) then
-      field_text = ""
-      write(field_text, '(";entry_count=",I0)') dispatch_count
-      call append_payload_fragment(tile_payload, trim(field_text))
-    end if
-
     parent_dir = parent_directory_path(exec_buffer_full_path)
     if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
     open(newunit=unit_id, file=trim(exec_buffer_full_path), status="replace", access="stream", &
       form="unformatted", action="write", iostat=ios)
     if (ios /= 0_i32) return
     write(unit_id, iostat=ios) exec_buffer(1:max(CUDA_EXEC_BUFFER_HEADER_BYTES, exec_buffer_offset))
-    close(unit_id)
-
-    if (.not. has_tiles) return
-    tile_full_path = join_cache_root_with_payload_path(cache_root, tile_path)
-    if (len_trim(tile_full_path) == 0) return
-    parent_dir = parent_directory_path(tile_full_path)
-    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
-    open(newunit=unit_id, file=trim(tile_full_path), status="replace", action="write", iostat=ios)
-    if (ios /= 0_i32) return
-    write(unit_id, "(A)", iostat=ios) trim(tile_payload)
     close(unit_id)
   end subroutine append_cuda_pack_span_cache_payload_from_model
 
