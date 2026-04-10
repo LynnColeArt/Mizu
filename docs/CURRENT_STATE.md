@@ -120,10 +120,12 @@ Last updated: 2026-04-09
   `pack_use*`, `pack_dispatch*`, and `pack_span*` plan fragments
 - compact CUDA decode can now replay from stage kind plus binary sidecars
   alone, with no per-entry `pack_dispatch*` text required in the plan payload
-- generated CUDA prefill/decode plans now treat `pack_dependency=` as the
-  compact replay marker and no longer need direct sidecar references in plan
-  text, because `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` are
-  derived from artifact identity at runtime
+- generated CUDA prefill/decode plans now compact down to stable stage
+  metadata after sidecar generation, and warm replay recognizes them from the
+  artifact-sidecar layout itself instead of any textual compact marker
+- direct `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` refs are no
+  longer needed in plan text, because those sidecars are derived from artifact
+  identity at runtime
 - the public CUDA warm contract path now also replays correctly after a
   generated decode plan drops its per-entry `pack_use*`, `pack_dispatch*`, and
   `pack_span*` text, as long as the binary usage/dispatch/span sidecars and

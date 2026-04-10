@@ -181,12 +181,12 @@ Current implementation status:
   `pack_use*`, `pack_dispatch*`, and `pack_span*` plan fragments
 - compact CUDA warm artifact lineage now treats those binary sidecar paths as
   transport details and derives identity from resolved pack/span content
-- generated CUDA prefill/decode plans now treat `pack_dependency=` as the
-  compact replay marker and no longer need direct sidecar references in plan
-  text, because `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` are
-  derived from artifact identity at runtime
-  instead, so replay stays stable when equivalent plans differ only in sidecar
-  path text
+- generated CUDA prefill/decode plans now compact down to stable stage
+  metadata after sidecar generation, and warm replay recognizes them from the
+  artifact-sidecar layout itself instead of any textual compact marker
+- direct `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` refs are no
+  longer needed in plan text, because those sidecars are derived from artifact
+  identity at runtime
 - compact CUDA warm artifact lineage now also ignores `pack_use_kind=` and
   `pack_dispatch_kind=` marker text, so binary-sidecar-only plans and older
   text-plus-buffer plans converge on the same replay identity when they resolve

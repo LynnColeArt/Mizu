@@ -152,8 +152,8 @@ These are the highest-leverage next tasks.
 - [x] Derive compact CUDA static pack dependency from the typed `.packbuffer` so public warm replay can also drop textual `pack_ref_hash`, `pack_ref_bytes`, `pack_ref_count`, `weight_pack_hash`, `weight_pack_bytes`, and `weight_pack_count` hints
 - [x] Persist the resolved CUDA weight-pack `.packbuffer` path into binary `.usagebuffer` sidecars
 - [x] Verify binary-first CUDA warm replay still works after direct pack-buffer hints and intermediate `.packtiles` files are removed
-- [x] Treat `pack_dependency=` as the compact CUDA replay marker so generated warm plans can drop direct `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` refs
-- [x] Verify generated CUDA warm plans still replay correctly when all direct sidecar refs are derived from artifact identity
+- [x] Compact generated CUDA prefill/decode plans down to stable stage metadata after sidecar materialization
+- [x] Verify generated CUDA warm replay still works when compact plans rely on artifact-derived binary sidecars instead of textual compact markers
 - [x] Persist staged CUDA pack-page records beside cached tensor spans
 - [x] Persist staged CUDA tensor-tile records beside cached tensor spans
 - [x] Materialize dedicated CUDA `.tilecache` payloads under `cache_root`
