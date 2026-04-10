@@ -155,6 +155,11 @@ Current implementation status:
   the executor now restores offset, byte span, role, and layout from that
   typed `.packbuffer` directory before launching the bridge, so warm execution
   depends less on surrounding dispatch text
+- the CUDA bridge now also receives those resolved packed-entry indices
+  directly and derives staged prefill/decode execution from the resolved
+  binary pack record first, with a canonical `tile -> page -> sampled span`
+  material-source order that keeps warm replay stable across different cache
+  fallback shapes
 - those same compact CUDA plans now also normalize their stored artifact
   lineage from the resolved typed `.packbuffer` record, so warm decode stays
   stable whether a plan identifies a packed tensor by raw offset/bytes or by

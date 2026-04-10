@@ -164,6 +164,8 @@ These are the highest-leverage next tasks.
 - [x] Materialize dedicated binary CUDA `.packbuffer` siblings for pack-owned page/tile bytes
 - [x] Give CUDA `.packbuffer` a typed header and per-pack directory for warm replay
 - [x] Restore CUDA dispatch offset/bytes/role/layout from typed pack-buffer records when `pack=` indices are present
+- [x] Pass resolved CUDA packed-entry indices into the bridge and derive staged execution from the resolved binary pack record first
+- [x] Normalize CUDA staged execution to a canonical material-source order so warm replay stays stable across richer and leaner cache shapes
 - [x] Normalize compact CUDA warm artifact lineage across offset/byte and `pack=` dispatch forms
 - [x] Normalize compact CUDA warm artifact lineage across equivalent binary sidecar transport paths
 - [x] Emit direct CUDA `pack_ref_tile_buffer=` references for stage artifacts

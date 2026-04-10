@@ -154,6 +154,10 @@ bodies.
     stored artifact lineage stable when typed `.packbuffer` resolution matches,
     even if equivalent artifacts differ in dispatch form or binary sidecar
     transport paths
+  - validates the CUDA bridge now consumes resolved packed-entry indices as
+    first-class staged execution input, while still preserving deterministic
+    reference output when warm replay falls back from richer tile/page caches
+    to leaner binary sidecar shapes
   - validates those same compact CUDA decode plans can still restore their
     bridge-facing dispatch from direct `pack_ref_tile_buffer=` references even
     after the `.packtiles` text index is removed

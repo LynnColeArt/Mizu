@@ -4,6 +4,12 @@ Last updated: 2026-04-09
 
 ## Latest Checkpoint
 
+- current milestone: the CUDA bridge now treats resolved binary pack records
+  as the primary staged execution input for prefill and decode by consuming
+  resolved `pack=` indices alongside typed `.packbuffer` / usage / dispatch /
+  span sidecar state, and it now normalizes each packed entry to one canonical
+  material source order `tile -> page -> sampled span` so warm replay stays
+  stable even when different cache shapes expose different sidecar richness
 - current milestone: CUDA weight-pack `.packtiles` caches now index a typed
   binary `.packbuffer` warm-path payload, generated prefill/decode plans now
   collapse compact dispatch text down to `pack=<index>` entries, and both
@@ -98,6 +104,10 @@ Last updated: 2026-04-09
   lineage from the resolved typed `.packbuffer` record, so warm decode stays
   stable whether a plan identifies a packed tensor by raw offset/bytes or by
   explicit `pack=` index
+- the CUDA bridge now also receives those resolved packed-entry indices
+  directly from the executor and derives staged prefill/decode execution from
+  the resolved binary pack record first, with payload text demoted to salt
+  instead of primary execution identity
 - CUDA projector, prefill, and decode artifacts now also carry direct
   `pack_ref_tile_buffer=` references, so warm execution can still hydrate
   pack-owned binary page/tile records even if the `.packtiles` text index is

@@ -125,5 +125,9 @@ These suites cover the `API-C*` portion of
     direct weight-pack buffer hint and the intermediate weight-pack
     `.packtiles` file are both gone, because the binary `.usagebuffer`
     sidecar now persists the resolved `.packbuffer` path
+  - verifies that same public CUDA flow still replays identically when warm
+    execution falls back from richer tile/page cache shapes to leaner binary
+    sidecars, because the CUDA bridge now derives staged execution from the
+    resolved binary pack record in a canonical material-source order
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path
