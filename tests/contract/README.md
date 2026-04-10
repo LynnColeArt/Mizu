@@ -53,12 +53,11 @@ These suites cover the `API-C*` portion of
   - verifies those CUDA prefill/decode sidecars are now built directly from
     imported tensor inventory and stage kind rather than by scraping transient
     verbose pack records back out of the generated plan text
-  - verifies those `.spancache` sidecars now retain staged sample bytes for
-    the selected imported tensor spans
-  - verifies those `.spancache` sidecars now also retain compact staged
-    pack-page records for the selected imported tensor spans
-  - verifies those `.spancache` sidecars now also reference pack-owned
-    `.packtiles` payloads materialized beside the CUDA weight-pack artifact
+  - verifies generated CUDA `.execbuffer` sidecars now carry the staged
+    sample, pack-page, and tile records for the selected imported tensor spans
+  - verifies that same generated CUDA warm layout now resolves against
+    pack-owned `.packtiles` payloads materialized beside the CUDA weight-pack
+    artifact
   - verifies those pack-owned `.packtiles` payloads now derive their staged
     page/tile records from weight-pack materialization metadata rather than
     sampled importer preview bytes
@@ -67,8 +66,9 @@ These suites cover the `API-C*` portion of
     per-pack directory, and the staged page/tile bytes used on the warm path,
     while still retaining a readable `.packpayload` fallback
   - verifies compact CUDA `pack_dispatch*` records now carry explicit packed
-    entry indices and that the `.spancache` sidecars retain those pack indices
-  - verifies those `.spancache` sidecars now also reference dedicated
+    entry indices and that the generated warm layout can still recover those
+    indices through binary sidecars
+  - verifies that generated warm layout still references dedicated
     `.tilecache` payloads for the selected imported tensor spans
   - verifies those `.tilecache` payloads retain staged tensor-tile records for
     the selected imported tensor spans
@@ -86,8 +86,8 @@ These suites cover the `API-C*` portion of
   - verifies a fresh runtime can replay the same narrow multimodal CUDA flow
     with warm cache reuse and reproduce the same decode token
   - verifies that warm replay still reproduces the same decode token even
-    after imported tensor bytes are mutated, as long as the persisted
-    `.spancache` sidecars are present
+    after imported tensor bytes are mutated, as long as the persisted binary
+    warm records are present
   - verifies the same public CUDA flow still reproduces the same decode token
     after those plan-local `.spancache` and `.tilecache` files are removed, as
     long as the pack-owned weight `.packtiles` cache remains available
@@ -133,6 +133,10 @@ These suites cover the `API-C*` portion of
     plan-local `.usagebuffer`, `.dispatchbuffer`, or `.spanbuffer` files, so
     `.execbuffer` plus the typed weight-pack cache is the primary generated
     warm-path layout and the older buffers remain compatibility fallbacks
+  - verifies those same newly generated CUDA warm artifacts also no longer
+    materialize `.spancache`, because the resolved span/sample/page/tile
+    record now lives in `.execbuffer` and `.spancache` is only a fallback for
+    older cache layouts
   - verifies that same public CUDA flow still replays identically when warm
     execution falls back from richer tile/page cache shapes to leaner binary
     sidecars, because the CUDA bridge now derives staged execution from the

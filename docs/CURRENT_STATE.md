@@ -177,6 +177,10 @@ Last updated: 2026-04-09
   record, and no longer emit new `.usagebuffer`, `.dispatchbuffer`, or
   `.spanbuffer` sidecars; the executor still supports those older buffers as
   compatibility fallbacks for manual fixtures and older cache layouts
+- generated CUDA `prefill` and `decode` artifacts also no longer emit new
+  `.spancache` files, because the resolved span/sample/page/tile record now
+  lives in `.execbuffer`; `.spancache` remains supported as a compatibility
+  fallback for older warm-cache layouts
 - that same binary-first CUDA warm contract path now also replays correctly
   after the plan has no direct weight-pack buffer hint and the weight-pack
   `.packtiles` file has been removed, because execution and artifact identity
