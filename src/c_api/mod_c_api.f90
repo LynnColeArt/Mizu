@@ -3466,17 +3466,6 @@ contains
   end subroutine materialize_artifact_payload
 
   subroutine append_cuda_pack_span_cache_payload_from_model(cache_root, metadata, payload_text, payload_bytes, model)
-    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_MAGIC = int(z'53445A4D', kind=i32)
-    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_VERSION = 1_i32
-    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_HEADER_BYTES = 32_i32
-    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_ENTRY_BYTES = 16_i32
-    integer(i32), parameter                    :: CUDA_USAGE_BUFFER_MAGIC = int(z'42555A4D', kind=i32)
-    integer(i32), parameter                    :: CUDA_USAGE_BUFFER_VERSION = 2_i32
-    integer(i32), parameter                    :: CUDA_USAGE_BUFFER_HEADER_BYTES = 72_i32
-    integer(i32), parameter                    :: CUDA_SPAN_BUFFER_MAGIC = int(z'42535A4D', kind=i32)
-    integer(i32), parameter                    :: CUDA_SPAN_BUFFER_VERSION = 1_i32
-    integer(i32), parameter                    :: CUDA_SPAN_BUFFER_HEADER_BYTES = 32_i32
-    integer(i32), parameter                    :: CUDA_SPAN_BUFFER_ENTRY_BYTES = 32_i32
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_MAGIC = int(z'58455A4D', kind=i32)
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_VERSION = 2_i32
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_HEADER_BYTES = 72_i32
@@ -3491,15 +3480,12 @@ contains
     character(len=*), intent(in)               :: payload_text
     integer(i64), intent(inout)                :: payload_bytes
     type(model_state), intent(in)              :: model
-    character(len=(MAX_PATH_LEN * 6) + 4096)   :: sidecar_payload
     character(len=(MAX_PATH_LEN * 2) + 4096)   :: tile_payload
-    character(len=MAX_PATH_LEN)                :: sidecar_path
     character(len=MAX_PATH_LEN)                :: tile_path
     character(len=MAX_PATH_LEN)                :: exec_buffer_path
     character(len=MAX_PATH_LEN)                :: pack_tile_path
     character(len=MAX_PATH_LEN)                :: pack_tile_buffer_path
     character(len=MAX_PATH_LEN)                :: weight_payload_path
-    character(len=MAX_PATH_LEN)                :: full_path
     character(len=MAX_PATH_LEN)                :: tile_full_path
     character(len=MAX_PATH_LEN)                :: exec_buffer_full_path
     character(len=MAX_PATH_LEN)                :: parent_dir
@@ -3517,19 +3503,10 @@ contains
     integer(i32)                               :: dispatch_count
     integer(i32)                               :: page_word_count
     integer(i32)                               :: tile_byte_count
-    integer(i32)                               :: usage_path_bytes
-    integer(i32)                               :: usage_path_offset
-    integer(i32)                               :: usage_path_index
     integer(i32)                               :: exec_path_bytes
     integer(i32)                               :: exec_path_offset
     integer(i32)                               :: exec_path_index
-    integer(i32)                               :: dispatch_entry_count
-    integer(i32)                               :: span_entry_count
     integer(i32)                               :: exec_entry_count
-    integer(i32)                               :: dispatch_buffer_offset
-    integer(i32)                               :: span_buffer_offset
-    integer(i32)                               :: span_record_offset
-    integer(i32)                               :: span_data_offset
     integer(i32)                               :: exec_buffer_offset
     integer(i32)                               :: exec_record_offset
     integer(i32)                               :: exec_sample_count
@@ -3540,7 +3517,6 @@ contains
     integer(i32)                               :: dispatch_pack_indices(MAX_IMPORT_STAGE_PACK_DISPATCH)
     integer(i32)                               :: dispatch_role_codes(MAX_IMPORT_STAGE_PACK_DISPATCH)
     integer(i32)                               :: dispatch_layout_codes(MAX_IMPORT_STAGE_PACK_DISPATCH)
-    integer(i32)                               :: valid_dispatch_pack_indices(MAX_IMPORT_STAGE_PACK_DISPATCH)
     integer(i64)                               :: usage_hash
     integer(i64)                               :: usage_total_bytes
     integer(i64)                               :: first_pack_offset
@@ -3557,12 +3533,6 @@ contains
     integer(i8)                                :: page_bytes(MAX_CUDA_PACK_PAGE_WORDS * 4_i32)
     integer(i32)                               :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
     integer(i8)                                :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
-    integer(i8)                                :: dispatch_buffer(CUDA_DISPATCH_BUFFER_HEADER_BYTES + &
-                                                      (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_DISPATCH_BUFFER_ENTRY_BYTES))
-    integer(i8)                                :: usage_buffer(CUDA_USAGE_BUFFER_HEADER_BYTES + MAX_PATH_LEN)
-    integer(i8)                                :: span_buffer(CUDA_SPAN_BUFFER_HEADER_BYTES + &
-                                                      (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_SPAN_BUFFER_ENTRY_BYTES) + &
-                                                      (MAX_IMPORT_STAGE_PACK_DISPATCH * 64_i32))
     integer(i8)                                :: exec_buffer(CUDA_EXEC_BUFFER_CAPACITY)
     logical                                    :: exists
     logical                                    :: has_entries
@@ -3578,14 +3548,12 @@ contains
     if (dispatch_count <= 0_i32) return
     if (len_trim(span_root) == 0) return
 
-    sidecar_path = build_cuda_pack_span_cache_path(metadata%payload_path)
-    if (len_trim(sidecar_path) == 0) return
-    tile_path = build_cuda_pack_tile_cache_path(metadata%payload_path)
     exec_buffer_path = build_cuda_pack_execution_buffer_path(metadata%payload_path)
-
-    full_path = join_cache_root_with_payload_path(cache_root, sidecar_path)
-    if (len_trim(full_path) == 0) return
-    inquire(file=trim(full_path), exist=exists)
+    if (len_trim(exec_buffer_path) == 0) return
+    tile_path = build_cuda_pack_tile_cache_path(metadata%payload_path)
+    exec_buffer_full_path = join_cache_root_with_payload_path(cache_root, exec_buffer_path)
+    if (len_trim(exec_buffer_full_path) == 0) return
+    inquire(file=trim(exec_buffer_full_path), exist=exists)
     if (exists) return
 
     weight_payload_path = build_cuda_weight_pack_payload_path(model, metadata%execution_route)
@@ -3596,42 +3564,15 @@ contains
       pack_tile_buffer_path = build_cuda_weight_pack_tile_buffer_path(trim(weight_payload_path))
     end if
 
-    sidecar_payload = "kind=cuda_pack_span_cache_v4"
     tile_payload = "kind=cuda_pack_tile_cache_v1"
-    dispatch_buffer = 0_i8
-    usage_buffer = 0_i8
-    span_buffer = 0_i8
     exec_buffer = 0_i8
-    valid_dispatch_pack_indices = 0_i32
     has_entries = .false.
     has_tiles = .false.
-    dispatch_entry_count = 0_i32
-    span_entry_count = 0_i32
     exec_entry_count = 0_i32
-    span_buffer_offset = CUDA_SPAN_BUFFER_HEADER_BYTES + &
-      (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_SPAN_BUFFER_ENTRY_BYTES)
     exec_buffer_offset = CUDA_EXEC_BUFFER_HEADER_BYTES + &
       (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_EXEC_BUFFER_ENTRY_BYTES)
-    usage_path_bytes = 0_i32
-    usage_path_offset = CUDA_USAGE_BUFFER_HEADER_BYTES
     exec_path_bytes = 0_i32
     exec_path_offset = 0_i32
-
-    if (len_trim(pack_tile_path) > 0) then
-      field_text = ""
-      write(field_text, '(";pack_tile_cache=",A)') trim(pack_tile_path)
-      call append_payload_fragment(sidecar_payload, trim(field_text))
-    end if
-    if (len_trim(exec_buffer_path) > 0) then
-      field_text = ""
-      write(field_text, '(";exec_buffer=",A)') trim(exec_buffer_path)
-      call append_payload_fragment(sidecar_payload, trim(field_text))
-    end if
-    if (len_trim(tile_path) > 0) then
-      field_text = ""
-      write(field_text, '(";tile_cache=",A)') trim(tile_path)
-      call append_payload_fragment(sidecar_payload, trim(field_text))
-    end if
 
     do entry_index = 1_i32, dispatch_count
       if (len_trim(dispatch_span_paths(entry_index)) == 0) cycle
@@ -3640,78 +3581,23 @@ contains
         IMPORT_STAGE_SPAN_SAMPLE_BYTES, span_hash, actual_sample_bytes, sample_bytes)
       if (span_hash <= 0_i64) cycle
 
-      field_text = ""
-      write(field_text, '(";entry",I0,"_hash=",I0)') entry_index, span_hash
-      call append_payload_fragment(sidecar_payload, trim(field_text))
-      field_text = ""
-      write(field_text, '(";entry",I0,"_bytes=",I0)') entry_index, actual_sample_bytes
-      call append_payload_fragment(sidecar_payload, trim(field_text))
-
-      if (actual_sample_bytes > 0_i64) then
-        hex_text = ""
-        call encode_bytes_as_hex(sample_bytes, int(min(actual_sample_bytes, int(size(sample_bytes), kind=i64)), kind=i32), &
-          hex_text)
-        field_text = ""
-        write(field_text, '(";entry",I0,"_sample_hex=",A)') entry_index, trim(hex_text)
-        call append_payload_fragment(sidecar_payload, trim(field_text))
-
-        span_entry_count = span_entry_count + 1_i32
-        span_record_offset = CUDA_SPAN_BUFFER_HEADER_BYTES + &
-          ((span_entry_count - 1_i32) * CUDA_SPAN_BUFFER_ENTRY_BYTES)
-        call append_pack_buffer_bytes_cache(sample_bytes, int(min(actual_sample_bytes, 64_i64), kind=i32), &
-          span_buffer, span_buffer_offset, span_data_offset)
-        call store_pack_buffer_i32_cache(span_buffer, span_record_offset + 0_i32, entry_index)
-        call store_pack_buffer_i32_cache(span_buffer, span_record_offset + 4_i32, dispatch_pack_indices(entry_index))
-        call store_pack_buffer_i32_cache(span_buffer, span_record_offset + 8_i32, &
-          int(min(actual_sample_bytes, 64_i64), kind=i32))
-        call store_pack_buffer_i32_cache(span_buffer, span_record_offset + 12_i32, span_data_offset)
-        call store_pack_buffer_i64_cache(span_buffer, span_record_offset + 16_i32, span_hash)
-        call store_pack_buffer_i64_cache(span_buffer, span_record_offset + 24_i32, actual_sample_bytes)
-      end if
-
       pack_index = dispatch_pack_indices(entry_index)
       role_code = dispatch_role_codes(entry_index)
       layout_code = dispatch_layout_codes(entry_index)
-      if (pack_index > 0_i32) then
-        valid_dispatch_pack_indices(entry_index) = pack_index
-        field_text = ""
-        write(field_text, '(";entry",I0,"_pack=",I0)') entry_index, pack_index
-        call append_payload_fragment(sidecar_payload, trim(field_text))
-      end if
 
       call build_cuda_pack_page_record_cache(dispatch_offsets(entry_index), dispatch_bytes(entry_index), role_code, &
         layout_code, span_hash, sample_bytes, actual_sample_bytes, page_hash, page_word_count, page_words)
       page_bytes = 0_i8
       exec_page_byte_count = 0_i32
       if (page_hash > 0_i64 .and. page_word_count > 0_i32) then
-        field_text = ""
-        write(field_text, '(";entry",I0,"_page_hash=",I0)') entry_index, page_hash
-        call append_payload_fragment(sidecar_payload, trim(field_text))
-        field_text = ""
-        write(field_text, '(";entry",I0,"_page_words=",I0)') entry_index, page_word_count
-        call append_payload_fragment(sidecar_payload, trim(field_text))
-        hex_text = ""
-        call encode_i32_words_as_hex_cache(page_words, page_word_count, hex_text)
-        field_text = ""
-        write(field_text, '(";entry",I0,"_page_hex=",A)') entry_index, trim(hex_text)
-        call append_payload_fragment(sidecar_payload, trim(field_text))
         call pack_i32_words_to_le_bytes_cache(page_words, page_word_count, page_bytes, exec_page_byte_count)
       end if
 
       call build_cuda_pack_tile_record_cache(dispatch_offsets(entry_index), dispatch_bytes(entry_index), role_code, &
         layout_code, sample_bytes, actual_sample_bytes, tile_hash, tile_byte_count, tile_bytes)
       if (tile_hash > 0_i64 .and. tile_byte_count > 0_i32) then
-        field_text = ""
-        write(field_text, '(";entry",I0,"_tile_hash=",I0)') entry_index, tile_hash
-        call append_payload_fragment(sidecar_payload, trim(field_text))
-        field_text = ""
-        write(field_text, '(";entry",I0,"_tile_bytes=",I0)') entry_index, tile_byte_count
-        call append_payload_fragment(sidecar_payload, trim(field_text))
         hex_text = ""
         call encode_bytes_as_hex(tile_bytes, tile_byte_count, hex_text)
-        field_text = ""
-        write(field_text, '(";entry",I0,"_tile_hex=",A)') entry_index, trim(hex_text)
-        call append_payload_fragment(sidecar_payload, trim(field_text))
         field_text = ""
         write(field_text, '(";entry",I0,"_tile_hash=",I0)') entry_index, tile_hash
         call append_payload_fragment(tile_payload, trim(field_text))
@@ -3796,52 +3682,6 @@ contains
 
     if (.not. has_entries) return
 
-    dispatch_buffer_offset = CUDA_DISPATCH_BUFFER_HEADER_BYTES
-    do entry_index = 1_i32, dispatch_count
-      if (valid_dispatch_pack_indices(entry_index) <= 0_i32) cycle
-      dispatch_entry_count = dispatch_entry_count + 1_i32
-      call store_pack_buffer_i32_cache(dispatch_buffer, dispatch_buffer_offset + 0_i32, valid_dispatch_pack_indices(entry_index))
-      call store_pack_buffer_i32_cache(dispatch_buffer, dispatch_buffer_offset + 4_i32, entry_index)
-      call store_pack_buffer_i64_cache(dispatch_buffer, dispatch_buffer_offset + 8_i32, 0_i64)
-      dispatch_buffer_offset = dispatch_buffer_offset + CUDA_DISPATCH_BUFFER_ENTRY_BYTES
-    end do
-
-    call store_pack_buffer_i32_cache(dispatch_buffer, 0_i32, CUDA_DISPATCH_BUFFER_MAGIC)
-    call store_pack_buffer_i32_cache(dispatch_buffer, 4_i32, CUDA_DISPATCH_BUFFER_VERSION)
-    call store_pack_buffer_i32_cache(dispatch_buffer, 8_i32, CUDA_DISPATCH_BUFFER_HEADER_BYTES)
-    call store_pack_buffer_i32_cache(dispatch_buffer, 12_i32, CUDA_DISPATCH_BUFFER_ENTRY_BYTES)
-    call store_pack_buffer_i32_cache(dispatch_buffer, 16_i32, dispatch_entry_count)
-    call store_pack_buffer_i32_cache(dispatch_buffer, 20_i32, dispatch_entry_count)
-    call store_pack_buffer_i64_cache(dispatch_buffer, 24_i32, usage_hash)
-
-    call store_pack_buffer_i32_cache(usage_buffer, 0_i32, CUDA_USAGE_BUFFER_MAGIC)
-    call store_pack_buffer_i32_cache(usage_buffer, 4_i32, CUDA_USAGE_BUFFER_VERSION)
-    call store_pack_buffer_i32_cache(usage_buffer, 8_i32, CUDA_USAGE_BUFFER_HEADER_BYTES)
-    call store_pack_buffer_i32_cache(usage_buffer, 12_i32, usage_count)
-    call store_pack_buffer_i32_cache(usage_buffer, 16_i32, dispatch_entry_count)
-    call store_pack_buffer_i32_cache(usage_buffer, 20_i32, dispatch_count)
-    call store_pack_buffer_i64_cache(usage_buffer, 24_i32, usage_total_bytes)
-    call store_pack_buffer_i64_cache(usage_buffer, 32_i32, first_pack_offset)
-    call store_pack_buffer_i64_cache(usage_buffer, 40_i32, last_pack_offset)
-    call store_pack_buffer_i64_cache(usage_buffer, 48_i32, last_pack_bytes)
-    call store_pack_buffer_i64_cache(usage_buffer, 56_i32, usage_hash)
-    if (len_trim(pack_tile_buffer_path) > 0) then
-      usage_path_bytes = min(len_trim(pack_tile_buffer_path), MAX_PATH_LEN)
-      call store_pack_buffer_i32_cache(usage_buffer, 64_i32, usage_path_bytes)
-      call store_pack_buffer_i32_cache(usage_buffer, 68_i32, usage_path_offset)
-      do usage_path_index = 1_i32, usage_path_bytes
-        usage_buffer(usage_path_offset + usage_path_index) = int(iachar(pack_tile_buffer_path(usage_path_index:usage_path_index)), &
-          kind=i8)
-      end do
-    end if
-
-    call store_pack_buffer_i32_cache(span_buffer, 0_i32, CUDA_SPAN_BUFFER_MAGIC)
-    call store_pack_buffer_i32_cache(span_buffer, 4_i32, CUDA_SPAN_BUFFER_VERSION)
-    call store_pack_buffer_i32_cache(span_buffer, 8_i32, CUDA_SPAN_BUFFER_HEADER_BYTES)
-    call store_pack_buffer_i32_cache(span_buffer, 12_i32, CUDA_SPAN_BUFFER_ENTRY_BYTES)
-    call store_pack_buffer_i32_cache(span_buffer, 16_i32, span_entry_count)
-    call store_pack_buffer_i32_cache(span_buffer, 20_i32, dispatch_count)
-    call store_pack_buffer_i64_cache(span_buffer, 24_i32, usage_hash)
     call store_pack_buffer_i32_cache(exec_buffer, 0_i32, CUDA_EXEC_BUFFER_MAGIC)
     call store_pack_buffer_i32_cache(exec_buffer, 4_i32, CUDA_EXEC_BUFFER_VERSION)
     call store_pack_buffer_i32_cache(exec_buffer, 8_i32, CUDA_EXEC_BUFFER_HEADER_BYTES)
@@ -3865,36 +3705,19 @@ contains
       exec_buffer_offset = exec_path_offset + exec_path_bytes
     end if
 
-    field_text = ""
-    write(field_text, '(";entry_count=",I0)') dispatch_count
-    call append_payload_fragment(sidecar_payload, trim(field_text))
     if (has_tiles) then
       field_text = ""
       write(field_text, '(";entry_count=",I0)') dispatch_count
       call append_payload_fragment(tile_payload, trim(field_text))
     end if
 
-    parent_dir = parent_directory_path(full_path)
+    parent_dir = parent_directory_path(exec_buffer_full_path)
     if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
-
-    open(newunit=unit_id, file=trim(full_path), status="replace", action="write", iostat=ios)
+    open(newunit=unit_id, file=trim(exec_buffer_full_path), status="replace", access="stream", &
+      form="unformatted", action="write", iostat=ios)
     if (ios /= 0_i32) return
-    write(unit_id, "(A)", iostat=ios) trim(sidecar_payload)
+    write(unit_id, iostat=ios) exec_buffer(1:max(CUDA_EXEC_BUFFER_HEADER_BYTES, exec_buffer_offset))
     close(unit_id)
-
-    if (len_trim(exec_buffer_path) > 0 .and. exec_entry_count > 0_i32) then
-      exec_buffer_full_path = join_cache_root_with_payload_path(cache_root, exec_buffer_path)
-      if (len_trim(exec_buffer_full_path) > 0) then
-        parent_dir = parent_directory_path(exec_buffer_full_path)
-        if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
-        open(newunit=unit_id, file=trim(exec_buffer_full_path), status="replace", access="stream", &
-          form="unformatted", action="write", iostat=ios)
-        if (ios == 0_i32) then
-          write(unit_id, iostat=ios) exec_buffer(1:max(CUDA_EXEC_BUFFER_HEADER_BYTES, exec_buffer_offset))
-          close(unit_id)
-        end if
-      end if
-    end if
 
     if (.not. has_tiles) return
     tile_full_path = join_cache_root_with_payload_path(cache_root, tile_path)

@@ -787,28 +787,9 @@ contains
     if (allocated(usage_buffer_bytes)) deallocate(usage_buffer_bytes)
     if (allocated(exec_buffer_bytes)) deallocate(exec_buffer_bytes)
 
-    call extract_payload_field_text(payload_text, "pack_span_cache=", pack_span_cache_path, found_pack_span_cache_path)
-    if (.not. found_pack_span_cache_path) pack_span_cache_path = build_pack_span_cache_artifact_path(artifact_path)
-    if (len_trim(pack_span_cache_path) > 0) then
-      call load_cuda_artifact_payload(cache_root, trim(pack_span_cache_path), pack_span_cache_text, loaded_pack_span_cache)
-      if (loaded_pack_span_cache) then
-        if (index(pack_span_cache_text, "kind=cuda_pack_span_cache_v1") <= 0 .and. &
-            index(pack_span_cache_text, "kind=cuda_pack_span_cache_v2") <= 0 .and. &
-            index(pack_span_cache_text, "kind=cuda_pack_span_cache_v3") <= 0 .and. &
-            index(pack_span_cache_text, "kind=cuda_pack_span_cache_v4") <= 0) then
-          loaded_pack_span_cache = .false.
-          pack_span_cache_text = ""
-        end if
-      end if
-    end if
-
     call extract_payload_field_text(payload_text, "pack_ref_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
     if (.not. found_pack_tile_cache_path) then
       call extract_payload_field_text(payload_text, "pack_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
-    end if
-    if (.not. found_pack_tile_cache_path .and. loaded_pack_span_cache) then
-      call extract_payload_field_text(pack_span_cache_text, "pack_tile_cache=", pack_tile_cache_path, &
-        found_pack_tile_cache_path)
     end if
     if (.not. found_pack_tile_cache_path) pack_tile_cache_path = build_weight_pack_tile_cache_artifact_path(artifact_path)
     if (len_trim(pack_tile_cache_path) > 0) then
@@ -861,6 +842,42 @@ contains
           call extract_pack_usage_buffer_pack_tile_buffer_path(usage_buffer_bytes, usage_buffer_count, &
             pack_tile_buffer_path, found_pack_tile_buffer_path)
         end if
+      end if
+    end if
+    if (.not. found_pack_tile_buffer_path) then
+      call extract_payload_field_text(payload_text, "pack_span_cache=", pack_span_cache_path, found_pack_span_cache_path)
+      if (.not. found_pack_span_cache_path) pack_span_cache_path = build_pack_span_cache_artifact_path(artifact_path)
+      if (len_trim(pack_span_cache_path) > 0) then
+        call load_cuda_artifact_payload(cache_root, trim(pack_span_cache_path), pack_span_cache_text, loaded_pack_span_cache)
+        if (loaded_pack_span_cache) then
+          if (index(pack_span_cache_text, "kind=cuda_pack_span_cache_v1") <= 0 .and. &
+              index(pack_span_cache_text, "kind=cuda_pack_span_cache_v2") <= 0 .and. &
+              index(pack_span_cache_text, "kind=cuda_pack_span_cache_v3") <= 0 .and. &
+              index(pack_span_cache_text, "kind=cuda_pack_span_cache_v4") <= 0) then
+            loaded_pack_span_cache = .false.
+            pack_span_cache_text = ""
+          end if
+        end if
+      end if
+      if (loaded_pack_span_cache .and. .not. found_pack_tile_cache_path) then
+        call extract_payload_field_text(pack_span_cache_text, "pack_tile_cache=", pack_tile_cache_path, &
+          found_pack_tile_cache_path)
+        if (len_trim(pack_tile_cache_path) > 0) then
+          call load_cuda_artifact_payload(cache_root, trim(pack_tile_cache_path), pack_tile_cache_text, loaded_pack_tile_cache)
+          if (loaded_pack_tile_cache) then
+            if (index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v1") <= 0 .and. &
+                index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v2") <= 0 .and. &
+                index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v3") <= 0 .and. &
+                index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v4") <= 0) then
+              loaded_pack_tile_cache = .false.
+              pack_tile_cache_text = ""
+            end if
+          end if
+        end if
+      end if
+      if (loaded_pack_tile_cache) then
+        call extract_payload_field_text(pack_tile_cache_text, "pack_buffer=", pack_tile_buffer_path, &
+          found_pack_tile_buffer_path)
       end if
     end if
     if (len_trim(pack_tile_buffer_path) > 0) then
@@ -1416,24 +1433,10 @@ contains
     if (allocated(exec_buffer_bytes)) deallocate(exec_buffer_bytes)
     if (len_trim(cache_root) == 0) return
 
-    cache_path = ""
-    call extract_payload_field_text(payload_text, "pack_span_cache=", cache_path, found_cache_path)
-    if (.not. found_cache_path) cache_path = build_pack_span_cache_artifact_path(artifact_path)
     cache_text = ""
     loaded_span_cache = .false.
-    if (len_trim(cache_path) > 0) then
-      call load_cuda_artifact_payload(cache_root, trim(cache_path), cache_text, loaded_ok)
-      if (loaded_ok) then
-        if (index(cache_text, "kind=cuda_pack_span_cache_v1") > 0 .or. &
-            index(cache_text, "kind=cuda_pack_span_cache_v2") > 0 .or. &
-            index(cache_text, "kind=cuda_pack_span_cache_v3") > 0 .or. &
-            index(cache_text, "kind=cuda_pack_span_cache_v4") > 0) then
-          loaded_span_cache = .true.
-        else
-          cache_text = ""
-        end if
-      end if
-    end if
+    cache_path = ""
+    found_cache_path = .false.
 
     pack_tile_cache_text = ""
     pack_tile_payload_text = ""
@@ -1540,26 +1543,6 @@ contains
       exec_buffer_bytes = 0_i8
     end if
 
-    tile_cache_text = ""
-    tile_cache_path = ""
-    loaded_tile_cache = .false.
-    call extract_payload_field_text(cache_text, "tile_cache=", tile_cache_path, found_tile_cache_path)
-    if (.not. found_tile_cache_path) tile_cache_path = build_pack_tile_cache_artifact_path(artifact_path)
-    if (len_trim(tile_cache_path) > 0) then
-      call load_cuda_artifact_payload(cache_root, trim(tile_cache_path), tile_cache_text, loaded_tile_cache)
-      if (loaded_tile_cache) then
-        if (index(tile_cache_text, "kind=cuda_pack_tile_cache_v1") <= 0) then
-          loaded_tile_cache = .false.
-          tile_cache_text = ""
-        end if
-      end if
-    end if
-
-    applied_usage_buffer = .false.
-    if (loaded_usage_buffer) then
-      call hydrate_pack_usage_buffer_summary(usage_buffer_bytes, usage_buffer_count, pack_usage, applied_usage_buffer)
-    end if
-
     applied_exec_buffer = .false.
     if (loaded_exec_buffer) then
       call hydrate_pack_execution_buffer(exec_buffer_bytes, exec_buffer_count, pack_usage, applied_exec_buffer)
@@ -1574,6 +1557,60 @@ contains
         if (allocated(exec_buffer_bytes)) deallocate(exec_buffer_bytes)
         loaded_cached = .true.
         return
+      end if
+    end if
+
+    call extract_payload_field_text(payload_text, "pack_span_cache=", cache_path, found_cache_path)
+    if (.not. found_cache_path) cache_path = build_pack_span_cache_artifact_path(artifact_path)
+    if (len_trim(cache_path) > 0) then
+      call load_cuda_artifact_payload(cache_root, trim(cache_path), cache_text, loaded_ok)
+      if (loaded_ok) then
+        if (index(cache_text, "kind=cuda_pack_span_cache_v1") > 0 .or. &
+            index(cache_text, "kind=cuda_pack_span_cache_v2") > 0 .or. &
+            index(cache_text, "kind=cuda_pack_span_cache_v3") > 0 .or. &
+            index(cache_text, "kind=cuda_pack_span_cache_v4") > 0) then
+          loaded_span_cache = .true.
+        else
+          cache_text = ""
+        end if
+      end if
+    end if
+    if (.not. loaded_pack_tile_cache .and. loaded_span_cache) then
+      call extract_payload_field_text(cache_text, "pack_tile_cache=", pack_tile_cache_path, found_pack_tile_cache_path)
+      if (len_trim(pack_tile_cache_path) > 0) then
+        call load_cuda_artifact_payload(cache_root, trim(pack_tile_cache_path), pack_tile_cache_text, loaded_pack_tile_cache)
+        if (loaded_pack_tile_cache) then
+          if (index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v1") <= 0 .and. &
+              index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v2") <= 0 .and. &
+              index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v3") <= 0 .and. &
+              index(pack_tile_cache_text, "kind=cuda_weight_pack_tile_cache_v4") <= 0) then
+            loaded_pack_tile_cache = .false.
+            pack_tile_cache_text = ""
+          end if
+        end if
+      end if
+    end if
+    if (.not. loaded_pack_tile_buffer .and. loaded_pack_tile_cache .and. .not. found_pack_tile_buffer_path) then
+      call extract_payload_field_text(pack_tile_cache_text, "pack_buffer=", pack_tile_buffer_path, &
+        found_pack_tile_buffer_path)
+      if (len_trim(pack_tile_buffer_path) > 0) then
+        call load_cuda_artifact_blob(cache_root, trim(pack_tile_buffer_path), pack_tile_buffer_bytes, &
+          pack_tile_buffer_count, loaded_pack_tile_buffer)
+      end if
+    end if
+
+    tile_cache_text = ""
+    tile_cache_path = ""
+    loaded_tile_cache = .false.
+    call extract_payload_field_text(cache_text, "tile_cache=", tile_cache_path, found_tile_cache_path)
+    if (.not. found_tile_cache_path) tile_cache_path = build_pack_tile_cache_artifact_path(artifact_path)
+    if (len_trim(tile_cache_path) > 0) then
+      call load_cuda_artifact_payload(cache_root, trim(tile_cache_path), tile_cache_text, loaded_tile_cache)
+      if (loaded_tile_cache) then
+        if (index(tile_cache_text, "kind=cuda_pack_tile_cache_v1") <= 0) then
+          loaded_tile_cache = .false.
+          tile_cache_text = ""
+        end if
       end if
     end if
 
@@ -1596,6 +1633,10 @@ contains
     if (len_trim(usage_buffer_path) > 0) then
       call load_cuda_artifact_blob(cache_root, trim(usage_buffer_path), usage_buffer_bytes, &
         usage_buffer_count, loaded_usage_buffer)
+    end if
+    applied_usage_buffer = .false.
+    if (loaded_usage_buffer) then
+      call hydrate_pack_usage_buffer_summary(usage_buffer_bytes, usage_buffer_count, pack_usage, applied_usage_buffer)
     end if
     if (.not. found_pack_tile_buffer_path .and. loaded_usage_buffer) then
       call extract_pack_usage_buffer_pack_tile_buffer_path(usage_buffer_bytes, usage_buffer_count, pack_tile_buffer_path, &

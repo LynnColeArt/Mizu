@@ -655,27 +655,13 @@ int main(void) {
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.usagebuffer' | grep -q .");
     if (!expect_true("generated cuda warm plans should no longer materialize usage-buffer sidecars", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' | grep -q .");
-    if (!expect_true("cuda span-cache sidecar should exist", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"kind=cuda_pack_span_cache_v4\" {} +");
-    if (!expect_true("cuda span-cache sidecar should store the expected format marker", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"pack_tile_cache=\" {} +");
-    if (!expect_true("cuda span-cache sidecar should reference the weight pack tile cache", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_pack=1\" {} +");
-    if (!expect_true("cuda span-cache sidecar should retain compact pack indices", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"tile_cache=\" {} +");
-    if (!expect_true("cuda span-cache sidecar should reference a staged tile cache payload", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_sample_hex=\" {} +");
-    if (!expect_true("cuda span-cache sidecar should store staged sample bytes", command_status == 0)) return 1;
+    if (!expect_true("generated cuda warm plans should no longer materialize span-cache sidecars", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spanbuffer' | grep -q .");
     if (!expect_true("generated cuda warm plans should no longer materialize span-buffer sidecars", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.execbuffer' | grep -q .");
     if (!expect_true("cuda exec-buffer sidecar should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.execbuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a4558\"' _ {} \\;");
     if (!expect_true("cuda exec-buffer sidecar should store the expected binary magic", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_page_hash=\" {} +");
-    if (!expect_true("cuda span-cache sidecar should store staged pack-page hashes", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_page_hex=\" {} +");
-    if (!expect_true("cuda span-cache sidecar should store staged pack-page records", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.tilecache' | grep -q .");
     if (!expect_true("cuda tile-cache payload should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.tilecache' -exec grep -q \"kind=cuda_pack_tile_cache_v1\" {} +");
@@ -688,7 +674,7 @@ int main(void) {
     if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
 
     if (!expect_true("cuda decode artifact plan path should resolve",
-                     capture_first_line("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f ! -name '*.execbuffer' ! -name '*.spancache' ! -name '*.tilecache'",
+                     capture_first_line("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f ! -name '*.execbuffer' ! -name '*.tilecache'",
                                         decode_plan_path, sizeof(decode_plan_path)))) {
         return 1;
     }
