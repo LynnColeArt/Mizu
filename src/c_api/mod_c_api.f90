@@ -3495,18 +3495,12 @@ contains
     character(len=(MAX_PATH_LEN * 2) + 4096)   :: tile_payload
     character(len=MAX_PATH_LEN)                :: sidecar_path
     character(len=MAX_PATH_LEN)                :: tile_path
-    character(len=MAX_PATH_LEN)                :: dispatch_buffer_path
-    character(len=MAX_PATH_LEN)                :: usage_buffer_path
-    character(len=MAX_PATH_LEN)                :: span_buffer_path
     character(len=MAX_PATH_LEN)                :: exec_buffer_path
     character(len=MAX_PATH_LEN)                :: pack_tile_path
     character(len=MAX_PATH_LEN)                :: pack_tile_buffer_path
     character(len=MAX_PATH_LEN)                :: weight_payload_path
     character(len=MAX_PATH_LEN)                :: full_path
     character(len=MAX_PATH_LEN)                :: tile_full_path
-    character(len=MAX_PATH_LEN)                :: dispatch_buffer_full_path
-    character(len=MAX_PATH_LEN)                :: usage_buffer_full_path
-    character(len=MAX_PATH_LEN)                :: span_buffer_full_path
     character(len=MAX_PATH_LEN)                :: exec_buffer_full_path
     character(len=MAX_PATH_LEN)                :: parent_dir
     character(len=MAX_PATH_LEN)                :: span_root
@@ -3587,9 +3581,6 @@ contains
     sidecar_path = build_cuda_pack_span_cache_path(metadata%payload_path)
     if (len_trim(sidecar_path) == 0) return
     tile_path = build_cuda_pack_tile_cache_path(metadata%payload_path)
-    dispatch_buffer_path = build_cuda_pack_dispatch_buffer_path(metadata%payload_path)
-    usage_buffer_path = build_cuda_pack_usage_buffer_path(metadata%payload_path)
-    span_buffer_path = build_cuda_pack_span_buffer_path(metadata%payload_path)
     exec_buffer_path = build_cuda_pack_execution_buffer_path(metadata%payload_path)
 
     full_path = join_cache_root_with_payload_path(cache_root, sidecar_path)
@@ -3631,19 +3622,9 @@ contains
       write(field_text, '(";pack_tile_cache=",A)') trim(pack_tile_path)
       call append_payload_fragment(sidecar_payload, trim(field_text))
     end if
-    if (len_trim(span_buffer_path) > 0) then
-      field_text = ""
-      write(field_text, '(";span_buffer=",A)') trim(span_buffer_path)
-      call append_payload_fragment(sidecar_payload, trim(field_text))
-    end if
     if (len_trim(exec_buffer_path) > 0) then
       field_text = ""
       write(field_text, '(";exec_buffer=",A)') trim(exec_buffer_path)
-      call append_payload_fragment(sidecar_payload, trim(field_text))
-    end if
-    if (len_trim(usage_buffer_path) > 0) then
-      field_text = ""
-      write(field_text, '(";usage_buffer=",A)') trim(usage_buffer_path)
       call append_payload_fragment(sidecar_payload, trim(field_text))
     end if
     if (len_trim(tile_path) > 0) then
@@ -3900,48 +3881,6 @@ contains
     if (ios /= 0_i32) return
     write(unit_id, "(A)", iostat=ios) trim(sidecar_payload)
     close(unit_id)
-
-    if (len_trim(dispatch_buffer_path) > 0) then
-      dispatch_buffer_full_path = join_cache_root_with_payload_path(cache_root, dispatch_buffer_path)
-      if (len_trim(dispatch_buffer_full_path) > 0) then
-        parent_dir = parent_directory_path(dispatch_buffer_full_path)
-        if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
-        open(newunit=unit_id, file=trim(dispatch_buffer_full_path), status="replace", access="stream", &
-          form="unformatted", action="write", iostat=ios)
-        if (ios == 0_i32) then
-          write(unit_id, iostat=ios) dispatch_buffer(1:dispatch_buffer_offset)
-          close(unit_id)
-        end if
-      end if
-    end if
-
-    if (len_trim(usage_buffer_path) > 0) then
-      usage_buffer_full_path = join_cache_root_with_payload_path(cache_root, usage_buffer_path)
-      if (len_trim(usage_buffer_full_path) > 0) then
-        parent_dir = parent_directory_path(usage_buffer_full_path)
-        if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
-        open(newunit=unit_id, file=trim(usage_buffer_full_path), status="replace", access="stream", &
-          form="unformatted", action="write", iostat=ios)
-        if (ios == 0_i32) then
-          write(unit_id, iostat=ios) usage_buffer(1:max(CUDA_USAGE_BUFFER_HEADER_BYTES, usage_path_offset + usage_path_bytes))
-          close(unit_id)
-        end if
-      end if
-    end if
-
-    if (len_trim(span_buffer_path) > 0 .and. span_entry_count > 0_i32) then
-      span_buffer_full_path = join_cache_root_with_payload_path(cache_root, span_buffer_path)
-      if (len_trim(span_buffer_full_path) > 0) then
-        parent_dir = parent_directory_path(span_buffer_full_path)
-        if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
-        open(newunit=unit_id, file=trim(span_buffer_full_path), status="replace", access="stream", &
-          form="unformatted", action="write", iostat=ios)
-        if (ios == 0_i32) then
-          write(unit_id, iostat=ios) span_buffer(1:span_buffer_offset)
-          close(unit_id)
-        end if
-      end if
-    end if
 
     if (len_trim(exec_buffer_path) > 0 .and. exec_entry_count > 0_i32) then
       exec_buffer_full_path = join_cache_root_with_payload_path(cache_root, exec_buffer_path)

@@ -651,13 +651,9 @@ int main(void) {
     command_status = system("grep -R \"pack_use4=lm_head|token_projection|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode >/dev/null");
     if (!expect_true("cuda decode artifact should no longer retain textual tensor-usage entries", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.dispatchbuffer' | grep -q .");
-    if (!expect_true("cuda dispatch-buffer sidecar should exist", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.dispatchbuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a4453\"' _ {} \\;");
-    if (!expect_true("cuda dispatch-buffer sidecar should store the expected binary magic", command_status == 0)) return 1;
+    if (!expect_true("generated cuda warm plans should no longer materialize dispatch-buffer sidecars", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.usagebuffer' | grep -q .");
-    if (!expect_true("cuda usage-buffer sidecar should exist", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.usagebuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a5542\"' _ {} \\;");
-    if (!expect_true("cuda usage-buffer sidecar should store the expected binary magic", command_status == 0)) return 1;
+    if (!expect_true("generated cuda warm plans should no longer materialize usage-buffer sidecars", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' | grep -q .");
     if (!expect_true("cuda span-cache sidecar should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"kind=cuda_pack_span_cache_v4\" {} +");
@@ -671,9 +667,7 @@ int main(void) {
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_sample_hex=\" {} +");
     if (!expect_true("cuda span-cache sidecar should store staged sample bytes", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spanbuffer' | grep -q .");
-    if (!expect_true("cuda span-buffer sidecar should exist", command_status == 0)) return 1;
-    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spanbuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a5342\"' _ {} \\;");
-    if (!expect_true("cuda span-buffer sidecar should store the expected binary magic", command_status == 0)) return 1;
+    if (!expect_true("generated cuda warm plans should no longer materialize span-buffer sidecars", command_status != 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.execbuffer' | grep -q .");
     if (!expect_true("cuda exec-buffer sidecar should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.execbuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a4558\"' _ {} \\;");
@@ -694,7 +688,7 @@ int main(void) {
     if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
 
     if (!expect_true("cuda decode artifact plan path should resolve",
-                     capture_first_line("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f ! -name '*.dispatchbuffer' ! -name '*.usagebuffer' ! -name '*.spanbuffer' ! -name '*.execbuffer' ! -name '*.spancache' ! -name '*.tilecache'",
+                     capture_first_line("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f ! -name '*.execbuffer' ! -name '*.spancache' ! -name '*.tilecache'",
                                         decode_plan_path, sizeof(decode_plan_path)))) {
         return 1;
     }

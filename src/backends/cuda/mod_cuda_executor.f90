@@ -521,7 +521,7 @@ contains
     if (len_trim(cache_root) == 0) return
     if (len_trim(artifact_path) == 0) return
 
-    full_path = join_cache_root_with_payload_path(cache_root, build_pack_usage_buffer_artifact_path(artifact_path))
+    full_path = join_cache_root_with_payload_path(cache_root, build_pack_execution_buffer_artifact_path(artifact_path))
     if (len_trim(full_path) > 0) then
       inquire(file=trim(full_path), exist=exists)
       if (exists) then
@@ -530,7 +530,7 @@ contains
       end if
     end if
 
-    full_path = join_cache_root_with_payload_path(cache_root, build_pack_execution_buffer_artifact_path(artifact_path))
+    full_path = join_cache_root_with_payload_path(cache_root, build_pack_usage_buffer_artifact_path(artifact_path))
     if (len_trim(full_path) > 0) then
       inquire(file=trim(full_path), exist=exists)
       if (exists) then
@@ -840,18 +840,6 @@ contains
       pack_tile_buffer_path = build_weight_pack_tile_buffer_artifact_path(artifact_path)
     end if
     if (.not. found_pack_tile_buffer_path) then
-      call extract_payload_field_text(payload_text, "pack_usage_buffer=", usage_buffer_path, found_usage_buffer_path)
-      if (.not. found_usage_buffer_path) usage_buffer_path = build_pack_usage_buffer_artifact_path(artifact_path)
-      if (len_trim(usage_buffer_path) > 0) then
-        call load_cuda_artifact_blob(cache_root, trim(usage_buffer_path), usage_buffer_bytes, usage_buffer_count, &
-          loaded_usage_buffer)
-        if (loaded_usage_buffer) then
-          call extract_pack_usage_buffer_pack_tile_buffer_path(usage_buffer_bytes, usage_buffer_count, &
-            pack_tile_buffer_path, found_pack_tile_buffer_path)
-        end if
-      end if
-    end if
-    if (.not. found_pack_tile_buffer_path) then
       call extract_payload_field_text(payload_text, "pack_exec_buffer=", exec_buffer_path, found_exec_buffer_path)
       if (.not. found_exec_buffer_path) exec_buffer_path = build_pack_execution_buffer_artifact_path(artifact_path)
       if (len_trim(exec_buffer_path) > 0) then
@@ -859,6 +847,18 @@ contains
           loaded_exec_buffer)
         if (loaded_exec_buffer) then
           call extract_pack_execution_buffer_pack_tile_buffer_path(exec_buffer_bytes, exec_buffer_count, &
+            pack_tile_buffer_path, found_pack_tile_buffer_path)
+        end if
+      end if
+    end if
+    if (.not. found_pack_tile_buffer_path) then
+      call extract_payload_field_text(payload_text, "pack_usage_buffer=", usage_buffer_path, found_usage_buffer_path)
+      if (.not. found_usage_buffer_path) usage_buffer_path = build_pack_usage_buffer_artifact_path(artifact_path)
+      if (len_trim(usage_buffer_path) > 0) then
+        call load_cuda_artifact_blob(cache_root, trim(usage_buffer_path), usage_buffer_bytes, usage_buffer_count, &
+          loaded_usage_buffer)
+        if (loaded_usage_buffer) then
+          call extract_pack_usage_buffer_pack_tile_buffer_path(usage_buffer_bytes, usage_buffer_count, &
             pack_tile_buffer_path, found_pack_tile_buffer_path)
         end if
       end if
@@ -1522,30 +1522,6 @@ contains
         exec_buffer_count, loaded_exec_buffer)
     end if
 
-    dispatch_buffer_path = ""
-    loaded_dispatch_buffer = .false.
-    call extract_payload_field_text(payload_text, "pack_dispatch_buffer=", dispatch_buffer_path, found_dispatch_buffer_path)
-    if (.not. found_dispatch_buffer_path) dispatch_buffer_path = build_pack_dispatch_buffer_artifact_path(artifact_path)
-    if (len_trim(dispatch_buffer_path) > 0) then
-      call load_cuda_artifact_blob(cache_root, trim(dispatch_buffer_path), dispatch_buffer_bytes, &
-        dispatch_buffer_count, loaded_dispatch_buffer)
-    end if
-
-    usage_buffer_path = ""
-    loaded_usage_buffer = .false.
-    call extract_payload_field_text(cache_text, "usage_buffer=", usage_buffer_path, found_usage_buffer_path)
-    if (.not. found_usage_buffer_path) then
-      call extract_payload_field_text(payload_text, "pack_usage_buffer=", usage_buffer_path, found_usage_buffer_path)
-    end if
-    if (.not. found_usage_buffer_path) usage_buffer_path = build_pack_usage_buffer_artifact_path(artifact_path)
-    if (len_trim(usage_buffer_path) > 0) then
-      call load_cuda_artifact_blob(cache_root, trim(usage_buffer_path), usage_buffer_bytes, &
-        usage_buffer_count, loaded_usage_buffer)
-    end if
-    if (.not. found_pack_tile_buffer_path .and. loaded_usage_buffer) then
-      call extract_pack_usage_buffer_pack_tile_buffer_path(usage_buffer_bytes, usage_buffer_count, pack_tile_buffer_path, &
-        found_pack_tile_buffer_path)
-    end if
     if (.not. found_pack_tile_buffer_path .and. loaded_exec_buffer) then
       call extract_pack_execution_buffer_pack_tile_buffer_path(exec_buffer_bytes, exec_buffer_count, &
         pack_tile_buffer_path, found_pack_tile_buffer_path)
@@ -1555,33 +1531,9 @@ contains
         pack_tile_buffer_count, loaded_pack_tile_buffer)
     end if
 
-    span_buffer_path = ""
-    loaded_span_buffer = .false.
-    call extract_payload_field_text(payload_text, "pack_span_buffer=", span_buffer_path, found_span_buffer_path)
-    if (.not. found_span_buffer_path) then
-      call extract_payload_field_text(cache_text, "span_buffer=", span_buffer_path, found_span_buffer_path)
-    end if
-    if (.not. found_span_buffer_path) span_buffer_path = build_pack_span_buffer_artifact_path(artifact_path)
-    if (len_trim(span_buffer_path) > 0) then
-      call load_cuda_artifact_blob(cache_root, trim(span_buffer_path), span_buffer_bytes, &
-        span_buffer_count, loaded_span_buffer)
-    end if
-
     if (.not. allocated(pack_tile_buffer_bytes)) then
       allocate(pack_tile_buffer_bytes(1))
       pack_tile_buffer_bytes = 0_i8
-    end if
-    if (.not. allocated(dispatch_buffer_bytes)) then
-      allocate(dispatch_buffer_bytes(1))
-      dispatch_buffer_bytes = 0_i8
-    end if
-    if (.not. allocated(usage_buffer_bytes)) then
-      allocate(usage_buffer_bytes(1))
-      usage_buffer_bytes = 0_i8
-    end if
-    if (.not. allocated(span_buffer_bytes)) then
-      allocate(span_buffer_bytes(1))
-      span_buffer_bytes = 0_i8
     end if
     if (.not. allocated(exec_buffer_bytes)) then
       allocate(exec_buffer_bytes(1))
@@ -1623,6 +1575,56 @@ contains
         loaded_cached = .true.
         return
       end if
+    end if
+
+    dispatch_buffer_path = ""
+    loaded_dispatch_buffer = .false.
+    call extract_payload_field_text(payload_text, "pack_dispatch_buffer=", dispatch_buffer_path, found_dispatch_buffer_path)
+    if (.not. found_dispatch_buffer_path) dispatch_buffer_path = build_pack_dispatch_buffer_artifact_path(artifact_path)
+    if (len_trim(dispatch_buffer_path) > 0) then
+      call load_cuda_artifact_blob(cache_root, trim(dispatch_buffer_path), dispatch_buffer_bytes, &
+        dispatch_buffer_count, loaded_dispatch_buffer)
+    end if
+
+    usage_buffer_path = ""
+    loaded_usage_buffer = .false.
+    call extract_payload_field_text(cache_text, "usage_buffer=", usage_buffer_path, found_usage_buffer_path)
+    if (.not. found_usage_buffer_path) then
+      call extract_payload_field_text(payload_text, "pack_usage_buffer=", usage_buffer_path, found_usage_buffer_path)
+    end if
+    if (.not. found_usage_buffer_path) usage_buffer_path = build_pack_usage_buffer_artifact_path(artifact_path)
+    if (len_trim(usage_buffer_path) > 0) then
+      call load_cuda_artifact_blob(cache_root, trim(usage_buffer_path), usage_buffer_bytes, &
+        usage_buffer_count, loaded_usage_buffer)
+    end if
+    if (.not. found_pack_tile_buffer_path .and. loaded_usage_buffer) then
+      call extract_pack_usage_buffer_pack_tile_buffer_path(usage_buffer_bytes, usage_buffer_count, pack_tile_buffer_path, &
+        found_pack_tile_buffer_path)
+    end if
+
+    span_buffer_path = ""
+    loaded_span_buffer = .false.
+    call extract_payload_field_text(payload_text, "pack_span_buffer=", span_buffer_path, found_span_buffer_path)
+    if (.not. found_span_buffer_path) then
+      call extract_payload_field_text(cache_text, "span_buffer=", span_buffer_path, found_span_buffer_path)
+    end if
+    if (.not. found_span_buffer_path) span_buffer_path = build_pack_span_buffer_artifact_path(artifact_path)
+    if (len_trim(span_buffer_path) > 0) then
+      call load_cuda_artifact_blob(cache_root, trim(span_buffer_path), span_buffer_bytes, &
+        span_buffer_count, loaded_span_buffer)
+    end if
+
+    if (.not. allocated(dispatch_buffer_bytes)) then
+      allocate(dispatch_buffer_bytes(1))
+      dispatch_buffer_bytes = 0_i8
+    end if
+    if (.not. allocated(usage_buffer_bytes)) then
+      allocate(usage_buffer_bytes(1))
+      usage_buffer_bytes = 0_i8
+    end if
+    if (.not. allocated(span_buffer_bytes)) then
+      allocate(span_buffer_bytes(1))
+      span_buffer_bytes = 0_i8
     end if
 
     applied_dispatch_buffer = .false.
