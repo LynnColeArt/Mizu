@@ -247,6 +247,7 @@ program test_cuda_executor
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
+    "pack_dependency=cuda_import_weight_pack_v1;" // &
     "pack_use_kind=cuda_decode_pack_usage_v1;" // &
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
@@ -870,6 +871,7 @@ program test_cuda_executor
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
+    "pack_dependency=cuda_import_weight_pack_v1;" // &
     "pack_use_kind=cuda_decode_pack_usage_v1;" // &
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
@@ -932,6 +934,7 @@ program test_cuda_executor
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
+    "pack_dependency=cuda_import_weight_pack_v1;" // &
     "pack_ref_hash=0000000000001234;pack_ref_count=1;pack_ref_bytes=4096;" // &
     "weight_pack_hash=0000000000005678;weight_pack_count=2;weight_pack_bytes=8192;" // &
     "pack_ref_tile_cache=" // pack_tile_cache_path // ";" // &
@@ -987,9 +990,7 @@ program test_cuda_executor
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
-    "pack_usage_buffer=" // decode_usage_buffer_path // ";" // &
-    "pack_dispatch_buffer=" // decode_dispatch_buffer_path // ";" // &
-    "pack_span_buffer=" // decode_span_buffer_path
+    "pack_dependency=cuda_import_weight_pack_v1"
   close(13)
 
   call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
@@ -1031,6 +1032,7 @@ program test_cuda_executor
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
   write(13, "(A)") "candidate=decode_usage;stage=4;format=cuda_bf16_decode_plan_v1;" // &
+    "pack_dependency=cuda_import_weight_pack_v1;" // &
     "pack_use_kind=cuda_decode_pack_usage_v1;" // &
     "pack_dispatch_kind=cuda_pack_dispatch_v1;" // &
     "pack_span_root=" // import_bundle_root // ";" // &

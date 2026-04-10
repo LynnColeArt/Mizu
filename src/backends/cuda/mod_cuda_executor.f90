@@ -490,6 +490,7 @@ contains
 
     is_compact = (index(payload_text, "pack_use_kind=") > 0) .or. &
       (index(payload_text, "pack_dispatch_kind=cuda_pack_dispatch_v1") > 0) .or. &
+      (index(payload_text, "pack_dependency=") > 0) .or. &
       (index(payload_text, "pack_usage_buffer=") > 0) .or. &
       (index(payload_text, "pack_dispatch_buffer=") > 0) .or. &
       (index(payload_text, "pack_span_buffer=") > 0)
@@ -1024,6 +1025,7 @@ contains
     logical                                      :: found_dispatch_buffer
     logical                                      :: found_span_buffer
     logical                                      :: found_span_root
+    logical                                      :: found_pack_dependency
     logical                                      :: found_path
     logical                                      :: found_sample_bytes
     logical                                      :: found_entry
@@ -1103,6 +1105,9 @@ contains
     path_text = ""
     call extract_payload_field_text(payload_text, "pack_span_buffer=", path_text, found_span_buffer)
     if (found_span_buffer) has_compact_markers = .true.
+    path_text = ""
+    call extract_payload_field_text(payload_text, "pack_dependency=", path_text, found_pack_dependency)
+    if (found_pack_dependency) has_compact_markers = .true.
 
     pack_usage%span_root = ""
     path_text = ""

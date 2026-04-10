@@ -3583,10 +3583,6 @@ contains
     logical                                   :: found_entry
     logical                                   :: found_path
     logical                                   :: found_sample_bytes
-    logical                                   :: found_sidecar
-    logical                                   :: found_dispatch_buffer
-    logical                                   :: found_usage_buffer
-    logical                                   :: found_span_buffer
     logical                                   :: found_pack_tile
     logical                                   :: found_pack_tile_buffer
     logical                                   :: has_entries
@@ -3614,35 +3610,6 @@ contains
     dispatch_buffer_path = build_cuda_pack_dispatch_buffer_path(metadata%payload_path)
     usage_buffer_path = build_cuda_pack_usage_buffer_path(metadata%payload_path)
     span_buffer_path = build_cuda_pack_span_buffer_path(metadata%payload_path)
-
-    path_text = ""
-    call extract_payload_field_text_cache(payload_text, "pack_span_cache=", path_text, found_sidecar)
-    if (.not. found_sidecar) then
-      field_text = ""
-      write(field_text, '(";pack_span_cache=",A)') trim(sidecar_path)
-      call append_payload_fragment(payload_text, trim(field_text))
-    end if
-    path_text = ""
-    call extract_payload_field_text_cache(payload_text, "pack_dispatch_buffer=", path_text, found_dispatch_buffer)
-    if (.not. found_dispatch_buffer .and. len_trim(dispatch_buffer_path) > 0) then
-      field_text = ""
-      write(field_text, '(";pack_dispatch_buffer=",A)') trim(dispatch_buffer_path)
-      call append_payload_fragment(payload_text, trim(field_text))
-    end if
-    path_text = ""
-    call extract_payload_field_text_cache(payload_text, "pack_usage_buffer=", path_text, found_usage_buffer)
-    if (.not. found_usage_buffer .and. len_trim(usage_buffer_path) > 0) then
-      field_text = ""
-      write(field_text, '(";pack_usage_buffer=",A)') trim(usage_buffer_path)
-      call append_payload_fragment(payload_text, trim(field_text))
-    end if
-    path_text = ""
-    call extract_payload_field_text_cache(payload_text, "pack_span_buffer=", path_text, found_span_buffer)
-    if (.not. found_span_buffer .and. len_trim(span_buffer_path) > 0) then
-      field_text = ""
-      write(field_text, '(";pack_span_buffer=",A)') trim(span_buffer_path)
-      call append_payload_fragment(payload_text, trim(field_text))
-    end if
 
     payload_bytes = int(len_trim(payload_text) + 1_i64, kind=i64)
 
