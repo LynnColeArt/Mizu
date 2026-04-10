@@ -153,6 +153,7 @@ static int is_binary_sidecar_redundant_fragment(const char *fragment) {
     if (strncmp(fragment, "pack_usage_buffer=", 18) == 0) return 1;
     if (strncmp(fragment, "pack_dispatch_buffer=", 21) == 0) return 1;
     if (strncmp(fragment, "pack_span_buffer=", 17) == 0) return 1;
+    if (strncmp(fragment, "pack_exec_buffer=", 17) == 0) return 1;
 
     return 0;
 }
@@ -673,6 +674,10 @@ int main(void) {
     if (!expect_true("cuda span-buffer sidecar should exist", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spanbuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a5342\"' _ {} \\;");
     if (!expect_true("cuda span-buffer sidecar should store the expected binary magic", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.execbuffer' | grep -q .");
+    if (!expect_true("cuda exec-buffer sidecar should exist", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.execbuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a4558\"' _ {} \\;");
+    if (!expect_true("cuda exec-buffer sidecar should store the expected binary magic", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_page_hash=\" {} +");
     if (!expect_true("cuda span-cache sidecar should store staged pack-page hashes", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -exec grep -q \"entry1_page_hex=\" {} +");
@@ -689,7 +694,7 @@ int main(void) {
     if (!expect_true("cuda session artifact file should exist", command_status == 0)) return 1;
 
     if (!expect_true("cuda decode artifact plan path should resolve",
-                     capture_first_line("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f ! -name '*.dispatchbuffer' ! -name '*.usagebuffer' ! -name '*.spanbuffer' ! -name '*.spancache' ! -name '*.tilecache'",
+                     capture_first_line("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans/decode -type f ! -name '*.dispatchbuffer' ! -name '*.usagebuffer' ! -name '*.spanbuffer' ! -name '*.execbuffer' ! -name '*.spancache' ! -name '*.tilecache'",
                                         decode_plan_path, sizeof(decode_plan_path)))) {
         return 1;
     }
@@ -744,6 +749,10 @@ int main(void) {
     }
     if (!expect_true("cuda binary-only decode plan should drop direct span-buffer references",
                      !file_contains_substring(decode_plan_path, "pack_span_buffer="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should not require direct exec-buffer references",
+                     !file_contains_substring(decode_plan_path, "pack_exec_buffer="))) {
         return 1;
     }
     if (!expect_true("cuda binary-only decode plan should drop textual pack-use records",
@@ -896,6 +905,12 @@ int main(void) {
 
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spancache' -delete");
     if (!expect_true("cuda span-cache sidecar removal should succeed", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.usagebuffer' -delete");
+    if (!expect_true("cuda usage-buffer sidecar removal should succeed", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.dispatchbuffer' -delete");
+    if (!expect_true("cuda dispatch-buffer sidecar removal should succeed", command_status == 0)) return 1;
+    command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.spanbuffer' -delete");
+    if (!expect_true("cuda span-buffer sidecar removal should succeed", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/plans -name '*.tilecache' -delete");
     if (!expect_true("cuda tile-cache payload removal should succeed", command_status == 0)) return 1;
 

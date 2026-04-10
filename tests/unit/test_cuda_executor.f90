@@ -59,6 +59,7 @@ program test_cuda_executor
   integer      :: shell_status
   integer(i64) :: artifact_hash
   integer(i64) :: usage_decode_artifact_hash
+  integer(i64) :: binary_only_decode_artifact_hash
   integer(i64) :: pack_usage_hash
   integer(i64) :: pack_usage_bytes
   integer(i64) :: first_pack_offset
@@ -143,6 +144,7 @@ program test_cuda_executor
   character(len=*), parameter :: decode_dispatch_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.dispatchbuffer"
   character(len=*), parameter :: decode_span_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.spanbuffer"
   character(len=*), parameter :: decode_span_cache_path = "artifacts/cuda/cuda/plans/decode/usage.plan.spancache"
+  character(len=*), parameter :: decode_exec_buffer_path = "artifacts/cuda/cuda/plans/decode/usage.plan.execbuffer"
   character(len=*), parameter :: pack_tile_cache_path = "artifacts/cuda/cuda/weights/usage.pack.packtiles"
   character(len=*), parameter :: pack_tile_payload_path = "artifacts/cuda/cuda/weights/usage.pack.packpayload"
   character(len=*), parameter :: pack_tile_buffer_path = "artifacts/cuda/cuda/weights/usage.pack.packbuffer"
@@ -189,6 +191,9 @@ program test_cuda_executor
     2222222222222222_i64)
   call write_pack_span_buffer_fixture(trim(cache_root) // "/" // trim(decode_span_buffer_path), import_bundle_root)
   call write_pack_span_cache_fixture(trim(cache_root) // "/" // trim(decode_span_cache_path), pack_tile_cache_path)
+  call write_pack_execution_buffer_fixture(trim(cache_root) // "/" // trim(decode_exec_buffer_path), &
+    import_bundle_root, 4_i32, 2205693952_i64, 0_i64, 1115699200_i64, 1089994752_i64, 2222222222222222_i64, &
+    pack_tile_buffer_path, .false.)
 
   open(unit=9, file=trim(cache_root) // "/" // trim(projector_path), status="replace", action="write")
   write(9, "(A)") "candidate=projector;stage=2;workspace=8388608;format=cuda_u8_bf16_projector_plan_v1"
@@ -1024,8 +1029,66 @@ program test_cuda_executor
     usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
   call expect_equal_i32("cuda binary-sidecar-only replay should still succeed without the pack-tile cache", &
     status_code, MIZU_STATUS_OK)
+  call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
+    binary_only_decode_artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, &
+    rolling_state_digest, summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, &
+    snapshot_valid)
+  call expect_true("cuda binary-sidecar-only replay without the pack-tile cache should preserve readable lineage", &
+    snapshot_valid)
   call expect_equal_i32("cuda binary-sidecar-only replay should preserve token identity without the pack-tile cache", &
     token_value_with_other_context, token_value_with_dispatch_buffer_only)
+
+  call execute_command_line("rm -f " // cache_root // "/" // trim(decode_usage_buffer_path) // " " // &
+    cache_root // "/" // trim(decode_dispatch_buffer_path) // " " // cache_root // "/" // trim(decode_span_buffer_path) // &
+    " " // cache_root // "/" // trim(decode_span_cache_path), exitstat=shell_status)
+  call expect_equal_i32("cuda exec-buffer replay cleanup should succeed", int(shell_status, kind=i32), 0_i32)
+  call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
+    token_value_with_other_context, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
+  call expect_equal_i32("cuda exec-buffer-only replay should still succeed", status_code, MIZU_STATUS_OK)
+  call extract_cuda_context_pack_usage_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, &
+    pack_usage_hash, pack_usage_bytes, first_pack_offset, last_pack_offset, last_pack_bytes, pack_usage_count, &
+    snapshot_valid)
+  call expect_true("cuda exec-buffer-only replay should retain a readable usage snapshot", snapshot_valid)
+  call expect_equal_i32("cuda exec-buffer-only replay should keep four selected tensors", pack_usage_count, 4_i32)
+  call expect_equal_i64("cuda exec-buffer-only replay should preserve usage bytes", &
+    pack_usage_bytes, 2205693952_i64)
+  call expect_equal_i64("cuda exec-buffer-only replay should preserve the first packed offset", &
+    first_pack_offset, 0_i64)
+  call expect_equal_i64("cuda exec-buffer-only replay should preserve the last packed offset", &
+    last_pack_offset, 1115699200_i64)
+  call expect_equal_i64("cuda exec-buffer-only replay should preserve the last packed bytes", &
+    last_pack_bytes, 1089994752_i64)
+  call expect_equal_i64("cuda exec-buffer-only replay should preserve the staged usage hash", &
+    pack_usage_hash, 2222222222222222_i64)
+  call extract_cuda_context_pack_dispatch_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, &
+    pack_dispatch_offsets, pack_dispatch_bytes, pack_dispatch_role_codes, pack_dispatch_layout_codes, &
+    pack_dispatch_count, snapshot_valid)
+  call expect_true("cuda exec-buffer-only replay should retain a readable dispatch snapshot", snapshot_valid)
+  call expect_equal_i32("cuda exec-buffer-only replay should keep four live entries", pack_dispatch_count, 4_i32)
+  call expect_equal_i64("cuda exec-buffer-only replay should restore the first tensor offset", &
+    pack_dispatch_offsets(1), 0_i64)
+  call expect_equal_i64("cuda exec-buffer-only replay should restore the token projection bytes", &
+    pack_dispatch_bytes(4), 1089994752_i64)
+  call expect_equal_i32("cuda exec-buffer-only replay should restore the first tensor role", &
+    pack_dispatch_role_codes(1), 1_i32)
+  call expect_equal_i32("cuda exec-buffer-only replay should restore the final tensor layout", &
+    pack_dispatch_layout_codes(4), 1_i32)
+  call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
+    artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
+    summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
+  call expect_true("cuda exec-buffer-only replay should preserve readable lineage", snapshot_valid)
+  call expect_equal_i64("cuda exec-buffer-only replay should preserve artifact lineage without older sidecars", &
+    artifact_hash, binary_only_decode_artifact_hash)
+  call expect_equal_i32("cuda exec-buffer-only replay should preserve token identity without older sidecars", &
+    token_value_with_other_context, token_value_with_dispatch_buffer_only)
+
+  call write_pack_usage_buffer_fixture(trim(cache_root) // "/" // trim(decode_usage_buffer_path), 4_i32, &
+    2205693952_i64, 0_i64, 1115699200_i64, 1089994752_i64, 2222222222222222_i64, pack_tile_buffer_path)
+  call write_pack_dispatch_buffer_fixture(trim(cache_root) // "/" // trim(decode_dispatch_buffer_path), 4_i32, &
+    2222222222222222_i64)
+  call write_pack_span_buffer_fixture(trim(cache_root) // "/" // trim(decode_span_buffer_path), import_bundle_root)
+  call write_pack_span_cache_fixture(trim(cache_root) // "/" // trim(decode_span_cache_path), pack_tile_cache_path)
   call write_pack_tile_cache_fixture(trim(cache_root) // "/" // trim(pack_tile_cache_path), &
     pack_tile_payload_path, pack_tile_buffer_path)
 
@@ -1216,6 +1279,162 @@ contains
     write(unit_id) buffer_bytes(1:data_offset)
     close(unit_id)
   end subroutine write_pack_tile_buffer_fixture
+
+  subroutine write_pack_execution_buffer_fixture(full_path, bundle_root, usage_count, usage_bytes, first_pack_offset, &
+                                                 last_pack_offset, last_pack_bytes, usage_hash, pack_tile_buffer_path, &
+                                                 use_rewritten_bytes)
+    character(len=*), intent(in) :: full_path
+    character(len=*), intent(in) :: bundle_root
+    integer(i32), intent(in)     :: usage_count
+    integer(i64), intent(in)     :: usage_bytes
+    integer(i64), intent(in)     :: first_pack_offset
+    integer(i64), intent(in)     :: last_pack_offset
+    integer(i64), intent(in)     :: last_pack_bytes
+    integer(i64), intent(in)     :: usage_hash
+    character(len=*), intent(in) :: pack_tile_buffer_path
+    logical, intent(in)          :: use_rewritten_bytes
+    integer(i32), parameter      :: CUDA_EXEC_BUFFER_MAGIC = int(z'58455A4D', kind=i32)
+    integer(i32), parameter      :: CUDA_EXEC_BUFFER_VERSION = 2_i32
+    integer(i32), parameter      :: CUDA_EXEC_BUFFER_HEADER_BYTES = 72_i32
+    integer(i32), parameter      :: CUDA_EXEC_BUFFER_ENTRY_BYTES = 96_i32
+    character(len=64)            :: hex_records(8)
+    character(len=128)           :: source_paths(4)
+    integer(i8)                  :: buffer_bytes(2048)
+    integer(i8)                  :: page_bytes(32)
+    integer(i8)                  :: tile_bytes(32)
+    integer(i8)                  :: sample_bytes(64)
+    integer(i64)                 :: pack_offsets(4)
+    integer(i64)                 :: pack_bytes(4)
+    integer(i64)                 :: page_hashes(4)
+    integer(i64)                 :: tile_hashes(4)
+    integer(i64)                 :: materialized_hashes(4)
+    integer(i64)                 :: span_hash
+    integer(i64)                 :: sample_bytes_i64
+    integer(i32)                 :: role_codes(4)
+    integer(i32)                 :: layout_codes(4)
+    integer(i32)                 :: record_index
+    integer(i32)                 :: byte_count
+    integer(i32)                 :: sample_count
+    integer(i32)                 :: sample_data_offset
+    integer(i32)                 :: page_data_offset
+    integer(i32)                 :: tile_data_offset
+    integer(i32)                 :: record_offset
+    integer(i32)                 :: buffer_offset
+    integer(i32)                 :: path_byte_count
+    integer(i32)                 :: path_data_offset
+    integer(i32)                 :: path_index
+    integer                      :: unit_id
+
+    if (use_rewritten_bytes) then
+      hex_records = [character(len=64) :: &
+        "FFEEDDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEF", &
+        "F0E1D2C3B4A5968778695A4B3C2D1E0F00112233445566778899AABBCCDDEEFF", &
+        "EEDDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF0", &
+        "E1D2C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F10", &
+        "DDCCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF001", &
+        "D2C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F1021", &
+        "CCBBAA99887766554433221100FEDCBA98765432100123456789ABCDEFF00112", &
+        "C3B4A5968778695A4B3C2D1E0F102132435465768798A9BACBDCEDFE0F102132" ]
+    else
+      hex_records = [character(len=64) :: &
+        "00112233445566778899AABBCCDDEEFF0123456789ABCDEFFEDCBA9876543210", &
+        "102132435465768798A9BACBDCEDFE0F1E2D3C4B5A69788796A5B4C3D2E1F001", &
+        "112233445566778899AABBCCDDEEFF00123456789ABCDEFF0FEDCBA987654321", &
+        "2132435465768798A9BACBDCEDFE0F102F3E4D5C6B7A8998A7B6C5D4E3F20110", &
+        "2233445566778899AABBCCDDEEFF001223456789ABCDEFF01FEDCBA987654322", &
+        "32435465768798A9BACBDCEDFE0F1021404F5E6D7C8B9AA9B8C7D6E5F4031221", &
+        "33445566778899AABBCCDDEEFF0011223456789ABCDEFF012FEDCBA987654323", &
+        "435465768798A9BACBDCEDFE0F10213251606F7E8D9CABBAC9D8E7F605142332" ]
+    end if
+
+    source_paths = [character(len=128) :: &
+      "weights/token_embeddings.bin", &
+      "weights/decoder_blocks.bin", &
+      "weights/final_norm.bin", &
+      "weights/lm_head.bin" ]
+    pack_offsets = [0_i64, 1089994752_i64, 1115684864_i64, 1115699200_i64]
+    pack_bytes = [1089994752_i64, 25690112_i64, 14336_i64, 1089994752_i64]
+    role_codes = [1_i32, 2_i32, 3_i32, 4_i32]
+    layout_codes = [1_i32, 2_i32, 3_i32, 1_i32]
+    page_hashes = [9100000000000001_i64, 9100000000000002_i64, 9100000000000003_i64, 9100000000000004_i64]
+    tile_hashes = [9200000000000001_i64, 9200000000000002_i64, 9200000000000003_i64, 9200000000000004_i64]
+    materialized_hashes = [9010000000000001_i64, 9010000000000002_i64, 9010000000000003_i64, 9010000000000004_i64]
+
+    buffer_bytes = 0_i8
+    buffer_offset = CUDA_EXEC_BUFFER_HEADER_BYTES + (4_i32 * CUDA_EXEC_BUFFER_ENTRY_BYTES)
+
+    do record_index = 1_i32, 4_i32
+      call read_fixture_span_record(trim(bundle_root), trim(source_paths(record_index)), span_hash, sample_bytes_i64, &
+        sample_bytes, sample_count)
+      record_offset = CUDA_EXEC_BUFFER_HEADER_BYTES + ((record_index - 1_i32) * CUDA_EXEC_BUFFER_ENTRY_BYTES)
+      sample_data_offset = 0_i32
+      if (sample_count > 0_i32) then
+        sample_data_offset = buffer_offset
+        buffer_bytes(sample_data_offset + 1_i32:sample_data_offset + sample_count) = sample_bytes(1:sample_count)
+        buffer_offset = buffer_offset + sample_count
+      end if
+      call decode_fixture_hex(hex_records((record_index - 1_i32) * 2_i32 + 1_i32), page_bytes, byte_count)
+      page_data_offset = 0_i32
+      if (byte_count > 0_i32) then
+        page_data_offset = buffer_offset
+        buffer_bytes(page_data_offset + 1_i32:page_data_offset + byte_count) = page_bytes(1:byte_count)
+        buffer_offset = buffer_offset + byte_count
+      end if
+      call decode_fixture_hex(hex_records((record_index - 1_i32) * 2_i32 + 2_i32), tile_bytes, byte_count)
+      tile_data_offset = 0_i32
+      if (byte_count > 0_i32) then
+        tile_data_offset = buffer_offset
+        buffer_bytes(tile_data_offset + 1_i32:tile_data_offset + byte_count) = tile_bytes(1:byte_count)
+        buffer_offset = buffer_offset + byte_count
+      end if
+
+      call write_fixture_i32_le(buffer_bytes, record_offset + 0_i32, record_index)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 4_i32, role_codes(record_index))
+      call write_fixture_i32_le(buffer_bytes, record_offset + 8_i32, layout_codes(record_index))
+      call write_fixture_i32_le(buffer_bytes, record_offset + 12_i32, sample_count)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 16_i32, sample_data_offset)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 20_i32, 8_i32)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 24_i32, page_data_offset)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 28_i32, 32_i32)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 32_i32, 32_i32)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 36_i32, tile_data_offset)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 40_i32, 32_i32)
+      call write_fixture_i32_le(buffer_bytes, record_offset + 44_i32, record_index)
+      call write_fixture_i64_le(buffer_bytes, record_offset + 48_i32, pack_offsets(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 56_i32, pack_bytes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 64_i32, materialized_hashes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 72_i32, pack_bytes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 80_i32, page_hashes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 88_i32, tile_hashes(record_index))
+    end do
+
+    call write_fixture_i32_le(buffer_bytes, 0_i32, CUDA_EXEC_BUFFER_MAGIC)
+    call write_fixture_i32_le(buffer_bytes, 4_i32, CUDA_EXEC_BUFFER_VERSION)
+    call write_fixture_i32_le(buffer_bytes, 8_i32, CUDA_EXEC_BUFFER_HEADER_BYTES)
+    call write_fixture_i32_le(buffer_bytes, 12_i32, CUDA_EXEC_BUFFER_ENTRY_BYTES)
+    call write_fixture_i32_le(buffer_bytes, 16_i32, 4_i32)
+    call write_fixture_i32_le(buffer_bytes, 20_i32, usage_count)
+    call write_fixture_i64_le(buffer_bytes, 24_i32, usage_hash)
+    call write_fixture_i64_le(buffer_bytes, 32_i32, usage_bytes)
+    call write_fixture_i64_le(buffer_bytes, 40_i32, first_pack_offset)
+    call write_fixture_i64_le(buffer_bytes, 48_i32, last_pack_offset)
+    call write_fixture_i64_le(buffer_bytes, 56_i32, last_pack_bytes)
+    path_byte_count = min(len_trim(pack_tile_buffer_path), 512_i32)
+    path_data_offset = 0_i32
+    if (path_byte_count > 0_i32) then
+      path_data_offset = buffer_offset
+      call write_fixture_i32_le(buffer_bytes, 64_i32, path_byte_count)
+      call write_fixture_i32_le(buffer_bytes, 68_i32, path_data_offset)
+      do path_index = 1_i32, path_byte_count
+        buffer_bytes(path_data_offset + path_index) = int(iachar(pack_tile_buffer_path(path_index:path_index)), kind=i8)
+      end do
+      buffer_offset = path_data_offset + path_byte_count
+    end if
+
+    open(newunit=unit_id, file=trim(full_path), status="replace", access="stream", form="unformatted", action="write")
+    write(unit_id) buffer_bytes(1:buffer_offset)
+    close(unit_id)
+  end subroutine write_pack_execution_buffer_fixture
 
   subroutine write_pack_dispatch_buffer_fixture(full_path, entry_count, usage_hash)
     character(len=*), intent(in) :: full_path
