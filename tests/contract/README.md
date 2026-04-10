@@ -137,6 +137,10 @@ These suites cover the `API-C*` portion of
     materialize `.spancache`, because the resolved span/sample/page/tile
     record now lives in `.execbuffer` and `.spancache` is only a fallback for
     older cache layouts
+  - verifies those same newly generated CUDA warm artifacts also no longer
+    materialize plan-local `.tilecache`, because the generated tile record now
+    lives in `.execbuffer` plus the typed weight-pack cache and `.tilecache`
+    is only a fallback for older cache layouts
   - verifies that same public CUDA flow still replays identically when warm
     execution falls back from richer tile/page cache shapes to leaner binary
     sidecars, because the CUDA bridge now derives staged execution from the

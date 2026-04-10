@@ -181,6 +181,10 @@ Last updated: 2026-04-09
   `.spancache` files, because the resolved span/sample/page/tile record now
   lives in `.execbuffer`; `.spancache` remains supported as a compatibility
   fallback for older warm-cache layouts
+- generated CUDA `prefill` and `decode` artifacts also no longer emit new
+  plan-local `.tilecache` files, because the generated hot-path tile record
+  now lives in `.execbuffer` plus the typed weight-pack cache; `.tilecache`
+  remains supported as a compatibility fallback for older warm-cache layouts
 - that same binary-first CUDA warm contract path now also replays correctly
   after the plan has no direct weight-pack buffer hint and the weight-pack
   `.packtiles` file has been removed, because execution and artifact identity

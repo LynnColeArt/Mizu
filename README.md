@@ -259,6 +259,10 @@ Current implementation status:
   new `.spancache` files, because the resolved span/sample/page/tile record now
   lives in `.execbuffer`; `.spancache` remains a compatibility fallback for
   older cache layouts and explicit tests
+- generated CUDA `prefill` and `decode` artifacts also no longer materialize
+  new plan-local `.tilecache` files, because the generated hot-path tile record
+  now lives in `.execbuffer` plus the typed weight-pack cache; `.tilecache`
+  remains a compatibility fallback for older cache layouts and explicit tests
 - that same binary-first CUDA warm path now replays correctly even after the
   generated plan has no direct weight-pack buffer hint and the weight-pack
   `.packtiles` file is removed, because execution and artifact identity can

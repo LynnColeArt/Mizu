@@ -181,6 +181,9 @@ bodies.
   - keeps explicit `.spancache` fixtures as backward-compatibility coverage
     even though newly generated CUDA warm artifacts now place their
     span/sample/page/tile warm record in `.execbuffer` first
+  - keeps explicit `.tilecache` fixtures as backward-compatibility coverage
+    even though newly generated CUDA warm artifacts now place their generated
+    tile record in `.execbuffer` plus the typed weight-pack cache first
   - validates that same binary-first CUDA decode replay still preserves token
     identity when the plan payload is reduced to stable stage metadata only,
     because warm replay can derive compactness and sidecar locations directly

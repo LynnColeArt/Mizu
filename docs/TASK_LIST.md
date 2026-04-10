@@ -155,6 +155,7 @@ These are the highest-leverage next tasks.
 - [x] Verify binary-first CUDA warm replay still works after direct pack-buffer hints and intermediate `.packtiles` files are removed
 - [x] Make generated CUDA warm artifacts rely on `.execbuffer` plus typed weight-pack caches as the primary plan-local binary record, while demoting `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` to backward-compatibility fallbacks
 - [x] Move generated CUDA span/sample/page/tile warm records into `.execbuffer` so newly generated plans no longer require `.spancache`, while keeping `.spancache` as a compatibility fallback
+- [x] Move generated CUDA plan-local tile records into `.execbuffer` plus typed weight-pack caches so newly generated plans no longer require `.tilecache`, while keeping `.tilecache` as a compatibility fallback
 - [x] Compact generated CUDA prefill/decode plans down to stable stage metadata after sidecar materialization
 - [x] Verify generated CUDA warm replay still works when compact plans rely on artifact-derived binary sidecars instead of textual compact markers
 - [x] Materialize CUDA prefill/decode sidecars directly from imported tensor inventory instead of first expanding transient textual `pack_use*`, `pack_dispatch*`, and `pack_span*` payload records
