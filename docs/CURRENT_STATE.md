@@ -145,6 +145,11 @@ Last updated: 2026-04-09
   the warm path can recover the pack-owned binary buffer from
   `pack_ref_tile_buffer=` and derive the rest of the weight-pack cache shape
   from artifact identity
+- that same public CUDA warm contract path now also replays correctly after a
+  generated decode plan drops the textual `pack_ref_artifact` hint, because
+  once `pack_ref_tile_buffer=` is present the warm path can recover the
+  pack-owned binary buffer directly and derive the remaining weight-pack cache
+  shape from artifact identity
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact

@@ -24,7 +24,7 @@ coverage/
 
 # Editors and OS noise
 .DS_Store
+.codex
 *.swp
 *.swo
 *~
-
