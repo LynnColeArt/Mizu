@@ -138,6 +138,8 @@ static int is_binary_sidecar_redundant_fragment(const char *fragment) {
     if (strncmp(fragment, "pack_dispatch_hash=", 19) == 0) return 1;
     if (strncmp(fragment, "pack_dispatch_kind=", 19) == 0) return 1;
     if (strncmp(fragment, "pack_dispatch_count=", 20) == 0) return 1;
+    if (strncmp(fragment, "pack_span_root=", 15) == 0) return 1;
+    if (strncmp(fragment, "pack_span_cache=", 16) == 0) return 1;
 
     return 0;
 }
@@ -727,6 +729,11 @@ int main(void) {
     }
     if (!expect_true("cuda binary-only decode plan should drop textual per-entry span records",
                      !file_contains_substring(decode_plan_path, "pack_span4="))) {
+        return 1;
+    }
+    if (!expect_true("cuda binary-only decode plan should drop textual span-root and span-cache hints",
+                     !file_contains_substring(decode_plan_path, "pack_span_root=") &&
+                     !file_contains_substring(decode_plan_path, "pack_span_cache="))) {
         return 1;
     }
 
