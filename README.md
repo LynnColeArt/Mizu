@@ -174,20 +174,17 @@ Current implementation status:
   `pack=<index>` dispatch records, so warm execution can address the
   weight-pack tile cache by packed entry identity instead of relying only on
   offset/byte matching in plan text
-- those same CUDA prefill/decode artifacts now also carry direct
-  `pack_dispatch_buffer=` references to a tiny binary selection sidecar, so
-  warm replay can recover selected packed-entry indices without depending on
-  textual `pack_use*` recovery
-- those same CUDA prefill/decode artifacts now also carry direct
-  `pack_span_buffer=` references to a tiny binary span-identity sidecar, so
-  warm replay can recover sampled span hashes and sample bytes without
-  depending on textual `pack_span*` recovery
-- those same CUDA prefill/decode artifacts now also carry direct
-  `pack_usage_buffer=` references to a tiny binary usage-summary sidecar, so
-  warm replay can recover `pack_use_*` count/byte/offset/hash identity without
-  depending on textual `pack_use*` summary fields
+- those same CUDA prefill/decode artifacts now also materialize binary
+  `.dispatchbuffer`, `.spanbuffer`, and `.usagebuffer` sidecars, so warm
+  replay can recover selected packed-entry indices, sampled span identity, and
+  `pack_use_*` summary state without depending on the removed textual
+  `pack_use*`, `pack_dispatch*`, and `pack_span*` plan fragments
 - compact CUDA warm artifact lineage now treats those binary sidecar paths as
   transport details and derives identity from resolved pack/span content
+- generated CUDA prefill/decode plans now treat `pack_dependency=` as the
+  compact replay marker and no longer need direct sidecar references in plan
+  text, because `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` are
+  derived from artifact identity at runtime
   instead, so replay stays stable when equivalent plans differ only in sidecar
   path text
 - compact CUDA warm artifact lineage now also ignores `pack_use_kind=` and

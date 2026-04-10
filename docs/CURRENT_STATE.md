@@ -113,20 +113,17 @@ Last updated: 2026-04-09
   `pack=<index>` dispatch records, so warm execution can address the
   weight-pack tile cache by packed entry identity instead of relying on
   offset/byte matching in plan text
-- those same CUDA prefill/decode artifacts now also carry direct
-  `pack_dispatch_buffer=` references to a tiny binary selection sidecar, so
-  warm replay can recover selected packed-entry indices without depending on
-  textual `pack_use*` recovery
-- those same CUDA prefill/decode artifacts now also carry direct
-  `pack_span_buffer=` references to a tiny binary span-identity sidecar, so
-  warm replay can recover sampled span hashes and sample bytes without
-  depending on textual `pack_span*` recovery
-- those same CUDA prefill/decode artifacts now also carry direct
-  `pack_usage_buffer=` references to a tiny binary usage-summary sidecar, so
-  warm replay can recover `pack_use_*` count/byte/offset/hash identity without
-  depending on textual `pack_use*` summary fields
-- compact CUDA decode can now replay from stage kind plus binary refs alone,
-  with no per-entry `pack_dispatch*` text required in the plan payload
+- those same CUDA prefill/decode artifacts now also materialize binary
+  `.dispatchbuffer`, `.spanbuffer`, and `.usagebuffer` sidecars, so warm
+  replay can recover selected packed-entry indices, sampled span identity, and
+  `pack_use_*` summary state without depending on the removed textual
+  `pack_use*`, `pack_dispatch*`, and `pack_span*` plan fragments
+- compact CUDA decode can now replay from stage kind plus binary sidecars
+  alone, with no per-entry `pack_dispatch*` text required in the plan payload
+- generated CUDA prefill/decode plans now treat `pack_dependency=` as the
+  compact replay marker and no longer need direct sidecar references in plan
+  text, because `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` are
+  derived from artifact identity at runtime
 - the public CUDA warm contract path now also replays correctly after a
   generated decode plan drops its per-entry `pack_use*`, `pack_dispatch*`, and
   `pack_span*` text, as long as the binary usage/dispatch/span sidecars and

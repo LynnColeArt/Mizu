@@ -144,15 +144,9 @@ bodies.
   - validates compact CUDA `pack_dispatch*` entries can now collapse to
     `pack=<index>` and still restore offset, byte span, role, and layout from
     `pack_use*` plus the typed `.packbuffer` directory
-  - validates a compact CUDA decode plan can now replay from a binary
-    `pack_dispatch_buffer=` sidecar plus `.packbuffer` even when textual
-    `pack_use*` entries are removed from the plan payload
-  - validates that same compact CUDA decode path can now replay from a binary
-    `pack_usage_buffer=` sidecar even when textual `pack_use*` summary fields
-    are removed from the plan payload
-  - validates that same compact CUDA decode path can now replay from a binary
-    `pack_span_buffer=` sidecar even when textual `pack_span*` entries are
-    removed from the plan payload
+  - validates a compact CUDA decode plan can now replay from derived binary
+    dispatch/usage/span sidecars plus `.packbuffer` even after direct sidecar
+    refs are removed from the plan payload
   - validates that same compact CUDA decode path can now replay from stage kind
     plus binary usage/dispatch/span sidecars alone, with no per-entry
     `pack_dispatch*` plan text required

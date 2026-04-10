@@ -44,15 +44,9 @@ These suites cover the `API-C*` portion of
   - verifies CUDA prefill and decode artifacts now also retain compact
     `pack=<index>` `pack_dispatch*` records for the first selected packed
     tensors
-  - verifies CUDA prefill and decode artifacts now also retain
-    `pack_dispatch_buffer=` references and materialize matching binary
-    `.dispatchbuffer` sidecars on disk
-  - verifies CUDA prefill and decode artifacts now also retain
-    `pack_usage_buffer=` references and materialize matching binary
-    `.usagebuffer` sidecars on disk
-  - verifies CUDA prefill and decode artifacts now also retain
-    `pack_span_buffer=` references and materialize matching binary
-    `.spanbuffer` sidecars on disk
+  - verifies CUDA prefill and decode artifacts now materialize matching binary
+    `.dispatchbuffer`, `.usagebuffer`, and `.spanbuffer` sidecars on disk
+    without retaining direct sidecar refs in plan text
   - verifies CUDA prefill and decode artifacts now also retain importer-rooted
     `pack_span*` records for the first selected packed tensors
   - verifies CUDA prefill and decode artifacts now also retain `pack_span_cache`
