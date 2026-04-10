@@ -125,5 +125,9 @@ These suites cover the `API-C*` portion of
     `weight_pack_count=`, because once `pack_ref_tile_buffer=` is present warm
     replay can derive static pack dependency from the typed `.packbuffer`
     directly instead of those text fields
+  - verifies that same public CUDA flow still replays identically after the
+    direct weight-pack buffer hint and the intermediate weight-pack
+    `.packtiles` file are both gone, because the binary `.usagebuffer`
+    sidecar now persists the resolved `.packbuffer` path
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

@@ -167,6 +167,10 @@ bodies.
     stored artifact lineage stable even when stale textual static weight-pack
     hints are present, because warm replay derives that dependency from the
     typed `.packbuffer`
+  - validates that same binary-first CUDA decode replay still preserves token
+    identity after the intermediate `.packtiles` text index is removed,
+    because the `.usagebuffer` sidecar now persists the resolved
+    weight-pack `.packbuffer` path
   - validates CUDA projector and decode execution now match exact deterministic
     reference outputs for the current fixture path, pinned separately for the
     real CUDA bridge and the CPU stub

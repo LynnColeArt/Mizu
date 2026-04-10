@@ -236,6 +236,13 @@ Current implementation status:
   `weight_pack_count=`, because once `pack_ref_tile_buffer=` is present the
   warm path can derive static pack dependency from the typed `.packbuffer`
   directly instead of those text fields
+- CUDA `.usagebuffer` sidecars now also persist the resolved weight-pack
+  `.packbuffer` path, so compact warm replay can still recover typed pack
+  records after the intermediate `.packtiles` text index is missing
+- that same binary-first CUDA warm path now replays correctly even after the
+  generated plan has no direct weight-pack buffer hint and the weight-pack
+  `.packtiles` file is removed, because execution and artifact identity can
+  both recover through the binary usage sidecar
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
   sources change, which keeps the public-path tests from silently running stale
   executables

@@ -152,6 +152,13 @@ Last updated: 2026-04-09
   `weight_pack_count=`, because once `pack_ref_tile_buffer=` is present the
   warm path can derive static pack dependency from the typed `.packbuffer`
   directly instead of those text fields
+- CUDA `.usagebuffer` sidecars now also persist the resolved weight-pack
+  `.packbuffer` path, so compact warm replay can recover typed pack records
+  even when the intermediate `.packtiles` text index is gone
+- that same binary-first CUDA warm contract path now also replays correctly
+  after the plan has no direct weight-pack buffer hint and the weight-pack
+  `.packtiles` file has been removed, because execution and artifact identity
+  can both recover through the binary usage sidecar
 - CUDA prefill and decode now also stamp an explicit pack-usage snapshot into
   the live CUDA context payload, so backend-owned session state carries the
   selected imported tensor profile instead of hiding it only inside artifact
