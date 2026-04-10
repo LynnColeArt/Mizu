@@ -2020,10 +2020,8 @@ contains
 
     if (stage_kind == MIZU_STAGE_MODEL_LOAD) then
       call append_import_weight_pack_payload(payload_text, model)
-    else if (stage_kind == MIZU_STAGE_PROJECTOR .or. stage_kind == MIZU_STAGE_PREFILL .or. &
-             stage_kind == MIZU_STAGE_DECODE) then
+    else if (stage_kind == MIZU_STAGE_PROJECTOR) then
       call append_import_weight_pack_dependency_payload(payload_text, model)
-      call append_import_stage_pack_usage_payload(payload_text, stage_kind, model)
     end if
 
     if (stage_kind == MIZU_STAGE_MODEL_LOAD .or. stage_kind == MIZU_STAGE_PROJECTOR) then
@@ -2120,139 +2118,6 @@ contains
     call append_payload_fragment(payload_text, trim(field_text))
   end subroutine append_import_weight_pack_dependency_payload
 
-  subroutine append_import_stage_pack_usage_payload(payload_text, stage_kind, model)
-    character(len=*), intent(inout) :: payload_text
-    integer(i32), intent(in)        :: stage_kind
-    type(model_state), intent(in)   :: model
-    character(len=MAX_PATH_LEN + 160) :: field_text
-    character(len=MAX_NAME_LEN)       :: usage_kind
-    character(len=MAX_PATH_LEN)        :: span_root
-    integer(i32)                      :: tensor_index
-    integer(i32)                      :: usage_index
-    integer(i32)                      :: dispatch_index
-    integer(i32)                      :: pack_index
-    integer(i32)                      :: role_code
-    integer(i32)                      :: layout_code
-    integer(i64)                      :: tensor_bytes
-    integer(i64)                      :: pack_offset
-    integer(i64)                      :: usage_hash
-    integer(i64)                      :: usage_total_bytes
-    integer(i64)                      :: dispatch_hash
-    integer(i64)                      :: first_pack_offset
-    integer(i64)                      :: last_pack_offset
-    integer(i64)                      :: last_pack_bytes
-
-    if (.not. allocated(model%import_tensors)) return
-    usage_kind = stage_pack_usage_kind_token(stage_kind)
-    if (len_trim(usage_kind) == 0) return
-
-    field_text = ""
-    write(field_text, '(";pack_use_kind=",A)') trim(usage_kind)
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";pack_dispatch_kind=cuda_pack_dispatch_v1")')
-    call append_payload_fragment(payload_text, trim(field_text))
-    span_root = build_import_bundle_root_path(model)
-    if (len_trim(span_root) > 0) then
-      field_text = ""
-      write(field_text, '(";pack_span_root=",A)') trim(span_root)
-      call append_payload_fragment(payload_text, trim(field_text))
-    end if
-
-    usage_index = 0_i32
-    dispatch_index = 0_i32
-    usage_hash = 0_i64
-    usage_total_bytes = 0_i64
-    dispatch_hash = 0_i64
-    first_pack_offset = 0_i64
-    last_pack_offset = 0_i64
-    last_pack_bytes = 0_i64
-    pack_offset = 0_i64
-    pack_index = 0_i32
-
-    do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
-      if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
-
-      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
-        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
-      if (tensor_bytes <= 0_i64) cycle
-      pack_index = pack_index + 1_i32
-
-      if (import_stage_uses_tensor(stage_kind, model%import_tensors(tensor_index))) then
-        usage_index = usage_index + 1_i32
-        usage_total_bytes = usage_total_bytes + tensor_bytes
-        if (usage_index == 1_i32) first_pack_offset = pack_offset
-        last_pack_offset = pack_offset
-        last_pack_bytes = tensor_bytes
-        field_text = ""
-        write(field_text, '(";pack_use",I0,"=",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
-          usage_index, trim(model%import_tensors(tensor_index)%tensor_name), &
-          trim(model%import_tensors(tensor_index)%tensor_role), pack_offset, tensor_bytes, &
-          trim(model%import_tensors(tensor_index)%layout_name)
-        call append_payload_fragment(payload_text, trim(field_text))
-        usage_hash = ieor(usage_hash, hash_text64(trim(field_text)))
-
-        if (dispatch_index < MAX_IMPORT_STAGE_PACK_DISPATCH) then
-          dispatch_index = dispatch_index + 1_i32
-          role_code = import_tensor_role_code(trim(model%import_tensors(tensor_index)%tensor_role))
-          layout_code = import_tensor_layout_code(trim(model%import_tensors(tensor_index)%layout_name))
-          field_text = ""
-          write(field_text, '(";pack_dispatch",I0,"=pack=",I0)') dispatch_index, pack_index
-          call append_payload_fragment(payload_text, trim(field_text))
-          dispatch_hash = ieor(dispatch_hash, hash_text64(trim(field_text)))
-          if (len_trim(model%import_tensors(tensor_index)%source_path) > 0) then
-            field_text = ""
-            write(field_text, '(";pack_span",I0,"=",A,"|sample_bytes=",I0)') dispatch_index, &
-              trim(model%import_tensors(tensor_index)%source_path), IMPORT_STAGE_SPAN_SAMPLE_BYTES
-            call append_payload_fragment(payload_text, trim(field_text))
-          end if
-        end if
-      end if
-
-      pack_offset = align_import_bytes(pack_offset + tensor_bytes)
-    end do
-
-    if (usage_index > 0_i32 .and. usage_hash == 0_i64) then
-      usage_hash = hash_text64(trim(usage_kind) // ":" // trim(model%source_model_id))
-    end if
-    if (dispatch_index > 0_i32 .and. dispatch_hash == 0_i64) then
-      dispatch_hash = hash_text64(trim(usage_kind) // ":dispatch:" // trim(model%source_model_id))
-    end if
-
-    field_text = ""
-    write(field_text, '(";pack_dispatch_count=",I0)') dispatch_index
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";pack_dispatch_hash=",Z16.16)') dispatch_hash
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";pack_use_count=",I0)') usage_index
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";pack_use_bytes=",I0)') usage_total_bytes
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";pack_use_first_offset=",I0)') first_pack_offset
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";pack_use_last_offset=",I0)') last_pack_offset
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";pack_use_last_bytes=",I0)') last_pack_bytes
-    call append_payload_fragment(payload_text, trim(field_text))
-
-    field_text = ""
-    write(field_text, '(";pack_use_hash=",Z16.16)') usage_hash
-    call append_payload_fragment(payload_text, trim(field_text))
-  end subroutine append_import_stage_pack_usage_payload
-
   function append_import_stage_usage_identity(base_key_text, stage_kind, model) result(key_text)
     character(len=*), intent(in) :: base_key_text
     integer(i32), intent(in)     :: stage_kind
@@ -2317,6 +2182,112 @@ contains
       usage_hash = hash_text64(trim(stage_pack_usage_kind_token(stage_kind)) // ":" // trim(model%source_model_id))
     end if
   end subroutine summarize_import_stage_usage
+
+  subroutine summarize_import_stage_dispatch(stage_kind, model, span_root, usage_hash, usage_count, usage_bytes, &
+                                             first_pack_offset, last_pack_offset, last_pack_bytes, dispatch_count, &
+                                             dispatch_pack_indices, dispatch_offsets, dispatch_bytes, &
+                                             dispatch_role_codes, dispatch_layout_codes, dispatch_span_paths)
+    integer(i32), intent(in)      :: stage_kind
+    type(model_state), intent(in) :: model
+    character(len=*), intent(out) :: span_root
+    integer(i64), intent(out)     :: usage_hash
+    integer(i32), intent(out)     :: usage_count
+    integer(i64), intent(out)     :: usage_bytes
+    integer(i64), intent(out)     :: first_pack_offset
+    integer(i64), intent(out)     :: last_pack_offset
+    integer(i64), intent(out)     :: last_pack_bytes
+    integer(i32), intent(out)     :: dispatch_count
+    integer(i32), intent(out)     :: dispatch_pack_indices(:)
+    integer(i64), intent(out)     :: dispatch_offsets(:)
+    integer(i64), intent(out)     :: dispatch_bytes(:)
+    integer(i32), intent(out)     :: dispatch_role_codes(:)
+    integer(i32), intent(out)     :: dispatch_layout_codes(:)
+    character(len=*), intent(out) :: dispatch_span_paths(:)
+    character(len=MAX_PATH_LEN + 160) :: field_text
+    character(len=MAX_NAME_LEN)       :: usage_kind
+    integer(i32)                      :: tensor_index
+    integer(i32)                      :: usage_index
+    integer(i32)                      :: dispatch_index
+    integer(i32)                      :: pack_index
+    integer(i32)                      :: role_code
+    integer(i32)                      :: layout_code
+    integer(i64)                      :: tensor_bytes
+    integer(i64)                      :: pack_offset
+
+    span_root = ""
+    usage_hash = 0_i64
+    usage_count = 0_i32
+    usage_bytes = 0_i64
+    first_pack_offset = 0_i64
+    last_pack_offset = 0_i64
+    last_pack_bytes = 0_i64
+    dispatch_count = 0_i32
+    dispatch_pack_indices = 0_i32
+    dispatch_offsets = 0_i64
+    dispatch_bytes = 0_i64
+    dispatch_role_codes = 0_i32
+    dispatch_layout_codes = 0_i32
+    dispatch_span_paths = ""
+    if (.not. allocated(model%import_tensors)) return
+
+    usage_kind = stage_pack_usage_kind_token(stage_kind)
+    if (len_trim(usage_kind) == 0) return
+    span_root = build_import_bundle_root_path(model)
+
+    usage_index = 0_i32
+    dispatch_index = 0_i32
+    pack_index = 0_i32
+    pack_offset = 0_i64
+
+    do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
+      if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
+
+      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
+        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      if (tensor_bytes <= 0_i64) cycle
+      pack_index = pack_index + 1_i32
+
+      if (import_stage_uses_tensor(stage_kind, model%import_tensors(tensor_index))) then
+        usage_index = usage_index + 1_i32
+        usage_bytes = usage_bytes + tensor_bytes
+        if (usage_index == 1_i32) first_pack_offset = pack_offset
+        last_pack_offset = pack_offset
+        last_pack_bytes = tensor_bytes
+
+        field_text = ""
+        write(field_text, '(";pack_use",I0,"=",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+          usage_index, trim(model%import_tensors(tensor_index)%tensor_name), &
+          trim(model%import_tensors(tensor_index)%tensor_role), pack_offset, tensor_bytes, &
+          trim(model%import_tensors(tensor_index)%layout_name)
+        usage_hash = ieor(usage_hash, hash_text64(trim(field_text)))
+
+        if (dispatch_index < min(MAX_IMPORT_STAGE_PACK_DISPATCH, int(size(dispatch_pack_indices), kind=i32))) then
+          dispatch_index = dispatch_index + 1_i32
+          role_code = import_tensor_role_code(trim(model%import_tensors(tensor_index)%tensor_role))
+          layout_code = import_tensor_layout_code(trim(model%import_tensors(tensor_index)%layout_name))
+          dispatch_pack_indices(dispatch_index) = pack_index
+          dispatch_offsets(dispatch_index) = pack_offset
+          dispatch_bytes(dispatch_index) = tensor_bytes
+          dispatch_role_codes(dispatch_index) = role_code
+          dispatch_layout_codes(dispatch_index) = layout_code
+          if (dispatch_index <= int(size(dispatch_span_paths), kind=i32)) then
+            dispatch_span_paths(dispatch_index) = trim(model%import_tensors(tensor_index)%source_path)
+          end if
+
+          field_text = ""
+          write(field_text, '(";pack_dispatch",I0,"=pack=",I0)') dispatch_index, pack_index
+        end if
+      end if
+
+      pack_offset = align_import_bytes(pack_offset + tensor_bytes)
+    end do
+
+    usage_count = usage_index
+    dispatch_count = dispatch_index
+    if (usage_count > 0_i32 .and. usage_hash == 0_i64) then
+      usage_hash = hash_text64(trim(usage_kind) // ":" // trim(model%source_model_id))
+    end if
+  end subroutine summarize_import_stage_dispatch
 
   function stage_pack_usage_kind_token(stage_kind) result(kind_token)
     integer(i32), intent(in)    :: stage_kind
@@ -3643,6 +3614,366 @@ contains
     metadata%payload_bytes = max(1_i64, payload_bytes)
   end subroutine materialize_artifact_payload
 
+  subroutine append_cuda_pack_span_cache_payload_from_model(cache_root, metadata, payload_text, payload_bytes, model)
+    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_MAGIC = int(z'53445A4D', kind=i32)
+    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_VERSION = 1_i32
+    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_ENTRY_BYTES = 16_i32
+    integer(i32), parameter                    :: CUDA_USAGE_BUFFER_MAGIC = int(z'42555A4D', kind=i32)
+    integer(i32), parameter                    :: CUDA_USAGE_BUFFER_VERSION = 2_i32
+    integer(i32), parameter                    :: CUDA_USAGE_BUFFER_HEADER_BYTES = 72_i32
+    integer(i32), parameter                    :: CUDA_SPAN_BUFFER_MAGIC = int(z'42535A4D', kind=i32)
+    integer(i32), parameter                    :: CUDA_SPAN_BUFFER_VERSION = 1_i32
+    integer(i32), parameter                    :: CUDA_SPAN_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter                    :: CUDA_SPAN_BUFFER_ENTRY_BYTES = 32_i32
+    character(len=*), intent(in)               :: cache_root
+    type(artifact_metadata_record), intent(in) :: metadata
+    character(len=*), intent(in)               :: payload_text
+    integer(i64), intent(inout)                :: payload_bytes
+    type(model_state), intent(in)              :: model
+    character(len=(MAX_PATH_LEN * 6) + 4096)   :: sidecar_payload
+    character(len=(MAX_PATH_LEN * 2) + 4096)   :: tile_payload
+    character(len=MAX_PATH_LEN)                :: sidecar_path
+    character(len=MAX_PATH_LEN)                :: tile_path
+    character(len=MAX_PATH_LEN)                :: dispatch_buffer_path
+    character(len=MAX_PATH_LEN)                :: usage_buffer_path
+    character(len=MAX_PATH_LEN)                :: span_buffer_path
+    character(len=MAX_PATH_LEN)                :: pack_tile_path
+    character(len=MAX_PATH_LEN)                :: pack_tile_buffer_path
+    character(len=MAX_PATH_LEN)                :: weight_payload_path
+    character(len=MAX_PATH_LEN)                :: full_path
+    character(len=MAX_PATH_LEN)                :: tile_full_path
+    character(len=MAX_PATH_LEN)                :: dispatch_buffer_full_path
+    character(len=MAX_PATH_LEN)                :: usage_buffer_full_path
+    character(len=MAX_PATH_LEN)                :: span_buffer_full_path
+    character(len=MAX_PATH_LEN)                :: parent_dir
+    character(len=MAX_PATH_LEN)                :: span_root
+    character(len=MAX_PATH_LEN)                :: dispatch_span_paths(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    character(len=128)                         :: hex_text
+    character(len=320)                         :: field_text
+    integer(i32)                               :: entry_index
+    integer(i32)                               :: unit_id
+    integer(i32)                               :: ios
+    integer(i32)                               :: role_code
+    integer(i32)                               :: layout_code
+    integer(i32)                               :: pack_index
+    integer(i32)                               :: usage_count
+    integer(i32)                               :: dispatch_count
+    integer(i32)                               :: page_word_count
+    integer(i32)                               :: tile_byte_count
+    integer(i32)                               :: usage_path_bytes
+    integer(i32)                               :: usage_path_offset
+    integer(i32)                               :: usage_path_index
+    integer(i32)                               :: dispatch_entry_count
+    integer(i32)                               :: span_entry_count
+    integer(i32)                               :: dispatch_buffer_offset
+    integer(i32)                               :: span_buffer_offset
+    integer(i32)                               :: span_record_offset
+    integer(i32)                               :: span_data_offset
+    integer(i32)                               :: dispatch_pack_indices(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    integer(i32)                               :: dispatch_role_codes(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    integer(i32)                               :: dispatch_layout_codes(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    integer(i32)                               :: valid_dispatch_pack_indices(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    integer(i64)                               :: usage_hash
+    integer(i64)                               :: usage_total_bytes
+    integer(i64)                               :: first_pack_offset
+    integer(i64)                               :: last_pack_offset
+    integer(i64)                               :: last_pack_bytes
+    integer(i64)                               :: page_hash
+    integer(i64)                               :: tile_hash
+    integer(i64)                               :: span_hash
+    integer(i64)                               :: actual_sample_bytes
+    integer(i64)                               :: dispatch_offsets(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    integer(i64)                               :: dispatch_bytes(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    integer(i8)                                :: sample_bytes(64)
+    integer(i32)                               :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
+    integer(i8)                                :: tile_bytes(MAX_CUDA_PACK_TILE_BYTES)
+    integer(i8)                                :: dispatch_buffer(CUDA_DISPATCH_BUFFER_HEADER_BYTES + &
+                                                      (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_DISPATCH_BUFFER_ENTRY_BYTES))
+    integer(i8)                                :: usage_buffer(CUDA_USAGE_BUFFER_HEADER_BYTES + MAX_PATH_LEN)
+    integer(i8)                                :: span_buffer(CUDA_SPAN_BUFFER_HEADER_BYTES + &
+                                                      (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_SPAN_BUFFER_ENTRY_BYTES) + &
+                                                      (MAX_IMPORT_STAGE_PACK_DISPATCH * 64_i32))
+    logical                                    :: exists
+    logical                                    :: has_entries
+    logical                                    :: has_tiles
+
+    payload_bytes = int(len_trim(payload_text) + 1_i64, kind=i64)
+    if (.not. model%has_import_bundle) return
+
+    call summarize_import_stage_dispatch(metadata%stage_kind, model, span_root, usage_hash, usage_count, &
+      usage_total_bytes, first_pack_offset, last_pack_offset, last_pack_bytes, dispatch_count, &
+      dispatch_pack_indices, dispatch_offsets, dispatch_bytes, dispatch_role_codes, dispatch_layout_codes, &
+      dispatch_span_paths)
+    if (dispatch_count <= 0_i32) return
+    if (len_trim(span_root) == 0) return
+
+    sidecar_path = build_cuda_pack_span_cache_path(metadata%payload_path)
+    if (len_trim(sidecar_path) == 0) return
+    tile_path = build_cuda_pack_tile_cache_path(metadata%payload_path)
+    dispatch_buffer_path = build_cuda_pack_dispatch_buffer_path(metadata%payload_path)
+    usage_buffer_path = build_cuda_pack_usage_buffer_path(metadata%payload_path)
+    span_buffer_path = build_cuda_pack_span_buffer_path(metadata%payload_path)
+
+    full_path = join_cache_root_with_payload_path(cache_root, sidecar_path)
+    if (len_trim(full_path) == 0) return
+    inquire(file=trim(full_path), exist=exists)
+    if (exists) return
+
+    weight_payload_path = build_cuda_weight_pack_payload_path(model, metadata%execution_route)
+    pack_tile_path = ""
+    pack_tile_buffer_path = ""
+    if (len_trim(weight_payload_path) > 0) then
+      pack_tile_path = build_cuda_weight_pack_tile_cache_path(trim(weight_payload_path))
+      pack_tile_buffer_path = build_cuda_weight_pack_tile_buffer_path(trim(weight_payload_path))
+    end if
+
+    sidecar_payload = "kind=cuda_pack_span_cache_v4"
+    tile_payload = "kind=cuda_pack_tile_cache_v1"
+    dispatch_buffer = 0_i8
+    usage_buffer = 0_i8
+    span_buffer = 0_i8
+    valid_dispatch_pack_indices = 0_i32
+    has_entries = .false.
+    has_tiles = .false.
+    dispatch_entry_count = 0_i32
+    span_entry_count = 0_i32
+    span_buffer_offset = CUDA_SPAN_BUFFER_HEADER_BYTES + &
+      (MAX_IMPORT_STAGE_PACK_DISPATCH * CUDA_SPAN_BUFFER_ENTRY_BYTES)
+    usage_path_bytes = 0_i32
+    usage_path_offset = CUDA_USAGE_BUFFER_HEADER_BYTES
+
+    if (len_trim(pack_tile_path) > 0) then
+      field_text = ""
+      write(field_text, '(";pack_tile_cache=",A)') trim(pack_tile_path)
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+    end if
+    if (len_trim(span_buffer_path) > 0) then
+      field_text = ""
+      write(field_text, '(";span_buffer=",A)') trim(span_buffer_path)
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+    end if
+    if (len_trim(usage_buffer_path) > 0) then
+      field_text = ""
+      write(field_text, '(";usage_buffer=",A)') trim(usage_buffer_path)
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+    end if
+    if (len_trim(tile_path) > 0) then
+      field_text = ""
+      write(field_text, '(";tile_cache=",A)') trim(tile_path)
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+    end if
+
+    do entry_index = 1_i32, dispatch_count
+      if (len_trim(dispatch_span_paths(entry_index)) == 0) cycle
+
+      call resolve_import_span_record_cache(trim(span_root), trim(dispatch_span_paths(entry_index)), &
+        IMPORT_STAGE_SPAN_SAMPLE_BYTES, span_hash, actual_sample_bytes, sample_bytes)
+      if (span_hash <= 0_i64) cycle
+
+      field_text = ""
+      write(field_text, '(";entry",I0,"_hash=",I0)') entry_index, span_hash
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+      field_text = ""
+      write(field_text, '(";entry",I0,"_bytes=",I0)') entry_index, actual_sample_bytes
+      call append_payload_fragment(sidecar_payload, trim(field_text))
+
+      if (actual_sample_bytes > 0_i64) then
+        hex_text = ""
+        call encode_bytes_as_hex(sample_bytes, int(min(actual_sample_bytes, int(size(sample_bytes), kind=i64)), kind=i32), &
+          hex_text)
+        field_text = ""
+        write(field_text, '(";entry",I0,"_sample_hex=",A)') entry_index, trim(hex_text)
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+
+        span_entry_count = span_entry_count + 1_i32
+        span_record_offset = CUDA_SPAN_BUFFER_HEADER_BYTES + &
+          ((span_entry_count - 1_i32) * CUDA_SPAN_BUFFER_ENTRY_BYTES)
+        call append_pack_buffer_bytes_cache(sample_bytes, int(min(actual_sample_bytes, 64_i64), kind=i32), &
+          span_buffer, span_buffer_offset, span_data_offset)
+        call store_pack_buffer_i32_cache(span_buffer, span_record_offset + 0_i32, entry_index)
+        call store_pack_buffer_i32_cache(span_buffer, span_record_offset + 4_i32, dispatch_pack_indices(entry_index))
+        call store_pack_buffer_i32_cache(span_buffer, span_record_offset + 8_i32, &
+          int(min(actual_sample_bytes, 64_i64), kind=i32))
+        call store_pack_buffer_i32_cache(span_buffer, span_record_offset + 12_i32, span_data_offset)
+        call store_pack_buffer_i64_cache(span_buffer, span_record_offset + 16_i32, span_hash)
+        call store_pack_buffer_i64_cache(span_buffer, span_record_offset + 24_i32, actual_sample_bytes)
+      end if
+
+      pack_index = dispatch_pack_indices(entry_index)
+      role_code = dispatch_role_codes(entry_index)
+      layout_code = dispatch_layout_codes(entry_index)
+      if (pack_index > 0_i32) then
+        valid_dispatch_pack_indices(entry_index) = pack_index
+        field_text = ""
+        write(field_text, '(";entry",I0,"_pack=",I0)') entry_index, pack_index
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+      end if
+
+      call build_cuda_pack_page_record_cache(dispatch_offsets(entry_index), dispatch_bytes(entry_index), role_code, &
+        layout_code, span_hash, sample_bytes, actual_sample_bytes, page_hash, page_word_count, page_words)
+      if (page_hash > 0_i64 .and. page_word_count > 0_i32) then
+        field_text = ""
+        write(field_text, '(";entry",I0,"_page_hash=",I0)') entry_index, page_hash
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+        field_text = ""
+        write(field_text, '(";entry",I0,"_page_words=",I0)') entry_index, page_word_count
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+        hex_text = ""
+        call encode_i32_words_as_hex_cache(page_words, page_word_count, hex_text)
+        field_text = ""
+        write(field_text, '(";entry",I0,"_page_hex=",A)') entry_index, trim(hex_text)
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+      end if
+
+      call build_cuda_pack_tile_record_cache(dispatch_offsets(entry_index), dispatch_bytes(entry_index), role_code, &
+        layout_code, sample_bytes, actual_sample_bytes, tile_hash, tile_byte_count, tile_bytes)
+      if (tile_hash > 0_i64 .and. tile_byte_count > 0_i32) then
+        field_text = ""
+        write(field_text, '(";entry",I0,"_tile_hash=",I0)') entry_index, tile_hash
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+        field_text = ""
+        write(field_text, '(";entry",I0,"_tile_bytes=",I0)') entry_index, tile_byte_count
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+        hex_text = ""
+        call encode_bytes_as_hex(tile_bytes, tile_byte_count, hex_text)
+        field_text = ""
+        write(field_text, '(";entry",I0,"_tile_hex=",A)') entry_index, trim(hex_text)
+        call append_payload_fragment(sidecar_payload, trim(field_text))
+        field_text = ""
+        write(field_text, '(";entry",I0,"_tile_hash=",I0)') entry_index, tile_hash
+        call append_payload_fragment(tile_payload, trim(field_text))
+        field_text = ""
+        write(field_text, '(";entry",I0,"_tile_bytes=",I0)') entry_index, tile_byte_count
+        call append_payload_fragment(tile_payload, trim(field_text))
+        field_text = ""
+        write(field_text, '(";entry",I0,"_tile_hex=",A)') entry_index, trim(hex_text)
+        call append_payload_fragment(tile_payload, trim(field_text))
+        has_tiles = .true.
+      end if
+
+      has_entries = .true.
+    end do
+
+    if (.not. has_entries) return
+
+    dispatch_buffer_offset = CUDA_DISPATCH_BUFFER_HEADER_BYTES
+    do entry_index = 1_i32, dispatch_count
+      if (valid_dispatch_pack_indices(entry_index) <= 0_i32) cycle
+      dispatch_entry_count = dispatch_entry_count + 1_i32
+      call store_pack_buffer_i32_cache(dispatch_buffer, dispatch_buffer_offset + 0_i32, valid_dispatch_pack_indices(entry_index))
+      call store_pack_buffer_i32_cache(dispatch_buffer, dispatch_buffer_offset + 4_i32, entry_index)
+      call store_pack_buffer_i64_cache(dispatch_buffer, dispatch_buffer_offset + 8_i32, 0_i64)
+      dispatch_buffer_offset = dispatch_buffer_offset + CUDA_DISPATCH_BUFFER_ENTRY_BYTES
+    end do
+
+    call store_pack_buffer_i32_cache(dispatch_buffer, 0_i32, CUDA_DISPATCH_BUFFER_MAGIC)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 4_i32, CUDA_DISPATCH_BUFFER_VERSION)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 8_i32, CUDA_DISPATCH_BUFFER_HEADER_BYTES)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 12_i32, CUDA_DISPATCH_BUFFER_ENTRY_BYTES)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 16_i32, dispatch_entry_count)
+    call store_pack_buffer_i32_cache(dispatch_buffer, 20_i32, dispatch_entry_count)
+    call store_pack_buffer_i64_cache(dispatch_buffer, 24_i32, usage_hash)
+
+    call store_pack_buffer_i32_cache(usage_buffer, 0_i32, CUDA_USAGE_BUFFER_MAGIC)
+    call store_pack_buffer_i32_cache(usage_buffer, 4_i32, CUDA_USAGE_BUFFER_VERSION)
+    call store_pack_buffer_i32_cache(usage_buffer, 8_i32, CUDA_USAGE_BUFFER_HEADER_BYTES)
+    call store_pack_buffer_i32_cache(usage_buffer, 12_i32, usage_count)
+    call store_pack_buffer_i32_cache(usage_buffer, 16_i32, dispatch_entry_count)
+    call store_pack_buffer_i32_cache(usage_buffer, 20_i32, dispatch_count)
+    call store_pack_buffer_i64_cache(usage_buffer, 24_i32, usage_total_bytes)
+    call store_pack_buffer_i64_cache(usage_buffer, 32_i32, first_pack_offset)
+    call store_pack_buffer_i64_cache(usage_buffer, 40_i32, last_pack_offset)
+    call store_pack_buffer_i64_cache(usage_buffer, 48_i32, last_pack_bytes)
+    call store_pack_buffer_i64_cache(usage_buffer, 56_i32, usage_hash)
+    if (len_trim(pack_tile_buffer_path) > 0) then
+      usage_path_bytes = min(len_trim(pack_tile_buffer_path), MAX_PATH_LEN)
+      call store_pack_buffer_i32_cache(usage_buffer, 64_i32, usage_path_bytes)
+      call store_pack_buffer_i32_cache(usage_buffer, 68_i32, usage_path_offset)
+      do usage_path_index = 1_i32, usage_path_bytes
+        usage_buffer(usage_path_offset + usage_path_index) = int(iachar(pack_tile_buffer_path(usage_path_index:usage_path_index)), &
+          kind=i8)
+      end do
+    end if
+
+    call store_pack_buffer_i32_cache(span_buffer, 0_i32, CUDA_SPAN_BUFFER_MAGIC)
+    call store_pack_buffer_i32_cache(span_buffer, 4_i32, CUDA_SPAN_BUFFER_VERSION)
+    call store_pack_buffer_i32_cache(span_buffer, 8_i32, CUDA_SPAN_BUFFER_HEADER_BYTES)
+    call store_pack_buffer_i32_cache(span_buffer, 12_i32, CUDA_SPAN_BUFFER_ENTRY_BYTES)
+    call store_pack_buffer_i32_cache(span_buffer, 16_i32, span_entry_count)
+    call store_pack_buffer_i32_cache(span_buffer, 20_i32, dispatch_count)
+    call store_pack_buffer_i64_cache(span_buffer, 24_i32, usage_hash)
+
+    field_text = ""
+    write(field_text, '(";entry_count=",I0)') dispatch_count
+    call append_payload_fragment(sidecar_payload, trim(field_text))
+    if (has_tiles) then
+      field_text = ""
+      write(field_text, '(";entry_count=",I0)') dispatch_count
+      call append_payload_fragment(tile_payload, trim(field_text))
+    end if
+
+    parent_dir = parent_directory_path(full_path)
+    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+
+    open(newunit=unit_id, file=trim(full_path), status="replace", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+    write(unit_id, "(A)", iostat=ios) trim(sidecar_payload)
+    close(unit_id)
+
+    if (len_trim(dispatch_buffer_path) > 0) then
+      dispatch_buffer_full_path = join_cache_root_with_payload_path(cache_root, dispatch_buffer_path)
+      if (len_trim(dispatch_buffer_full_path) > 0) then
+        parent_dir = parent_directory_path(dispatch_buffer_full_path)
+        if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+        open(newunit=unit_id, file=trim(dispatch_buffer_full_path), status="replace", access="stream", &
+          form="unformatted", action="write", iostat=ios)
+        if (ios == 0_i32) then
+          write(unit_id, iostat=ios) dispatch_buffer(1:dispatch_buffer_offset)
+          close(unit_id)
+        end if
+      end if
+    end if
+
+    if (len_trim(usage_buffer_path) > 0) then
+      usage_buffer_full_path = join_cache_root_with_payload_path(cache_root, usage_buffer_path)
+      if (len_trim(usage_buffer_full_path) > 0) then
+        parent_dir = parent_directory_path(usage_buffer_full_path)
+        if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+        open(newunit=unit_id, file=trim(usage_buffer_full_path), status="replace", access="stream", &
+          form="unformatted", action="write", iostat=ios)
+        if (ios == 0_i32) then
+          write(unit_id, iostat=ios) usage_buffer(1:max(CUDA_USAGE_BUFFER_HEADER_BYTES, usage_path_offset + usage_path_bytes))
+          close(unit_id)
+        end if
+      end if
+    end if
+
+    if (len_trim(span_buffer_path) > 0 .and. span_entry_count > 0_i32) then
+      span_buffer_full_path = join_cache_root_with_payload_path(cache_root, span_buffer_path)
+      if (len_trim(span_buffer_full_path) > 0) then
+        parent_dir = parent_directory_path(span_buffer_full_path)
+        if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+        open(newunit=unit_id, file=trim(span_buffer_full_path), status="replace", access="stream", &
+          form="unformatted", action="write", iostat=ios)
+        if (ios == 0_i32) then
+          write(unit_id, iostat=ios) span_buffer(1:span_buffer_offset)
+          close(unit_id)
+        end if
+      end if
+    end if
+
+    if (.not. has_tiles) return
+    tile_full_path = join_cache_root_with_payload_path(cache_root, tile_path)
+    if (len_trim(tile_full_path) == 0) return
+    parent_dir = parent_directory_path(tile_full_path)
+    if (len_trim(parent_dir) > 0) call ensure_directory_exists(parent_dir)
+    open(newunit=unit_id, file=trim(tile_full_path), status="replace", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+    write(unit_id, "(A)", iostat=ios) trim(tile_payload)
+    close(unit_id)
+  end subroutine append_cuda_pack_span_cache_payload_from_model
+
   subroutine append_cuda_pack_span_cache_payload(cache_root, metadata, payload_text, payload_bytes, model)
     integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_MAGIC = int(z'53445A4D', kind=i32)
     integer(i32), parameter                    :: CUDA_DISPATCH_BUFFER_VERSION = 1_i32
@@ -3743,6 +4074,12 @@ contains
     if (metadata%backend_family /= MIZU_BACKEND_FAMILY_CUDA) return
     if (len_trim(cache_root) == 0) return
     if (len_trim(metadata%payload_path) == 0) return
+    if (present(model)) then
+      if (metadata%stage_kind == MIZU_STAGE_PREFILL .or. metadata%stage_kind == MIZU_STAGE_DECODE) then
+        call append_cuda_pack_span_cache_payload_from_model(cache_root, metadata, payload_text, payload_bytes, model)
+        return
+      end if
+    end if
 
     span_root = ""
     call extract_payload_field_text_cache(payload_text, "pack_span_root=", span_root, found_root)
