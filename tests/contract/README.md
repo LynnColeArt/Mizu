@@ -113,5 +113,10 @@ These suites cover the `API-C*` portion of
     `pack_span_cache` hints, because warm replay can derive those sidecar
     locations from artifact identity and use the persisted binary span records
     directly
+  - verifies that same public CUDA flow still replays identically after the
+    generated decode plan also drops the textual `pack_ref_tile_cache` hint,
+    because warm replay can recover the pack-owned binary buffer from
+    `pack_ref_tile_buffer=` and derive the rest of the weight-pack cache shape
+    from artifact identity
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

@@ -147,6 +147,7 @@ These are the highest-leverage next tasks.
 - [x] Verify the public CUDA warm path still replays after generated decode plans drop per-entry `pack_use*`, `pack_dispatch*`, and `pack_span*` text
 - [x] Persist effective CUDA `pack_use_hash` into public warm sidecars so generated decode plans can drop textual `pack_use_*` summary fields too
 - [x] Verify the public CUDA warm path still replays after generated decode plans drop textual `pack_span_root` and `pack_span_cache` hints
+- [x] Verify the public CUDA warm path still replays after generated decode plans drop textual `pack_ref_tile_cache` hints
 - [x] Persist staged CUDA pack-page records beside cached tensor spans
 - [x] Persist staged CUDA tensor-tile records beside cached tensor spans
 - [x] Materialize dedicated CUDA `.tilecache` payloads under `cache_root`

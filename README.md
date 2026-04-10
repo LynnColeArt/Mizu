@@ -225,6 +225,10 @@ Current implementation status:
   with textual `pack_span_root` and `pack_span_cache` hints removed, because
   warm replay can derive sidecar paths from the artifact path and recover span
   identity directly from the persisted binary sidecars
+- that same public CUDA warm path now also tolerates generated decode plans
+  with textual `pack_ref_tile_cache` hints removed, because warm replay can
+  recover the pack-owned binary buffer directly from `pack_ref_tile_buffer=`
+  and derive the rest of the weight-pack cache shape from artifact identity
 - the `Makefile` now rebuilds the contract binaries when the C API Fortran
   sources change, which keeps the public-path tests from silently running stale
   executables
