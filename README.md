@@ -29,6 +29,9 @@ Current implementation status:
   HuggingFace-style safetensors model directories and emit a Mizu
   `manifest.mizu` plus `mizu_import/` asset bundle for Qwen/Gemma-shaped
   real-asset smoke testing
+- `tools/import/gguf_to_mizu.py` can now scan local GGUF model assets,
+  optionally pair a model GGUF with an mmproj GGUF, and emit the same bundle
+  shape plus a GGUF tensor sidecar for Qwench-style real-asset smoke testing
 - route-aware optimization and persisted cache metadata are implemented
 - the optimization store now invalidates stale evidence by workload, candidate
   key, plan id, or current candidate set, and winner selection/persistence

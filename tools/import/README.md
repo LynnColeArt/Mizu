@@ -43,3 +43,43 @@ This is an asset-layout smoke importer, not a real inference converter. It
 classifies common Qwen/Gemma tensor-name patterns into Mizu tensor roles and
 creates stable model/projector identity, giving us a concrete way to start
 testing real local assets before backend math is complete.
+
+## GGUF Smoke Importer
+
+`gguf_to_mizu.py` converts local GGUF model assets into the same Mizu bundle
+shape. It is also dependency-free and reads only GGUF metadata and tensor-info
+headers, so it can inspect large quantized model files without loading the
+weight payload into memory.
+
+Example with a paired Qwen model and mmproj file:
+
+```sh
+python3 tools/import/gguf_to_mizu.py ~/.qwench/models/qwen3.5-9b-instruct-q4_k_m.gguf \
+  --projector-gguf ~/.qwench/models/mmproj-Qwen_Qwen3.5-9B-f16.gguf \
+  --output-root build/import-smoke/qwen35-9b \
+  --link-mode symlink
+```
+
+Example with a single Gemma GGUF:
+
+```sh
+python3 tools/import/gguf_to_mizu.py ~/.qwench/models/gemma-4-26B-A4B-it-UD-IQ2_M.gguf \
+  --output-root build/import-smoke/gemma4-26b \
+  --link-mode symlink
+```
+
+The tool writes the standard bundle files plus:
+
+- `<output_root>/mizu_import/gguf_tensors.tsv`
+
+`tensors.tsv` keeps the loader-compatible Mizu view. Quantized GGUF storage
+types are currently normalized to Mizu staging dtypes such as `f16`, while
+`gguf_tensors.tsv` preserves the original GGUF tensor type and data offset for
+the next storage-schema pass.
+
+On this machine, the current `~/.qwench/models` smoke assets import as:
+
+- Qwen3.5 9B plus `mmproj-Qwen_Qwen3.5-9B-f16.gguf`: 761 tensor records,
+  projector present
+- `gemma-4-26B-A4B-it-UD-IQ2_M.gguf`: 658 tensor records, no projector tensors
+  present in that local GGUF file

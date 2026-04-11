@@ -5,6 +5,11 @@ Last updated: 2026-04-11
 ## Latest Checkpoint
 
 - current milestone: import tooling now includes a dependency-free
+  GGUF smoke importer that scans local GGUF metadata/tensor headers, can pair
+  the Qwen3.5 model GGUF with its mmproj GGUF, writes the same
+  `manifest.mizu` plus `mizu_import/` bundle shape, and preserves original
+  GGUF tensor type/offset data in a sidecar inventory
+- current milestone: import tooling now includes a dependency-free
   HuggingFace safetensors smoke importer that scans local model shards,
   classifies common Qwen/Gemma tensor-name patterns into Mizu tensor roles,
   writes `manifest.mizu` plus `mizu_import/`, and symlinks or copies source
@@ -255,9 +260,14 @@ Last updated: 2026-04-11
   pack-dispatch snapshot for the first selected packed tensors, including
   packed offsets, byte spans, role codes, and layout codes, so bridge-owned
   session state preserves a small structural view of pack consumption
-- immediate next target: run the safetensors importer against real local Qwen
-  and Gemma assets, tighten any family-specific tensor-role gaps it reveals,
-  and use that imported inventory in a less-synthetic CUDA execution path
+- real-asset smoke: `~/.qwench/models/qwen3.5-9b-instruct-q4_k_m.gguf` plus
+  `mmproj-Qwen_Qwen3.5-9B-f16.gguf` imports into 761 tensor records with
+  projector present; `gemma-4-26B-A4B-it-UD-IQ2_M.gguf` imports into 658 tensor
+  records and this local file does not expose projector tensors
+- immediate next target: validate the real Qwench GGUF import bundles through
+  the loader/CUDA materialization path, tighten any family-specific tensor-role
+  gaps the inventories reveal, and promote quantized GGUF storage type from a
+  sidecar detail into the core import schema
 
 ## Roadmap Status
 
@@ -282,8 +292,8 @@ Last updated: 2026-04-11
   - model-open and stage routing now respect detected backend availability
   - hardware validation is still the biggest Apple gap
 - model import and target-asset mapping are still only partially done, but
-  there is now a concrete safetensors smoke-import path for local Qwen/Gemma-
-  shaped asset directories
+  there are now concrete safetensors and GGUF smoke-import paths for local
+  Qwen/Gemma-shaped asset directories and Qwench-style GGUF caches
 - the importer/output-layout contract now has a real first shape, but target
   family tensor mapping is still mostly ahead of us
 

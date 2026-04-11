@@ -17,6 +17,7 @@ The goal is simple:
   mizu_import/
     layout.mizu
     tensors.tsv
+    gguf_tensors.tsv        # optional source-format sidecar
     modalities.tsv
     projector.mizu
     weights/
@@ -135,9 +136,17 @@ That tooling should produce:
 The first concrete tool is:
 
 - `tools/import/hf_safetensors_to_mizu.py`
+- `tools/import/gguf_to_mizu.py`
 
-It reads local HuggingFace-style `.safetensors` headers directly with the
-Python standard library, classifies common Qwen/Gemma tensor-name patterns into
-Mizu tensor roles, writes the bundle files above, and symlinks or copies source
-shards under `mizu_import/weights/` so loader validation can continue to reject
-unsafe external paths.
+The safetensors importer reads local HuggingFace-style `.safetensors` headers
+directly with the Python standard library, classifies common Qwen/Gemma
+tensor-name patterns into Mizu tensor roles, writes the bundle files above, and
+symlinks or copies source shards under `mizu_import/weights/` so loader
+validation can continue to reject unsafe external paths.
+
+The GGUF importer reads GGUF metadata and tensor-info headers directly, can
+pair a model GGUF with an optional mmproj GGUF, writes the same loader-facing
+bundle, and adds `gguf_tensors.tsv` as a source-format sidecar that preserves
+GGUF tensor type and data-offset details. The current loader ignores that
+sidecar; it is there so the next storage-schema pass can distinguish quantized
+GGUF storage from the normalized staging dtype used in `tensors.tsv`.
