@@ -21,6 +21,7 @@ APPLE_BRIDGE_OBJ := $(BUILD_DIR)/apple_bridge.o
 COMMON_F90 := \
 	src/common/mod_kinds.f90 \
 	src/common/mod_status.f90 \
+	src/common/mod_memory.f90 \
 	src/common/mod_types.f90 \
 	src/common/mod_errors.f90
 
@@ -187,6 +188,7 @@ $(TEST_DIR)/test_backend_registry: $(TEST_DIR) $(CUDA_BRIDGE_OBJ) $(APPLE_BRIDGE
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/backend_registry_mods -o $@ \
 		src/common/mod_kinds.f90 \
 		src/common/mod_status.f90 \
+		src/common/mod_memory.f90 \
 		src/common/mod_types.f90 \
 		src/runtime/mod_workspace.f90 \
 		src/runtime/mod_runtime.f90 \
@@ -208,6 +210,7 @@ $(TEST_DIR)/test_runtime_workspace: $(TEST_DIR)
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/runtime_workspace_mods -o $@ \
 		src/common/mod_kinds.f90 \
 		src/common/mod_status.f90 \
+		src/common/mod_memory.f90 \
 		src/common/mod_types.f90 \
 		src/runtime/mod_workspace.f90 \
 		src/runtime/mod_runtime.f90 \
@@ -237,6 +240,7 @@ $(TEST_DIR)/test_apple_executor: $(TEST_DIR) $(APPLE_BRIDGE_OBJ)
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/apple_executor_mods -o $@ \
 		src/common/mod_kinds.f90 \
 		src/common/mod_status.f90 \
+		src/common/mod_memory.f90 \
 		src/common/mod_types.f90 \
 		src/runtime/mod_workspace.f90 \
 		src/model/mod_model_manifest.f90 \
@@ -261,6 +265,7 @@ $(TEST_DIR)/test_cuda_executor: $(TEST_DIR) $(CUDA_BRIDGE_OBJ)
 	$(FC) $(FFLAGS) -J $(TEST_DIR)/cuda_executor_mods -o $@ \
 		src/common/mod_kinds.f90 \
 		src/common/mod_status.f90 \
+		src/common/mod_memory.f90 \
 		src/common/mod_types.f90 \
 		src/runtime/mod_workspace.f90 \
 		src/model/mod_model_manifest.f90 \

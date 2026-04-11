@@ -1,6 +1,7 @@
 program test_runtime_workspace
   use iso_c_binding, only: c_associated, c_f_pointer
   use mod_kinds,     only: c_i8, i32, i64, MEGABYTE
+  use mod_memory,    only: DEFAULT_HOST_ALIGNMENT_BYTES, pointer_is_aligned
   use mod_status,    only: MIZU_STATUS_OK
   use mod_types,     only: runtime_state, runtime_config
   use mod_runtime,   only: initialize_runtime_state, reset_runtime_state
@@ -18,6 +19,10 @@ program test_runtime_workspace
     runtime%workspace%bytes_reserved, 0_i64)
   call expect_equal_i64("runtime workspace should start with zero bytes in use", &
     runtime%workspace%bytes_in_use, 0_i64)
+  call expect_equal_i64("runtime workspace should start with default host alignment", &
+    runtime%workspace%host_alignment_bytes, DEFAULT_HOST_ALIGNMENT_BYTES)
+  call expect_equal_i64("runtime workspace should start with zero allocations", &
+    runtime%workspace%allocation_count, 0_i64)
   call expect_true("runtime workspace should start without a host buffer", &
     .not. c_associated(runtime%workspace%host_buffer))
 
@@ -29,6 +34,9 @@ program test_runtime_workspace
     2_i64 * MEGABYTE)
   call expect_true("first reservation should allocate a host buffer", &
     c_associated(runtime%workspace%host_buffer))
+  call expect_true("first reservation should return an aligned host buffer", &
+    pointer_is_aligned(runtime%workspace%host_buffer, runtime%workspace%host_alignment_bytes))
+  call expect_equal_i64("first reservation should allocate once", runtime%workspace%allocation_count, 1_i64)
   call c_f_pointer(runtime%workspace%host_buffer, workspace_view, [int(runtime%workspace%bytes_reserved)])
   workspace_view(1) = 17_c_i8
 
@@ -38,6 +46,9 @@ program test_runtime_workspace
     runtime%workspace%bytes_reserved, 2_i64 * MEGABYTE)
   call expect_equal_i64("smaller reservation should update in-use bytes", &
     runtime%workspace%bytes_in_use, 1_i64 * MEGABYTE)
+  call expect_equal_i64("smaller reservation should not allocate again", runtime%workspace%allocation_count, 1_i64)
+  call expect_true("smaller reservation should preserve host-buffer alignment", &
+    pointer_is_aligned(runtime%workspace%host_buffer, runtime%workspace%host_alignment_bytes))
   call c_f_pointer(runtime%workspace%host_buffer, workspace_view, [int(runtime%workspace%bytes_reserved)])
   call expect_equal_i32("smaller reservation should preserve the allocated host buffer", &
     int(workspace_view(1), kind=i32), 17_i32)
@@ -49,11 +60,19 @@ program test_runtime_workspace
   call expect_equal_i64("larger reservation should update in-use bytes", &
     runtime%workspace%bytes_in_use, 6_i64 * MEGABYTE)
   call expect_true("larger reservation should keep a host buffer", c_associated(runtime%workspace%host_buffer))
+  call expect_true("larger reservation should keep host-buffer alignment", &
+    pointer_is_aligned(runtime%workspace%host_buffer, runtime%workspace%host_alignment_bytes))
+  call expect_equal_i64("larger reservation should allocate a second arena", &
+    runtime%workspace%allocation_count, 2_i64)
+  call c_f_pointer(runtime%workspace%host_buffer, workspace_view, [int(runtime%workspace%bytes_reserved)])
+  call expect_equal_i32("larger reservation should copy previous scratch bytes", &
+    int(workspace_view(1), kind=i32), 17_i32)
 
   call release_workspace_bytes(runtime%workspace)
   call expect_equal_i64("workspace release should clear in-use bytes", runtime%workspace%bytes_in_use, 0_i64)
   call expect_equal_i64("workspace release should preserve reserved bytes", runtime%workspace%bytes_reserved, &
     6_i64 * MEGABYTE)
+  call expect_equal_i64("workspace release should not allocate", runtime%workspace%allocation_count, 2_i64)
 
   call reset_runtime_state(runtime)
   call expect_true("runtime workspace should reset to not-ready", .not. runtime%workspace%is_ready)
@@ -61,6 +80,10 @@ program test_runtime_workspace
     runtime%workspace%bytes_reserved, 0_i64)
   call expect_equal_i64("runtime workspace reset should clear in-use bytes", &
     runtime%workspace%bytes_in_use, 0_i64)
+  call expect_equal_i64("runtime workspace reset should clear host alignment", &
+    runtime%workspace%host_alignment_bytes, 0_i64)
+  call expect_equal_i64("runtime workspace reset should clear allocation count", &
+    runtime%workspace%allocation_count, 0_i64)
   call expect_true("runtime workspace reset should free the host buffer", &
     .not. c_associated(runtime%workspace%host_buffer))
 

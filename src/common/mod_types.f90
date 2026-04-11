@@ -325,6 +325,8 @@ module mod_types
     type(c_ptr)                       :: host_buffer         = c_null_ptr
     integer(i64)                      :: bytes_reserved      = 0_i64
     integer(i64)                      :: bytes_in_use        = 0_i64
+    integer(i64)                      :: host_alignment_bytes = 0_i64
+    integer(i64)                      :: allocation_count    = 0_i64
     logical                           :: is_ready            = .false.
   end type workspace_state
 
