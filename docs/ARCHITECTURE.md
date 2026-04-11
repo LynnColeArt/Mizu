@@ -579,6 +579,12 @@ Mizu uses explicit memory ownership and reusable workspaces.
 - projector temporary buffers
 - plan-local temporaries
 
+Workspace arenas are allocated through the common memory layer, which provides
+aligned host buffers for backend bridge handoff. The runtime keeps a high-water
+arena per workspace, grows it only when a stage asks for more bytes, preserves
+existing scratch contents across growth, and tracks allocation count so tests
+can guard reuse paths against accidental hot-path allocation.
+
 General rules:
 
 - caller-owned buffers at public boundaries where practical

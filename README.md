@@ -211,8 +211,9 @@ Current implementation status:
 - the narrow public CUDA flow now checks stable positive placeholder output plus
   warm-path reproducibility for the same multimodal staged context, while the
   unit suite still pins exact deterministic executor outputs per bridge variant
-- runtime workspace reservations now back a real reusable host scratch buffer,
-  and the CUDA bridge receives that buffer during stage execution
+- runtime workspace reservations now back a real reusable aligned host scratch
+  buffer, track arena allocations, and pass that buffer to the CUDA bridge
+  during stage execution
 - compact CUDA decode plans can now replay from binary usage, dispatch, and
   span sidecars together, even when textual `pack_use*` summary and
   `pack_span*` records are removed from the plan payload

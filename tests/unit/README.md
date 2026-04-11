@@ -69,6 +69,8 @@ bodies.
     mark while clearing in-use bytes after release
   - validates the workspace now owns a real reusable host scratch buffer that
     is allocated on reserve and freed on reset
+  - validates host scratch buffers are aligned, high-water growth preserves
+    existing bytes, and smaller reservations do not allocate again
 - `test_session_staging.f90`
   - validates attached token content is copied into session staging state
   - validates copied modal bytes and content hashes are retained until clear

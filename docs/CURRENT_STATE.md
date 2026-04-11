@@ -4,6 +4,10 @@ Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: runtime workspace reservations now use a shared
+  `mod_memory` aligned host allocator, preserve scratch bytes when the
+  high-water arena grows, and expose allocation counts so tests can verify
+  reuse paths avoid hot-path allocation
 - current milestone: CUDA `.execbuffer` v3 now carries explicit per-entry
   materialized weight-pack hashes, the Fortran/C/CUDA bridge surfaces pass that
   lane directly into prefill/decode, and warm replay uses materialized identity
@@ -496,8 +500,10 @@ In short:
 - CUDA decode now also preserves layout metadata for untouched pages and
   advances the generation counter only on the decode-owned page, which makes
   checkpointed state more honest about what changed
-- runtime workspace reservations now allocate a reusable host scratch buffer
-  instead of tracking bytes alone
+- runtime workspace reservations now allocate a reusable aligned host scratch
+  buffer instead of tracking bytes alone, preserving prior scratch contents
+  across high-water growth and tracking allocation count for no-allocation
+  assertions
 - CUDA projector, prefill, and decode now receive that runtime workspace buffer
   through the backend bridge and stamp stage-local scratch data into it
 - the build now falls back to a CPU CUDA bridge stub when `nvcc` is not present,

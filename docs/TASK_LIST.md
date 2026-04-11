@@ -203,11 +203,11 @@ These are the highest-leverage next tasks.
 
 ### 3.3 Workspace and Memory
 
-- [ ] Create `src/common/mod_memory.f90`
-- [ ] Implement aligned host allocation
+- [x] Create `src/common/mod_memory.f90`
+- [x] Implement aligned host allocation
 - [x] Implement reusable workspace arenas
 - [x] Implement scratch reservation and release
-- [ ] Add hot-path no-allocation assertions where practical
+- [x] Add hot-path no-allocation assertions where practical
 
 ### 3.4 Blocking Request Flow
 
