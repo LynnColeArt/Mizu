@@ -128,7 +128,8 @@ These suites cover the `API-C*` portion of
   - verifies that same public CUDA flow still replays identically after the
     plan-local `.usagebuffer`, `.dispatchbuffer`, `.spanbuffer`, and
     `.spancache` sidecars are gone too, because the binary `.execbuffer`
-    now also persists the resolved weight-pack `.packbuffer` path
+    now also persists the resolved weight-pack `.packbuffer` path and carries
+    explicit v3 materialized pack hashes
   - verifies newly generated CUDA warm artifacts no longer materialize fresh
     plan-local `.usagebuffer`, `.dispatchbuffer`, or `.spanbuffer` files, so
     `.execbuffer` plus the typed weight-pack cache is the primary generated

@@ -138,9 +138,10 @@ bodies.
     profile
   - validates those same usage artifacts now prefer a typed `.packbuffer`
     sibling with a small header and per-pack directory for pack-owned
-    page/tile bytes, keep `.packpayload` as a readable fallback, and change
-    decode behavior when the staged binary buffer is rewritten for the same
-    usage profile
+    page/tile bytes, keep `.packpayload` as a readable fallback, preserve decode
+    behavior when only raw staged bytes are rewritten under the same
+    materialized identity, and change behavior when that materialized identity
+    changes
   - validates compact CUDA `pack_dispatch*` entries can now collapse to
     `pack=<index>` and still restore offset, byte span, role, and layout from
     `pack_use*` plus the typed `.packbuffer` directory
@@ -173,7 +174,9 @@ bodies.
     identity after the plan-local `.usagebuffer`, `.dispatchbuffer`,
     `.spanbuffer`, and `.spancache` sidecars are removed, because the
     `.execbuffer` sidecar now also persists the resolved weight-pack
-    `.packbuffer` path
+    `.packbuffer` path and carries explicit v3 materialized pack hashes
+  - validates CUDA bridge replay now consumes materialized pack hashes as
+    first-class inputs before falling back to tile/page/sample bytes
   - keeps explicit `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer`
     fixtures as backward-compatibility coverage even though newly generated
     CUDA warm artifacts now prefer `.execbuffer` plus the typed weight-pack

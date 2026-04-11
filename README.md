@@ -157,9 +157,9 @@ Current implementation status:
   depends less on surrounding dispatch text
 - the CUDA bridge now also receives those resolved packed-entry indices
   directly and derives staged prefill/decode execution from the resolved
-  binary pack record first, with a canonical `tile -> page -> sampled span`
-  material-source order that keeps warm replay stable across different cache
-  fallback shapes
+  binary pack record first, with materialized pack identity ahead of the
+  canonical `tile -> page -> sampled span` fallback order that keeps warm replay
+  stable across different cache shapes
 - those same compact CUDA plans now also normalize their stored artifact
   lineage from the resolved typed `.packbuffer` record, so warm decode stays
   stable whether a plan identifies a packed tensor by raw offset/bytes or by
@@ -249,6 +249,14 @@ Current implementation status:
   `.packbuffer` path, so compact warm replay preserves static pack dependency
   and canonical pack records even after `.usagebuffer`, `.dispatchbuffer`,
   `.spanbuffer`, and `.spancache` have been removed
+- CUDA `.execbuffer` sidecars now use version 3 records with an explicit
+  per-entry materialized weight-pack hash lane, rather than overloading the
+  span-hash fields; the executor still accepts older v1/v2 buffers as
+  compatibility inputs
+- CUDA bridge prefill/decode now receive those materialized hashes as
+  first-class inputs and use them before falling back to tile/page/sample bytes;
+  typed `.packbuffer` dependency hashing likewise prefers complete
+  materialized entry identities before falling back to raw buffer bytes
 - generated CUDA `prefill` and `decode` artifacts now materialize `.execbuffer`
   plus the typed weight-pack cache as the primary binary warm-path record, and
   no longer emit new plan-local `.usagebuffer`, `.dispatchbuffer`, or

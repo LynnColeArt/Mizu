@@ -1,14 +1,18 @@
 # Mizu Current State
 
-Last updated: 2026-04-10
+Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: CUDA `.execbuffer` v3 now carries explicit per-entry
+  materialized weight-pack hashes, the Fortran/C/CUDA bridge surfaces pass that
+  lane directly into prefill/decode, and warm replay uses materialized identity
+  before falling back to tile/page/sample bytes
 - current milestone: the CUDA bridge now treats resolved binary pack records
   as the primary staged execution input for prefill and decode by consuming
   resolved `pack=` indices alongside typed `.packbuffer` / usage / dispatch /
-  span sidecar state, and it now normalizes each packed entry to one canonical
-  material source order `tile -> page -> sampled span` so warm replay stays
+  span sidecar state, and it now normalizes each packed entry through one
+  canonical fallback order after materialized identity so warm replay stays
   stable even when different cache shapes expose different sidecar richness
 - current milestone: generated CUDA weight-pack artifacts now point directly to
   typed `.packbuffer` records instead of materializing new `.packtiles` or
@@ -177,6 +181,13 @@ Last updated: 2026-04-10
   `.packbuffer` path, so compact warm replay preserves static pack dependency
   and canonical pack records even after `.usagebuffer`, `.dispatchbuffer`,
   `.spanbuffer`, and `.spancache` are gone
+- CUDA `.execbuffer` sidecars now write version 3 records with an explicit
+  per-entry materialized weight-pack hash lane, while the executor continues to
+  accept v1/v2 buffers as compatibility inputs
+- CUDA bridge prefill/decode now consume those materialized pack hashes as
+  first-class bridge inputs before falling back to tile/page/sample bytes, and
+  typed `.packbuffer` dependency hashing now prefers complete materialized
+  entry identity before falling back to raw buffer-byte hashing
 - generated CUDA `prefill` and `decode` artifacts now rely on `.execbuffer`
   plus the typed weight-pack cache as the primary plan-local binary warm-path
   record, and no longer emit new `.usagebuffer`, `.dispatchbuffer`, or

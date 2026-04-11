@@ -152,6 +152,9 @@ These are the highest-leverage next tasks.
 - [x] Derive compact CUDA static pack dependency from the typed `.packbuffer` so public warm replay can also drop textual `pack_ref_hash`, `pack_ref_bytes`, `pack_ref_count`, `weight_pack_hash`, `weight_pack_bytes`, and `weight_pack_count` hints
 - [x] Persist the resolved CUDA weight-pack `.packbuffer` path into binary `.usagebuffer` sidecars
 - [x] Persist the resolved CUDA weight-pack `.packbuffer` path into binary `.execbuffer` sidecars so compact replay keeps static pack dependency after usage/dispatch/span sidecars are gone
+- [x] Promote CUDA `.execbuffer` records to v3 with explicit per-entry materialized weight-pack hashes instead of overloading span-hash fields
+- [x] Pass CUDA materialized pack hashes through the bridge as first-class prefill/decode inputs and prefer them before tile/page/sample fallback
+- [x] Derive typed `.packbuffer` static dependency from complete materialized entry identities before falling back to raw buffer-byte hashing
 - [x] Verify binary-first CUDA warm replay still works after direct pack-buffer hints and intermediate `.packtiles` files are removed
 - [x] Make generated CUDA warm artifacts rely on `.execbuffer` plus typed weight-pack caches as the primary plan-local binary record, while demoting `.usagebuffer`, `.dispatchbuffer`, and `.spanbuffer` to backward-compatibility fallbacks
 - [x] Move generated CUDA span/sample/page/tile warm records into `.execbuffer` so newly generated plans no longer require `.spancache`, while keeping `.spancache` as a compatibility fallback
