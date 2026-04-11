@@ -4,6 +4,10 @@ Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: Phase 6 now has a dedicated session-cache policy module
+  that records parked live-context identity, scores KV retention, and evicts
+  only inactive checkpoint-safe entries while protecting live or unsafe
+  resident state
 - current milestone: Phase 6 now also has a strict weight-cache module for
   backend-packed weight identity, in-memory packed artifact reuse, and
   disk-backed warm reuse with stage/backend/route/pack-format metadata guards

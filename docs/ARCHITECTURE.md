@@ -119,6 +119,8 @@ The initial cache hierarchy is:
     sizing decisions, candidate variants, and winning plan records
 - `session_cache`
   - KV pages, prefix state, parked session state, sampler state where relevant
+  - retention policy prefers larger/recent KV state and evicts only inactive
+    checkpoint-safe records
 - `mm_cache`
   - multimodal preprocessing outputs, projector outputs, and reusable modality
     embeddings when valid

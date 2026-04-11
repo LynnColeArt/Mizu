@@ -331,10 +331,10 @@ These are the highest-leverage next tasks.
 
 ### 6.3 Session Cache
 
-- [ ] Create `src/cache/mod_session_cache.f90`
+- [x] Create `src/cache/mod_session_cache.f90`
 - [x] Implement parked session identity
-- [ ] Implement KV retention policy
-- [ ] Implement safe eviction policy for inactive sessions
+- [x] Implement KV retention policy
+- [x] Implement safe eviction policy for inactive sessions
 
 ### 6.4 Multimodal Cache
 

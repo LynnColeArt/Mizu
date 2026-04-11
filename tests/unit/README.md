@@ -55,6 +55,13 @@ bodies.
     weight-pack metadata
   - validates save/load roundtrips and warm hydration merge persisted packed
     weight entries without replacing existing in-memory entries
+- `test_session_cache.f90`
+  - validates strict session-cache keys preserve parked live-context identity
+    and checkpoint metadata
+  - validates KV-heavy sessions receive stronger retention than small parked
+    sessions
+  - validates eviction chooses only inactive checkpoint-safe records while
+    protecting live and uncheckpointed resident sessions
 - `test_optimization_store.f90`
   - validates runtime-scoped winner selection based on recorded execution
     samples rather than key reuse alone

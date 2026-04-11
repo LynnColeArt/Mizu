@@ -32,6 +32,9 @@ Current implementation status:
 - the weight cache now mirrors that strict reuse shape for backend-packed
   weight artifacts, including packed identity text, metadata guards, and
   disk-backed warm reuse
+- the session cache now has a module-level KV retention and safe-eviction
+  policy for parked live-context records, protecting live or uncheckpointed
+  resident state from cache eviction
 - runtime backend inventory and capability-probe scaffolding exist for Apple and
   CUDA
 - Apple planner scaffolding now exists for ANE and Metal, with route-specific
