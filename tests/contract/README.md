@@ -153,5 +153,15 @@ These suites cover the `API-C*` portion of
     execution falls back from richer tile/page cache shapes to leaner binary
     sidecars, because the CUDA bridge now derives staged execution from the
     resolved binary pack record in a canonical material-source order
+- `test_qwench_gguf_cuda_smoke.c`
+  - skips cleanly when `~/.qwench/models` does not contain the expected local
+    GGUF assets
+  - imports the local Qwen3.5 model plus mmproj GGUF and the local Gemma GGUF
+    into temporary Mizu bundles
+  - opens those generated bundles through the public CUDA route, drives Qwen
+    projector/prefill/decode placeholder execution, and verifies quantized
+    source storage markers survive into CUDA weight artifacts
+  - verifies mmproj tensors are treated as projector-side lineage rather than
+    decoder weight-pack entries
 - `test_go_binding_smoke.go`
   - reserved for the first thin Go binding smoke path

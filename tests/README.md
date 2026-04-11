@@ -12,7 +12,8 @@ starts.
   - deterministic tests with fake clocks, fake backends, fake manifests, and
     temp cache roots
 - `contract/`
-  - C ABI and binding-shape checks
+  - C ABI, binding-shape checks, and optional local real-asset smokes that
+    skip cleanly when their model files are absent
 - `integration/`
   - target-machine tests for Apple and CUDA routes
 - `performance/`

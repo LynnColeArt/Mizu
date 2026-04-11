@@ -7,8 +7,9 @@ Last updated: 2026-04-11
 - current milestone: import tooling now includes a dependency-free
   GGUF smoke importer that scans local GGUF metadata/tensor headers, can pair
   the Qwen3.5 model GGUF with its mmproj GGUF, writes the same
-  `manifest.mizu` plus `mizu_import/` bundle shape, and preserves original
-  GGUF tensor type/offset data in a sidecar inventory
+  `manifest.mizu` plus `mizu_import/` bundle shape, preserves original GGUF
+  tensor type in core `storage_type` lineage, and keeps GGUF data offsets in a
+  sidecar inventory
 - current milestone: import tooling now includes a dependency-free
   HuggingFace safetensors smoke importer that scans local model shards,
   classifies common Qwen/Gemma tensor-name patterns into Mizu tensor roles,
@@ -264,10 +265,15 @@ Last updated: 2026-04-11
   `mmproj-Qwen_Qwen3.5-9B-f16.gguf` imports into 761 tensor records with
   projector present; `gemma-4-26B-A4B-it-UD-IQ2_M.gguf` imports into 658 tensor
   records and this local file does not expose projector tensors
+- real-asset smoke: when Qwench GGUF assets are present, the contract suite now
+  imports them into `/tmp`, opens the generated bundles through the CUDA route,
+  drives Qwen projector/prefill/decode placeholder execution, and verifies
+  quantized storage markers such as `q4_k` and `iq2_xxs` survive into CUDA
+  weight artifacts while mmproj tensors stay out of the decoder weight pack
 - immediate next target: validate the real Qwench GGUF import bundles through
-  the loader/CUDA materialization path, tighten any family-specific tensor-role
-  gaps the inventories reveal, and promote quantized GGUF storage type from a
-  sidecar detail into the core import schema
+  a first storage-aware byte-accounting pass, tighten any family-specific
+  tensor-role gaps the inventories reveal, and start using source storage type
+  when estimating backend pack spans
 
 ## Roadmap Status
 

@@ -132,6 +132,8 @@ These are the highest-leverage next tasks.
 - [x] Define validation rules for imported assets
 - [x] Add dependency-free HuggingFace safetensors smoke importer
 - [x] Add dependency-free GGUF smoke importer for Qwench-style local assets
+- [x] Promote source storage type into core import tensor lineage
+- [x] Add optional Qwench GGUF CUDA materialization smoke
 - [x] Define failure reporting for bad manifests
 - [x] Retain imported inventory lineage on runtime model state
 - [x] Emit imported tensor and projector lineage into materialized backend artifacts
