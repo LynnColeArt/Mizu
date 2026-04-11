@@ -32,7 +32,8 @@ MODEL_F90 := \
 
 CACHE_F90 := \
 	src/cache/mod_cache_keys.f90 \
-	src/cache/mod_cache_store.f90
+	src/cache/mod_cache_store.f90 \
+	src/cache/mod_plan_cache.f90
 
 RUNTIME_F90 := \
 	src/runtime/mod_request.f90 \
@@ -61,6 +62,7 @@ UNIT_BINS := \
 	$(TEST_DIR)/test_model_manifest_loader \
 	$(TEST_DIR)/test_cache_keys \
 	$(TEST_DIR)/test_cache_store \
+	$(TEST_DIR)/test_plan_cache \
 	$(TEST_DIR)/test_optimization_store \
 	$(TEST_DIR)/test_backend_registry \
 	$(TEST_DIR)/test_runtime_workspace \
@@ -171,6 +173,20 @@ $(TEST_DIR)/test_cache_store: $(TEST_DIR)
 		src/cache/mod_cache_keys.f90 \
 		src/cache/mod_cache_store.f90 \
 		tests/unit/test_cache_store.f90
+
+$(TEST_DIR)/test_plan_cache: $(TEST_DIR)
+	mkdir -p $(TEST_DIR)/plan_cache_mods
+	$(FC) $(FFLAGS) -J $(TEST_DIR)/plan_cache_mods -o $@ \
+		src/common/mod_kinds.f90 \
+		src/common/mod_status.f90 \
+		src/common/mod_types.f90 \
+		src/model/mod_model_manifest.f90 \
+		src/model/mod_model_import_layout.f90 \
+		src/model/mod_model_loader.f90 \
+		src/cache/mod_cache_keys.f90 \
+		src/cache/mod_cache_store.f90 \
+		src/cache/mod_plan_cache.f90 \
+		tests/unit/test_plan_cache.f90
 
 $(TEST_DIR)/test_optimization_store: $(TEST_DIR)
 	mkdir -p $(TEST_DIR)/optimization_mods
