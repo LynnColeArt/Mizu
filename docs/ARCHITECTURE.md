@@ -305,7 +305,9 @@ the plan cache and optimization store.
 The in-memory plan cache accepts only strict plan keys and stores the winning
 plan id with artifact metadata. A lookup is an exact identity match, not a
 best-effort fuzzy reuse, so route, planner-version, device, pack-format, and
-shape changes naturally miss.
+shape changes naturally miss. The same record shape can be saved to disk and
+warmed back into a live runtime cache so cold starts can reuse measured winners
+without discarding entries already learned during the current process.
 
 ### Reuse
 

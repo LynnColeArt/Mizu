@@ -46,6 +46,8 @@ bodies.
   - validates route and planner-version changes miss instead of reusing stale
     plan metadata
   - validates mismatched stage/backend/route artifact metadata is rejected
+  - validates save/load roundtrips and warm hydration merge persisted entries
+    without replacing existing in-memory entries
 - `test_optimization_store.f90`
   - validates runtime-scoped winner selection based on recorded execution
     samples rather than key reuse alone

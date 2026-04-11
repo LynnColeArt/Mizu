@@ -319,8 +319,8 @@ These are the highest-leverage next tasks.
 - [x] Create `src/cache/mod_plan_cache.f90`
 - [x] Implement strict plan cache keys
 - [x] Implement in-memory plan cache
-- [ ] Implement disk-backed plan cache
-- [ ] Implement plan cache warming
+- [x] Implement disk-backed plan cache
+- [x] Implement plan cache warming
 
 ### 6.2 Weight Cache
 

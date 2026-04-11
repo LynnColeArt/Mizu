@@ -4,6 +4,10 @@ Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: the strict plan cache is now disk-backed and can warm an
+  existing runtime cache from persisted entries without replacing already-live
+  entries, giving the self-optimization loop a concrete cold-start hydration
+  seam
 - current milestone: Phase 6 now has a concrete in-memory plan-cache module
   that accepts only strict plan keys, rejects stage/backend/route metadata
   mismatches, tracks plan hits, and preserves artifact metadata for winner

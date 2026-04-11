@@ -26,9 +26,9 @@ Current implementation status:
 - the loader now recognizes an optional imported `mizu_import/` bundle with
   validated tensor, modality, and projector inventories
 - route-aware optimization and persisted cache metadata are implemented
-- the plan cache now has a strict-key in-memory layer for replaying cached plan
-  metadata only when stage, backend, route, device, pack format, and shape
-  identity match
+- the plan cache now has strict-key in-memory, disk-backed, and warm-hydration
+  paths for replaying cached plan metadata only when stage, backend, route,
+  device, pack format, and shape identity match
 - runtime backend inventory and capability-probe scaffolding exist for Apple and
   CUDA
 - Apple planner scaffolding now exists for ANE and Metal, with route-specific
