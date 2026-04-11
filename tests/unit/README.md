@@ -48,6 +48,13 @@ bodies.
   - validates mismatched stage/backend/route artifact metadata is rejected
   - validates save/load roundtrips and warm hydration merge persisted entries
     without replacing existing in-memory entries
+- `test_weight_cache.f90`
+  - validates strict weight-cache keys and backend-packed identity are required
+    before packed artifacts can be reused
+  - validates route and pack-format changes miss instead of reusing stale
+    weight-pack metadata
+  - validates save/load roundtrips and warm hydration merge persisted packed
+    weight entries without replacing existing in-memory entries
 - `test_optimization_store.f90`
   - validates runtime-scoped winner selection based on recorded execution
     samples rather than key reuse alone

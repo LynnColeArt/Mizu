@@ -29,6 +29,9 @@ Current implementation status:
 - the plan cache now has strict-key in-memory, disk-backed, and warm-hydration
   paths for replaying cached plan metadata only when stage, backend, route,
   device, pack format, and shape identity match
+- the weight cache now mirrors that strict reuse shape for backend-packed
+  weight artifacts, including packed identity text, metadata guards, and
+  disk-backed warm reuse
 - runtime backend inventory and capability-probe scaffolding exist for Apple and
   CUDA
 - Apple planner scaffolding now exists for ANE and Metal, with route-specific

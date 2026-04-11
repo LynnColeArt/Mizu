@@ -113,6 +113,7 @@ The initial cache hierarchy is:
 
 - `weight_cache`
   - packed or transformed weights per backend and device family
+  - strict backend-packed identity plus disk-backed warm reuse
 - `plan_cache`
   - compiled execution plans, backend programs, graph lowerings, and scratch
     sizing decisions, candidate variants, and winning plan records

@@ -4,6 +4,9 @@ Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: Phase 6 now also has a strict weight-cache module for
+  backend-packed weight identity, in-memory packed artifact reuse, and
+  disk-backed warm reuse with stage/backend/route/pack-format metadata guards
 - current milestone: the strict plan cache is now disk-backed and can warm an
   existing runtime cache from persisted entries without replacing already-live
   entries, giving the self-optimization loop a concrete cold-start hydration

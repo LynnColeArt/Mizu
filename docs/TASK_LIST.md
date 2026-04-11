@@ -324,10 +324,10 @@ These are the highest-leverage next tasks.
 
 ### 6.2 Weight Cache
 
-- [ ] Create `src/cache/mod_weight_cache.f90`
-- [ ] Implement backend-packed weight identity
-- [ ] Implement in-memory packed weight registry
-- [ ] Implement disk-backed packed weight reuse
+- [x] Create `src/cache/mod_weight_cache.f90`
+- [x] Implement backend-packed weight identity
+- [x] Implement in-memory packed weight registry
+- [x] Implement disk-backed packed weight reuse
 
 ### 6.3 Session Cache
 
