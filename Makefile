@@ -88,11 +88,14 @@ CONTRACT_BINS := \
 	$(TEST_DIR)/test_cuda_artifacts \
 	$(TEST_DIR)/test_stage_reports
 
-.PHONY: all test unit-tests contract-tests contract-smokes clean
+TOOL_TESTS := \
+	tests/tooling/test_hf_safetensors_to_mizu.py
+
+.PHONY: all test unit-tests contract-tests contract-smokes tool-tests clean
 
 all: test
 
-test: unit-tests contract-tests
+test: unit-tests contract-tests tool-tests
 
 unit-tests: $(UNIT_BINS)
 	@set -e; for test_bin in $(UNIT_BINS); do \
@@ -107,6 +110,12 @@ contract-tests: contract-smokes $(CONTRACT_BINS)
 	done
 
 contract-smokes: $(CONTRACT_SMOKES)
+
+tool-tests:
+	@set -e; for test_script in $(TOOL_TESTS); do \
+		echo "running $$test_script"; \
+		python3 $$test_script || exit $$?; \
+	done
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
