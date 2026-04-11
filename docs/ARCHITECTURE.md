@@ -302,6 +302,11 @@ Candidate comparison is especially valuable for:
 Once a winning plan has enough evidence, Mizu should persist the decision in
 the plan cache and optimization store.
 
+The in-memory plan cache accepts only strict plan keys and stores the winning
+plan id with artifact metadata. A lookup is an exact identity match, not a
+best-effort fuzzy reuse, so route, planner-version, device, pack-format, and
+shape changes naturally miss.
+
 ### Reuse
 
 Subsequent requests with the same relevant identity should skip exploration and

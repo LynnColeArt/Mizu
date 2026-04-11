@@ -4,6 +4,10 @@ Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: Phase 6 now has a concrete in-memory plan-cache module
+  that accepts only strict plan keys, rejects stage/backend/route metadata
+  mismatches, tracks plan hits, and preserves artifact metadata for winner
+  replay
 - current milestone: runtime workspace reservations now use a shared
   `mod_memory` aligned host allocator, preserve scratch bytes when the
   high-water arena grows, and expose allocation counts so tests can verify

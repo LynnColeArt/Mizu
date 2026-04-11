@@ -40,6 +40,12 @@ bodies.
     session, and multimodal records
   - validates planned workspace bytes survive metadata persistence
   - validates reloaded weight, plan, session, and multimodal keys report hits
+- `test_plan_cache.f90`
+  - validates strict plan-cache keys are required before entries can be
+    recorded or looked up
+  - validates route and planner-version changes miss instead of reusing stale
+    plan metadata
+  - validates mismatched stage/backend/route artifact metadata is rejected
 - `test_optimization_store.f90`
   - validates runtime-scoped winner selection based on recorded execution
     samples rather than key reuse alone
