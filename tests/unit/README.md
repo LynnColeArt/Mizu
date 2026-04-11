@@ -62,6 +62,13 @@ bodies.
     sessions
   - validates eviction chooses only inactive checkpoint-safe records while
     protecting live and uncheckpointed resident sessions
+- `test_mm_cache.f90`
+  - validates multimodal preprocessing reuse is content-bound and can cross
+    device/projector boundaries
+  - validates projector-output reuse stays bound to device, planner,
+    projector revision, and embedding count
+  - validates explicit invalidation reasons for content, projector, embedding,
+    key, kind, and artifact changes
 - `test_optimization_store.f90`
   - validates runtime-scoped winner selection based on recorded execution
     samples rather than key reuse alone

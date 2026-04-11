@@ -338,10 +338,10 @@ These are the highest-leverage next tasks.
 
 ### 6.4 Multimodal Cache
 
-- [ ] Create `src/cache/mod_mm_cache.f90`
-- [ ] Implement projector output cache keys
-- [ ] Implement reusable preprocessing cache keys
-- [ ] Define invalidation rules for modality reuse
+- [x] Create `src/cache/mod_mm_cache.f90`
+- [x] Implement projector output cache keys
+- [x] Implement reusable preprocessing cache keys
+- [x] Define invalidation rules for modality reuse
 
 ### 6.5 Exploration and Exploitation
 

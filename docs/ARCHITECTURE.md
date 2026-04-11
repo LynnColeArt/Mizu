@@ -124,6 +124,12 @@ The initial cache hierarchy is:
 - `mm_cache`
   - multimodal preprocessing outputs, projector outputs, and reusable modality
     embeddings when valid
+  - preprocessing keys bind source model, modality, dtype, byte count, slot,
+    ABI/schema, and content hash, but intentionally do not bind device or
+    projector revision
+  - projector-output keys bind the strict multimodal key plus content hash and
+    embedding count, so projector embeddings rotate with device, planner, and
+    projector revision
 
 ### 4. Adaptive Optimization Loop
 
@@ -559,6 +565,10 @@ Invalidate on:
 - pack format changes
 - planner version changes
 - source model changes
+- modality content changes
+- projector revision or projector-output embedding shape changes
+- materialized artifact fingerprint/path changes when the cache layer is given
+  fresh artifact metadata
 
 ## Memory Model
 

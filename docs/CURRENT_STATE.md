@@ -4,6 +4,12 @@ Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: Phase 6 now has a dedicated multimodal-cache policy
+  module that records reusable preprocessing artifacts separately from
+  projector-output artifacts, allows preprocessing reuse across device and
+  projector changes when content identity is stable, and makes modality reuse
+  invalidation explicit for content, projector, embedding-shape, key, and
+  artifact changes
 - current milestone: Phase 6 now has a dedicated session-cache policy module
   that records parked live-context identity, scores KV retention, and evicts
   only inactive checkpoint-safe entries while protecting live or unsafe
