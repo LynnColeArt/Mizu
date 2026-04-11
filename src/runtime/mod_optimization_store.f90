@@ -5,21 +5,34 @@ module mod_optimization_store
   implicit none
 
   private
+  public :: OPT_EVIDENCE_VALID, OPT_INVALIDATION_WORKLOAD_CHANGED
+  public :: OPT_INVALIDATION_CANDIDATE_CHANGED, OPT_INVALIDATION_PLAN_CHANGED
+  public :: OPT_INVALIDATION_STALE_CANDIDATE_SET
   public :: optimization_candidate_record, optimization_entry_record
   public :: runtime_optimization_store
   public :: initialize_runtime_optimization_store, reset_runtime_optimization_store
   public :: record_execution_sample, lookup_winner_plan_id
   public :: lookup_winner_candidate, lookup_optimization_entry_stats
+  public :: invalidate_optimization_entry, invalidate_optimization_candidate
+  public :: invalidate_optimization_plan, invalidate_stale_optimization_candidates
   public :: load_runtime_optimization_store, save_runtime_optimization_store
 
   integer(i32), parameter :: INITIAL_ENTRY_CAPACITY = 16_i32
   integer(i32), parameter :: INITIAL_CANDIDATE_CAPACITY = 4_i32
   integer(i32), parameter :: MAX_RECORD_LINE_LEN = (2_i32 * MAX_CACHE_KEY_LEN) + 128_i32
 
+  integer(i32), parameter :: OPT_EVIDENCE_VALID = 0_i32
+  integer(i32), parameter :: OPT_INVALIDATION_WORKLOAD_CHANGED = 1_i32
+  integer(i32), parameter :: OPT_INVALIDATION_CANDIDATE_CHANGED = 2_i32
+  integer(i32), parameter :: OPT_INVALIDATION_PLAN_CHANGED = 3_i32
+  integer(i32), parameter :: OPT_INVALIDATION_STALE_CANDIDATE_SET = 4_i32
+
   type :: optimization_candidate_record
     integer(i64) :: plan_id = 0_i64
     integer(i64) :: sample_count = 0_i64
     integer(i64) :: cumulative_elapsed_us = 0_i64
+    integer(i32) :: invalidation_reason = OPT_EVIDENCE_VALID
+    logical      :: is_invalid = .false.
     character(len=MAX_CACHE_KEY_LEN) :: candidate_key_text = ""
   end type optimization_candidate_record
 
@@ -78,6 +91,8 @@ contains
       store%entries(entry_index)%candidates(candidate_index)%sample_count + 1_i64
     store%entries(entry_index)%candidates(candidate_index)%cumulative_elapsed_us = &
       store%entries(entry_index)%candidates(candidate_index)%cumulative_elapsed_us + measured_elapsed_us
+    store%entries(entry_index)%candidates(candidate_index)%invalidation_reason = OPT_EVIDENCE_VALID
+    store%entries(entry_index)%candidates(candidate_index)%is_invalid = .false.
   end subroutine record_execution_sample
 
   subroutine lookup_winner_plan_id(store, key_text, winner_plan_id, has_winner)
@@ -86,7 +101,6 @@ contains
     integer(i64), intent(out)                    :: winner_plan_id
     logical, intent(out)                         :: has_winner
     integer(i32)                                 :: entry_index
-    integer(i32)                                 :: candidate_index
     integer(i32)                                 :: best_index
 
     winner_plan_id = 0_i64
@@ -95,18 +109,8 @@ contains
 
     entry_index = find_entry_index(store, trim(key_text))
     if (entry_index <= 0_i32) return
-    if (store%entries(entry_index)%candidate_count <= 0_i32) return
-
-    best_index = 1_i32
-    do candidate_index = 2_i32, store%entries(entry_index)%candidate_count
-      if (candidate_is_better(store%entries(entry_index)%candidates(candidate_index), &
-                              store%entries(entry_index)%candidates(best_index))) then
-        best_index = candidate_index
-      end if
-    end do
-
-    if (store%entries(entry_index)%candidates(best_index)%plan_id /= 0_i64 .and. &
-        store%entries(entry_index)%candidates(best_index)%sample_count > 0_i64) then
+    best_index = find_best_candidate_index(store%entries(entry_index))
+    if (best_index > 0_i32) then
       winner_plan_id = store%entries(entry_index)%candidates(best_index)%plan_id
       has_winner = .true.
     end if
@@ -120,7 +124,6 @@ contains
     character(len=*), intent(out)                :: winner_candidate_key_text
     logical, intent(out)                         :: has_winner
     integer(i32)                                 :: entry_index
-    integer(i32)                                 :: candidate_index
     integer(i32)                                 :: best_index
 
     winner_plan_id = 0_i64
@@ -130,18 +133,8 @@ contains
 
     entry_index = find_entry_index(store, trim(key_text))
     if (entry_index <= 0_i32) return
-    if (store%entries(entry_index)%candidate_count <= 0_i32) return
-
-    best_index = 1_i32
-    do candidate_index = 2_i32, store%entries(entry_index)%candidate_count
-      if (candidate_is_better(store%entries(entry_index)%candidates(candidate_index), &
-                              store%entries(entry_index)%candidates(best_index))) then
-        best_index = candidate_index
-      end if
-    end do
-
-    if (store%entries(entry_index)%candidates(best_index)%plan_id /= 0_i64 .and. &
-        store%entries(entry_index)%candidates(best_index)%sample_count > 0_i64) then
+    best_index = find_best_candidate_index(store%entries(entry_index))
+    if (best_index > 0_i32) then
       winner_plan_id = store%entries(entry_index)%candidates(best_index)%plan_id
       winner_candidate_key_text = trim(store%entries(entry_index)%candidates(best_index)%candidate_key_text)
       has_winner = .true.
@@ -163,11 +156,103 @@ contains
     entry_index = find_entry_index(store, trim(key_text))
     if (entry_index <= 0_i32) return
 
-    candidate_count = store%entries(entry_index)%candidate_count
     do candidate_index = 1_i32, store%entries(entry_index)%candidate_count
+      if (.not. candidate_is_selectable(store%entries(entry_index)%candidates(candidate_index))) cycle
+      candidate_count = candidate_count + 1_i32
       total_samples = total_samples + store%entries(entry_index)%candidates(candidate_index)%sample_count
     end do
   end subroutine lookup_optimization_entry_stats
+
+  subroutine invalidate_optimization_entry(store, key_text, reason_code, invalidated_count)
+    type(runtime_optimization_store), intent(inout) :: store
+    character(len=*), intent(in)                    :: key_text
+    integer(i32), intent(in)                        :: reason_code
+    integer(i32), intent(out)                       :: invalidated_count
+    integer(i32)                                    :: entry_index
+    integer(i32)                                    :: candidate_index
+
+    invalidated_count = 0_i32
+    if (len_trim(key_text) == 0) return
+
+    entry_index = find_entry_index(store, trim(key_text))
+    if (entry_index <= 0_i32) return
+
+    do candidate_index = 1_i32, store%entries(entry_index)%candidate_count
+      call mark_candidate_invalid(store%entries(entry_index)%candidates(candidate_index), &
+        reason_code, invalidated_count)
+    end do
+  end subroutine invalidate_optimization_entry
+
+  subroutine invalidate_optimization_candidate(store, key_text, candidate_key_text, reason_code, &
+                                               invalidated_count)
+    type(runtime_optimization_store), intent(inout) :: store
+    character(len=*), intent(in)                    :: key_text
+    character(len=*), intent(in)                    :: candidate_key_text
+    integer(i32), intent(in)                        :: reason_code
+    integer(i32), intent(out)                       :: invalidated_count
+    integer(i32)                                    :: entry_index
+    integer(i32)                                    :: candidate_index
+
+    invalidated_count = 0_i32
+    if (len_trim(key_text) == 0 .or. len_trim(candidate_key_text) == 0) return
+
+    entry_index = find_entry_index(store, trim(key_text))
+    if (entry_index <= 0_i32) return
+
+    do candidate_index = 1_i32, store%entries(entry_index)%candidate_count
+      if (trim(store%entries(entry_index)%candidates(candidate_index)%candidate_key_text) /= &
+          trim(candidate_key_text)) cycle
+      call mark_candidate_invalid(store%entries(entry_index)%candidates(candidate_index), &
+        reason_code, invalidated_count)
+    end do
+  end subroutine invalidate_optimization_candidate
+
+  subroutine invalidate_optimization_plan(store, key_text, plan_id, reason_code, invalidated_count)
+    type(runtime_optimization_store), intent(inout) :: store
+    character(len=*), intent(in)                    :: key_text
+    integer(i64), intent(in)                        :: plan_id
+    integer(i32), intent(in)                        :: reason_code
+    integer(i32), intent(out)                       :: invalidated_count
+    integer(i32)                                    :: entry_index
+    integer(i32)                                    :: candidate_index
+
+    invalidated_count = 0_i32
+    if (len_trim(key_text) == 0 .or. plan_id == 0_i64) return
+
+    entry_index = find_entry_index(store, trim(key_text))
+    if (entry_index <= 0_i32) return
+
+    do candidate_index = 1_i32, store%entries(entry_index)%candidate_count
+      if (store%entries(entry_index)%candidates(candidate_index)%plan_id /= plan_id) cycle
+      call mark_candidate_invalid(store%entries(entry_index)%candidates(candidate_index), &
+        reason_code, invalidated_count)
+    end do
+  end subroutine invalidate_optimization_plan
+
+  subroutine invalidate_stale_optimization_candidates(store, key_text, valid_candidate_key_texts, &
+                                                      valid_candidate_count, invalidated_count)
+    type(runtime_optimization_store), intent(inout) :: store
+    character(len=*), intent(in)                    :: key_text
+    character(len=*), intent(in)                    :: valid_candidate_key_texts(:)
+    integer(i32), intent(in)                        :: valid_candidate_count
+    integer(i32), intent(out)                       :: invalidated_count
+    integer(i32)                                    :: entry_index
+    integer(i32)                                    :: candidate_index
+
+    invalidated_count = 0_i32
+    if (len_trim(key_text) == 0 .or. valid_candidate_count <= 0_i32) return
+
+    entry_index = find_entry_index(store, trim(key_text))
+    if (entry_index <= 0_i32) return
+
+    do candidate_index = 1_i32, store%entries(entry_index)%candidate_count
+      if (.not. candidate_is_selectable(store%entries(entry_index)%candidates(candidate_index))) cycle
+      if (candidate_key_is_current(store%entries(entry_index)%candidates(candidate_index)%candidate_key_text, &
+          valid_candidate_key_texts, valid_candidate_count)) cycle
+      call mark_candidate_invalid(store%entries(entry_index)%candidates(candidate_index), &
+        OPT_INVALIDATION_STALE_CANDIDATE_SET, invalidated_count)
+    end do
+  end subroutine invalidate_stale_optimization_candidates
 
   subroutine load_runtime_optimization_store(store, file_path, loaded_ok)
     type(runtime_optimization_store), intent(inout) :: store
@@ -253,6 +338,7 @@ contains
       do candidate_index = 1_i32, store%entries(entry_index)%candidate_count
         if (store%entries(entry_index)%candidates(candidate_index)%plan_id == 0_i64) cycle
         if (store%entries(entry_index)%candidates(candidate_index)%sample_count <= 0_i64) cycle
+        if (store%entries(entry_index)%candidates(candidate_index)%is_invalid) cycle
         persisted_candidate_key = trim(store%entries(entry_index)%candidates(candidate_index)%candidate_key_text)
         if (len_trim(persisted_candidate_key) == 0) persisted_candidate_key = "-"
         write(unit_id, "(A,1X,A,1X,I0,1X,I0,1X,I0,1X,A)", iostat=ios) &
@@ -294,14 +380,26 @@ contains
     integer(i64), intent(in)                       :: plan_id
     character(len=*), intent(in), optional         :: candidate_key_text
     integer(i32)                                   :: index
+    character(len=MAX_CACHE_KEY_LEN)               :: provided_candidate_key
+    logical                                        :: has_provided_candidate_key
+
+    provided_candidate_key = ""
+    has_provided_candidate_key = .false.
+    if (present(candidate_key_text)) then
+      provided_candidate_key = trim(candidate_key_text)
+      has_provided_candidate_key = len_trim(provided_candidate_key) > 0
+    end if
 
     if (allocated(entry%candidates)) then
       do index = 1_i32, entry%candidate_count
         if (entry%candidates(index)%plan_id == plan_id) then
-          if (present(candidate_key_text)) then
+          if (has_provided_candidate_key) then
             if (len_trim(entry%candidates(index)%candidate_key_text) == 0) then
-              entry%candidates(index)%candidate_key_text = trim(candidate_key_text)
+              entry%candidates(index)%candidate_key_text = trim(provided_candidate_key)
+              candidate_index = index
+              return
             end if
+            if (trim(entry%candidates(index)%candidate_key_text) /= trim(provided_candidate_key)) cycle
           end if
           candidate_index = index
           return
@@ -314,10 +412,24 @@ contains
     candidate_index = entry%candidate_count
     entry%candidates(candidate_index) = optimization_candidate_record()
     entry%candidates(candidate_index)%plan_id = plan_id
-    if (present(candidate_key_text)) then
-      entry%candidates(candidate_index)%candidate_key_text = trim(candidate_key_text)
+    if (has_provided_candidate_key) then
+      entry%candidates(candidate_index)%candidate_key_text = trim(provided_candidate_key)
     end if
   end function ensure_candidate_index
+
+  integer(i32) function find_best_candidate_index(entry) result(best_index)
+    type(optimization_entry_record), intent(in) :: entry
+    integer(i32)                                :: candidate_index
+
+    best_index = 0_i32
+    do candidate_index = 1_i32, entry%candidate_count
+      if (.not. candidate_is_selectable(entry%candidates(candidate_index))) cycle
+      if (best_index == 0_i32 .or. &
+          candidate_is_better(entry%candidates(candidate_index), entry%candidates(best_index))) then
+        best_index = candidate_index
+      end if
+    end do
+  end function find_best_candidate_index
 
   integer(i32) function find_entry_index(store, key_text) result(entry_index)
     type(runtime_optimization_store), intent(in) :: store
@@ -388,22 +500,18 @@ contains
     type(optimization_candidate_record), intent(in) :: incumbent
     integer(i64) :: candidate_score_left
     integer(i64) :: candidate_score_right
-    integer(i64) :: incumbent_score_left
-    integer(i64) :: incumbent_score_right
 
-    if (candidate%sample_count <= 0_i64) then
+    if (.not. candidate_is_selectable(candidate)) then
       is_better = .false.
       return
     end if
-    if (incumbent%sample_count <= 0_i64) then
+    if (.not. candidate_is_selectable(incumbent)) then
       is_better = .true.
       return
     end if
 
     candidate_score_left = candidate%cumulative_elapsed_us * incumbent%sample_count
     candidate_score_right = incumbent%cumulative_elapsed_us * candidate%sample_count
-    incumbent_score_left = incumbent%cumulative_elapsed_us * candidate%sample_count
-    incumbent_score_right = candidate%cumulative_elapsed_us * incumbent%sample_count
 
     if (candidate_score_left < candidate_score_right) then
       is_better = .true.
@@ -417,5 +525,54 @@ contains
       is_better = candidate%plan_id < incumbent%plan_id
     end if
   end function candidate_is_better
+
+  pure logical function candidate_is_selectable(candidate) result(is_selectable)
+    type(optimization_candidate_record), intent(in) :: candidate
+
+    is_selectable = .not. candidate%is_invalid .and. &
+      candidate%plan_id /= 0_i64 .and. candidate%sample_count > 0_i64
+  end function candidate_is_selectable
+
+  pure logical function candidate_key_is_current(candidate_key_text, valid_candidate_key_texts, &
+                                                 valid_candidate_count) result(is_current)
+    character(len=*), intent(in) :: candidate_key_text
+    character(len=*), intent(in) :: valid_candidate_key_texts(:)
+    integer(i32), intent(in)     :: valid_candidate_count
+    integer(i32)                 :: candidate_index
+
+    is_current = .false.
+    if (len_trim(candidate_key_text) == 0) return
+
+    do candidate_index = 1_i32, min(valid_candidate_count, int(size(valid_candidate_key_texts), kind=i32))
+      if (trim(candidate_key_text) == trim(valid_candidate_key_texts(candidate_index))) then
+        is_current = .true.
+        return
+      end if
+    end do
+  end function candidate_key_is_current
+
+  pure integer(i32) function sanitize_invalidation_reason(reason_code) result(resolved_reason)
+    integer(i32), intent(in) :: reason_code
+
+    select case (reason_code)
+    case (OPT_INVALIDATION_WORKLOAD_CHANGED, OPT_INVALIDATION_CANDIDATE_CHANGED, &
+          OPT_INVALIDATION_PLAN_CHANGED, OPT_INVALIDATION_STALE_CANDIDATE_SET)
+      resolved_reason = reason_code
+    case default
+      resolved_reason = OPT_INVALIDATION_CANDIDATE_CHANGED
+    end select
+  end function sanitize_invalidation_reason
+
+  subroutine mark_candidate_invalid(candidate, reason_code, invalidated_count)
+    type(optimization_candidate_record), intent(inout) :: candidate
+    integer(i32), intent(in)                           :: reason_code
+    integer(i32), intent(inout)                        :: invalidated_count
+
+    if (.not. candidate_is_selectable(candidate)) return
+
+    candidate%is_invalid = .true.
+    candidate%invalidation_reason = sanitize_invalidation_reason(reason_code)
+    invalidated_count = invalidated_count + 1_i32
+  end subroutine mark_candidate_invalid
 
 end module mod_optimization_store

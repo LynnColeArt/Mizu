@@ -58,6 +58,7 @@ module mod_c_api
                                      reset_runtime_optimization_store, &
                                      record_execution_sample, lookup_winner_candidate, &
                                      lookup_optimization_entry_stats, &
+                                     invalidate_stale_optimization_candidates, &
                                      load_runtime_optimization_store, &
                                      save_runtime_optimization_store
   use mod_backend_registry, only: runtime_backend_registry, initialize_runtime_backend_registry, &
@@ -2889,7 +2890,7 @@ contains
                                           candidate_key_text, plan_id, selection_mode, &
                                           backend_family, execution_route, artifact_metadata)
     type(runtime_state), intent(in)                  :: runtime
-    type(runtime_optimization_store), intent(in)     :: optimization_store
+    type(runtime_optimization_store), intent(inout)  :: optimization_store
     type(model_state), intent(in)                    :: model
     integer(i32), intent(in)                         :: stage_kind
     integer(i32), intent(in)                         :: op_family
@@ -3010,7 +3011,7 @@ contains
                                                selection_mode, backend_family, execution_route, &
                                                artifact_metadata, placeholder_count)
     type(runtime_state), intent(in)                 :: runtime
-    type(runtime_optimization_store), intent(in)    :: optimization_store
+    type(runtime_optimization_store), intent(inout) :: optimization_store
     type(model_state), intent(in)                   :: model
     integer(i64), intent(in)                        :: staged_modal_byte_count
     integer(i32), intent(in)                        :: staged_modal_kind
@@ -3112,7 +3113,7 @@ contains
                                      candidate_key_texts, candidate_key_text, plan_id, &
                                      selection_mode, backend_family, execution_route)
     type(runtime_state), intent(in)                :: runtime
-    type(runtime_optimization_store), intent(in)   :: optimization_store
+    type(runtime_optimization_store), intent(inout) :: optimization_store
     character(len=*), intent(in)                   :: optimization_key_text
     integer(i32), intent(in)                       :: candidate_count
     integer(i32), intent(in)                       :: candidate_backend_families(:)
@@ -3130,6 +3131,7 @@ contains
     integer(i32)                                   :: candidate_budget
     integer(i32)                                   :: candidate_index
     integer(i32)                                   :: observed_candidate_count
+    integer(i32)                                   :: stale_candidate_count
     integer(i32)                                   :: winner_index
     logical                                        :: has_winner
 
@@ -3148,6 +3150,8 @@ contains
     if (runtime%config%optimization_mode == MIZU_OPTIMIZATION_MODE_DISABLED) return
 
     candidate_budget = min(max(1_i32, runtime%config%exploration_budget), candidate_count)
+    call invalidate_stale_optimization_candidates(optimization_store, trim(optimization_key_text), &
+      candidate_key_texts, candidate_count, stale_candidate_count)
     call lookup_optimization_entry_stats(optimization_store, trim(optimization_key_text), &
       total_samples, observed_candidate_count)
     call lookup_winner_candidate(optimization_store, trim(optimization_key_text), winner_plan_id, &
