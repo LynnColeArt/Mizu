@@ -3467,9 +3467,9 @@ contains
 
   subroutine append_cuda_pack_span_cache_payload_from_model(cache_root, metadata, payload_text, payload_bytes, model)
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_MAGIC = int(z'58455A4D', kind=i32)
-    integer(i32), parameter                    :: CUDA_EXEC_BUFFER_VERSION = 2_i32
+    integer(i32), parameter                    :: CUDA_EXEC_BUFFER_VERSION = 3_i32
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_HEADER_BYTES = 72_i32
-    integer(i32), parameter                    :: CUDA_EXEC_BUFFER_ENTRY_BYTES = 96_i32
+    integer(i32), parameter                    :: CUDA_EXEC_BUFFER_ENTRY_BYTES = 104_i32
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_PAYLOAD_BYTES_PER_ENTRY = 64_i32 + &
                                                   (MAX_CUDA_PACK_PAGE_WORDS * 4_i32) + MAX_CUDA_PACK_TILE_BYTES
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_CAPACITY = CUDA_EXEC_BUFFER_HEADER_BYTES + MAX_PATH_LEN + &
@@ -3646,12 +3646,11 @@ contains
       call store_pack_buffer_i32_cache(exec_buffer, exec_record_offset + 44_i32, entry_index)
       call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 48_i32, dispatch_offsets(entry_index))
       call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 56_i32, dispatch_bytes(entry_index))
-      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 64_i32, &
-        merge(pack_materialized_hash, span_hash, pack_materialized_hash > 0_i64))
-      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 72_i32, &
-        merge(dispatch_bytes(entry_index), actual_sample_bytes, pack_materialized_hash > 0_i64))
+      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 64_i32, span_hash)
+      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 72_i32, actual_sample_bytes)
       call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 80_i32, page_hash)
       call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 88_i32, tile_hash)
+      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 96_i32, pack_materialized_hash)
 
       has_entries = .true.
     end do
@@ -3703,9 +3702,9 @@ contains
     integer(i32), parameter                    :: CUDA_SPAN_BUFFER_HEADER_BYTES = 32_i32
     integer(i32), parameter                    :: CUDA_SPAN_BUFFER_ENTRY_BYTES = 32_i32
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_MAGIC = int(z'58455A4D', kind=i32)
-    integer(i32), parameter                    :: CUDA_EXEC_BUFFER_VERSION = 2_i32
+    integer(i32), parameter                    :: CUDA_EXEC_BUFFER_VERSION = 3_i32
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_HEADER_BYTES = 72_i32
-    integer(i32), parameter                    :: CUDA_EXEC_BUFFER_ENTRY_BYTES = 96_i32
+    integer(i32), parameter                    :: CUDA_EXEC_BUFFER_ENTRY_BYTES = 104_i32
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_PAYLOAD_BYTES_PER_ENTRY = 64_i32 + &
                                                   (MAX_CUDA_PACK_PAGE_WORDS * 4_i32) + MAX_CUDA_PACK_TILE_BYTES
     integer(i32), parameter                    :: CUDA_EXEC_BUFFER_CAPACITY = CUDA_EXEC_BUFFER_HEADER_BYTES + MAX_PATH_LEN + &
@@ -4144,12 +4143,11 @@ contains
       call store_pack_buffer_i32_cache(exec_buffer, exec_record_offset + 44_i32, entry_index)
       call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 48_i32, entry_offset)
       call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 56_i32, entry_bytes)
-      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 64_i32, &
-        merge(pack_materialized_hash, span_hash, pack_materialized_hash > 0_i64))
-      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 72_i32, &
-        merge(entry_bytes, actual_sample_bytes, pack_materialized_hash > 0_i64))
+      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 64_i32, span_hash)
+      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 72_i32, actual_sample_bytes)
       call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 80_i32, page_hash)
       call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 88_i32, tile_hash)
+      call store_pack_buffer_i64_cache(exec_buffer, exec_record_offset + 96_i32, pack_materialized_hash)
       has_entries = .true.
     end do
 

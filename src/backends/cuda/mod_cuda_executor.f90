@@ -43,6 +43,7 @@ module mod_cuda_executor
     integer(i32) :: layout_codes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     integer(i64) :: entry_span_hashes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
     integer(i64) :: entry_span_bytes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
+    integer(i64) :: entry_materialized_hashes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
     integer(i32) :: entry_span_sample_sizes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i32
     integer(i8)  :: entry_span_samples(MAX_CUDA_SPAN_SAMPLE_BYTES, MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i8
     integer(i64) :: entry_page_hashes(MAX_CUDA_PACK_DISPATCH_ENTRIES) = 0_i64
@@ -189,6 +190,7 @@ contains
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
       pack_usage%usage_count, pack_usage%entry_pack_indices, pack_usage%entry_offsets, pack_usage%entry_bytes, &
       pack_usage%role_codes, pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      pack_usage%entry_materialized_hashes, &
       pack_usage%entry_page_hashes, pack_usage%entry_page_word_counts, pack_usage%entry_page_words, &
       pack_usage%entry_tile_hashes, pack_usage%entry_tile_byte_counts, pack_usage%entry_tile_bytes, &
       pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
@@ -287,6 +289,7 @@ contains
       pack_usage%first_pack_offset, pack_usage%last_pack_offset, pack_usage%last_pack_bytes, &
       pack_usage%usage_count, pack_usage%entry_pack_indices, pack_usage%entry_offsets, pack_usage%entry_bytes, &
       pack_usage%role_codes, pack_usage%layout_codes, pack_usage%entry_span_hashes, pack_usage%entry_span_bytes, &
+      pack_usage%entry_materialized_hashes, &
       pack_usage%entry_page_hashes, pack_usage%entry_page_word_counts, pack_usage%entry_page_words, &
       pack_usage%entry_tile_hashes, pack_usage%entry_tile_byte_counts, pack_usage%entry_tile_bytes, &
       pack_usage%entry_span_sample_sizes, pack_usage%entry_span_samples, &
@@ -935,18 +938,32 @@ contains
   subroutine build_weight_pack_buffer_dependency_hash(buffer_bytes, buffer_count, dependency_hash, has_dependency)
     integer(i32), parameter    :: CUDA_PACK_BUFFER_MAGIC = int(z'42505A4D', kind=i32)
     integer(i32), parameter    :: CUDA_PACK_BUFFER_VERSION = 1_i32
+    integer(i32), parameter    :: CUDA_PACK_BUFFER_HEADER_BYTES = 32_i32
+    integer(i32), parameter    :: CUDA_PACK_BUFFER_ENTRY_BYTES = 96_i32
     integer(i8), intent(in)    :: buffer_bytes(:)
     integer(i32), intent(in)   :: buffer_count
     integer(i64), intent(out)  :: dependency_hash
     logical, intent(out)       :: has_dependency
     integer(i32)               :: parsed_magic
     integer(i32)               :: parsed_version
+    integer(i32)               :: parsed_header_bytes
+    integer(i32)               :: parsed_entry_bytes
     integer(i32)               :: parsed_pack_count
+    integer(i32)               :: entry_index
+    integer(i32)               :: entry_offset
+    integer(i32)               :: pack_index
+    integer(i32)               :: role_code
+    integer(i32)               :: layout_code
+    integer(i64)               :: pack_offset
+    integer(i64)               :: pack_bytes
+    integer(i64)               :: materialized_hash
+    integer(i64)               :: materialized_dependency_hash
+    logical                    :: all_entries_materialized
     logical                    :: read_ok
 
     dependency_hash = 0_i64
     has_dependency = .false.
-    if (buffer_count <= 0_i32) return
+    if (buffer_count < CUDA_PACK_BUFFER_HEADER_BYTES) return
     if (int(size(buffer_bytes), kind=i32) <= 0_i32) return
 
     call read_buffer_i32(buffer_bytes, buffer_count, 0_i32, parsed_magic, read_ok)
@@ -955,9 +972,67 @@ contains
     call read_buffer_i32(buffer_bytes, buffer_count, 4_i32, parsed_version, read_ok)
     if (.not. read_ok) return
     if (parsed_version /= CUDA_PACK_BUFFER_VERSION) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 8_i32, parsed_header_bytes, read_ok)
+    if (.not. read_ok) return
+    call read_buffer_i32(buffer_bytes, buffer_count, 12_i32, parsed_entry_bytes, read_ok)
+    if (.not. read_ok) return
     call read_buffer_i32(buffer_bytes, buffer_count, 16_i32, parsed_pack_count, read_ok)
     if (.not. read_ok) return
     if (parsed_pack_count <= 0_i32) return
+    if (parsed_header_bytes < CUDA_PACK_BUFFER_HEADER_BYTES) return
+    if (parsed_entry_bytes < CUDA_PACK_BUFFER_ENTRY_BYTES) return
+    if ((CUDA_PACK_BUFFER_HEADER_BYTES + ((parsed_pack_count - 1_i32) * parsed_entry_bytes) + &
+         CUDA_PACK_BUFFER_ENTRY_BYTES) > buffer_count) return
+
+    all_entries_materialized = .true.
+    materialized_dependency_hash = combine_positive_hash64(1_i64, positive_hash64("cuda_weight_pack_materialized_buffer_v1"))
+    materialized_dependency_hash = combine_positive_hash64(materialized_dependency_hash, int(parsed_pack_count, kind=i64))
+    do entry_index = 1_i32, parsed_pack_count
+      entry_offset = CUDA_PACK_BUFFER_HEADER_BYTES + ((entry_index - 1_i32) * parsed_entry_bytes)
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 0_i32, pack_index, read_ok)
+      if (.not. read_ok) then
+        all_entries_materialized = .false.
+        exit
+      end if
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 4_i32, role_code, read_ok)
+      if (.not. read_ok) then
+        all_entries_materialized = .false.
+        exit
+      end if
+      call read_buffer_i32(buffer_bytes, buffer_count, entry_offset + 8_i32, layout_code, read_ok)
+      if (.not. read_ok) then
+        all_entries_materialized = .false.
+        exit
+      end if
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 40_i32, pack_offset, read_ok)
+      if (.not. read_ok) then
+        all_entries_materialized = .false.
+        exit
+      end if
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 48_i32, pack_bytes, read_ok)
+      if (.not. read_ok) then
+        all_entries_materialized = .false.
+        exit
+      end if
+      call read_buffer_i64(buffer_bytes, buffer_count, entry_offset + 88_i32, materialized_hash, read_ok)
+      if (.not. read_ok .or. materialized_hash <= 0_i64) then
+        all_entries_materialized = .false.
+        exit
+      end if
+
+      materialized_dependency_hash = combine_positive_hash64(materialized_dependency_hash, int(pack_index, kind=i64))
+      materialized_dependency_hash = combine_positive_hash64(materialized_dependency_hash, pack_offset)
+      materialized_dependency_hash = combine_positive_hash64(materialized_dependency_hash, pack_bytes)
+      materialized_dependency_hash = combine_positive_hash64(materialized_dependency_hash, int(role_code, kind=i64))
+      materialized_dependency_hash = combine_positive_hash64(materialized_dependency_hash, int(layout_code, kind=i64))
+      materialized_dependency_hash = combine_positive_hash64(materialized_dependency_hash, materialized_hash)
+    end do
+
+    if (all_entries_materialized) then
+      dependency_hash = materialized_dependency_hash
+      has_dependency = .true.
+      return
+    end if
 
     dependency_hash = combine_positive_hash64(1_i64, positive_hash64("cuda_weight_pack_buffer_v1"))
     dependency_hash = combine_positive_hash64(dependency_hash, int(parsed_pack_count, kind=i64))
@@ -1056,6 +1131,7 @@ contains
       dependency_hash = combine_positive_hash64(dependency_hash, int(pack_usage%layout_codes(entry_index), kind=i64))
       dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_span_hashes(entry_index))
       dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_span_bytes(entry_index))
+      dependency_hash = combine_positive_hash64(dependency_hash, pack_usage%entry_materialized_hashes(entry_index))
     end do
 
     has_dependency = .true.
@@ -1766,6 +1842,7 @@ contains
         if (resolved_role_code > 0_i32) pack_usage%role_codes(entry_index) = resolved_role_code
         if (resolved_layout_code > 0_i32) pack_usage%layout_codes(entry_index) = resolved_layout_code
         if (found_materialized_hash .and. materialized_hash > 0_i64) then
+          pack_usage%entry_materialized_hashes(entry_index) = materialized_hash
           pack_usage%entry_span_hashes(entry_index) = materialized_hash
           if (pack_usage%entry_bytes(entry_index) > 0_i64) then
             pack_usage%entry_span_bytes(entry_index) = pack_usage%entry_bytes(entry_index)
@@ -1863,6 +1940,7 @@ contains
     integer(i32), parameter                      :: CUDA_EXEC_BUFFER_MAGIC = int(z'58455A4D', kind=i32)
     integer(i32), parameter                      :: CUDA_EXEC_BUFFER_VERSION_V1 = 1_i32
     integer(i32), parameter                      :: CUDA_EXEC_BUFFER_VERSION_V2 = 2_i32
+    integer(i32), parameter                      :: CUDA_EXEC_BUFFER_VERSION_V3 = 3_i32
     integer(i32), parameter                      :: CUDA_EXEC_BUFFER_HEADER_BYTES_V1 = 64_i32
     integer(i32), parameter                      :: CUDA_EXEC_BUFFER_ENTRY_BYTES = 96_i32
     integer(i8), intent(in)                      :: buffer_bytes(:)
@@ -1902,6 +1980,7 @@ contains
     integer(i64)                                 :: span_bytes
     integer(i64)                                 :: page_hash
     integer(i64)                                 :: tile_hash
+    integer(i64)                                 :: materialized_hash
     logical                                      :: read_ok
 
     applied_ok = .false.
@@ -1912,7 +1991,8 @@ contains
     if (parsed_magic /= CUDA_EXEC_BUFFER_MAGIC) return
     call read_buffer_i32(buffer_bytes, buffer_count, 4_i32, parsed_version, read_ok)
     if (.not. read_ok) return
-    if (parsed_version /= CUDA_EXEC_BUFFER_VERSION_V1 .and. parsed_version /= CUDA_EXEC_BUFFER_VERSION_V2) return
+    if (parsed_version /= CUDA_EXEC_BUFFER_VERSION_V1 .and. parsed_version /= CUDA_EXEC_BUFFER_VERSION_V2 .and. &
+        parsed_version /= CUDA_EXEC_BUFFER_VERSION_V3) return
     call read_buffer_i32(buffer_bytes, buffer_count, 8_i32, parsed_header_bytes, read_ok)
     if (.not. read_ok) return
     call read_buffer_i32(buffer_bytes, buffer_count, 12_i32, parsed_entry_bytes, read_ok)
@@ -1984,6 +2064,13 @@ contains
       if (.not. read_ok) cycle
       call read_buffer_i64(buffer_bytes, buffer_count, record_offset + 88_i32, tile_hash, read_ok)
       if (.not. read_ok) cycle
+      materialized_hash = 0_i64
+      if (parsed_entry_bytes >= 104_i32) then
+        call read_buffer_i64(buffer_bytes, buffer_count, record_offset + 96_i32, materialized_hash, read_ok)
+        if (.not. read_ok) materialized_hash = 0_i64
+      else if (pack_index > 0_i32 .and. span_hash > 0_i64 .and. span_bytes == entry_bytes) then
+        materialized_hash = span_hash
+      end if
       if (entry_index <= 0_i32 .or. entry_index > MAX_CUDA_PACK_DISPATCH_ENTRIES) cycle
 
       pack_usage%entry_pack_indices(entry_index) = max(0_i32, pack_index)
@@ -1993,6 +2080,7 @@ contains
       pack_usage%entry_bytes(entry_index) = max(0_i64, entry_bytes)
       pack_usage%entry_span_hashes(entry_index) = max(0_i64, span_hash)
       pack_usage%entry_span_bytes(entry_index) = max(0_i64, span_bytes)
+      pack_usage%entry_materialized_hashes(entry_index) = max(0_i64, materialized_hash)
       pack_usage%entry_page_hashes(entry_index) = max(0_i64, page_hash)
       pack_usage%entry_tile_hashes(entry_index) = max(0_i64, tile_hash)
 
@@ -2091,6 +2179,7 @@ contains
       if (resolved_layout_code > 0_i32) pack_usage%layout_codes(entry_index) = resolved_layout_code
 
       if (found_materialized_hash .and. materialized_hash > 0_i64) then
+        pack_usage%entry_materialized_hashes(entry_index) = materialized_hash
         pack_usage%entry_span_hashes(entry_index) = materialized_hash
         if (pack_usage%entry_bytes(entry_index) > 0_i64) then
           pack_usage%entry_span_bytes(entry_index) = pack_usage%entry_bytes(entry_index)
@@ -2098,6 +2187,7 @@ contains
           pack_usage%entry_span_bytes(entry_index) = max(0_i64, span_bytes)
         end if
       else
+        pack_usage%entry_materialized_hashes(entry_index) = 0_i64
         pack_usage%entry_span_hashes(entry_index) = max(0_i64, span_hash)
         pack_usage%entry_span_bytes(entry_index) = max(0_i64, span_bytes)
       end if
@@ -2312,6 +2402,7 @@ contains
                                                                  found_path)
     integer(i32), parameter :: CUDA_EXEC_BUFFER_MAGIC = int(z'58455A4D', kind=i32)
     integer(i32), parameter :: CUDA_EXEC_BUFFER_VERSION_V2 = 2_i32
+    integer(i32), parameter :: CUDA_EXEC_BUFFER_VERSION_V3 = 3_i32
     integer(i32), parameter :: CUDA_EXEC_BUFFER_HEADER_BYTES_V2 = 72_i32
     integer(i8), intent(in)  :: buffer_bytes(:)
     integer(i32), intent(in) :: buffer_count
@@ -2334,7 +2425,7 @@ contains
     if (parsed_magic /= CUDA_EXEC_BUFFER_MAGIC) return
     call read_buffer_i32(buffer_bytes, buffer_count, 4_i32, parsed_version, read_ok)
     if (.not. read_ok) return
-    if (parsed_version /= CUDA_EXEC_BUFFER_VERSION_V2) return
+    if (parsed_version /= CUDA_EXEC_BUFFER_VERSION_V2 .and. parsed_version /= CUDA_EXEC_BUFFER_VERSION_V3) return
     call read_buffer_i32(buffer_bytes, buffer_count, 8_i32, parsed_header_bytes, read_ok)
     if (.not. read_ok) return
     if (parsed_header_bytes < CUDA_EXEC_BUFFER_HEADER_BYTES_V2) return

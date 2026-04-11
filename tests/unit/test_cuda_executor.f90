@@ -862,16 +862,26 @@ program test_cuda_executor
   call write_pack_tile_buffer_fixture(trim(cache_root) // "/" // trim(pack_tile_buffer_path), .true.)
 
   call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
-    token_value_without_pack_cache, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    token_value_with_other_context, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
     usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
   call expect_equal_i32("cuda decode with rewritten pack-owned buffer should still succeed", status_code, &
     MIZU_STATUS_OK)
-  call expect_true("cuda decode should reflect direct pack-owned buffer bytes", &
+  call expect_equal_i32("cuda decode should prefer materialized identity over raw pack bytes", &
+    token_value_with_other_context, token_value_with_pack_cache)
+
+  call write_pack_tile_buffer_fixture(trim(cache_root) // "/" // trim(pack_tile_buffer_path), .true., .true.)
+
+  call execute_cuda_decode(cache_root, decode_usage_path, 42_i64, 1_i64, emitted_token_count, &
+    token_value_without_pack_cache, stop_reason, status_code, workspace%host_buffer, workspace%bytes_in_use, &
+    usage_context_bytes, usage_context_byte_count, usage_decode_context_bytes, usage_decode_context_byte_count)
+  call expect_equal_i32("cuda decode with rewritten materialized pack identity should still succeed", status_code, &
+    MIZU_STATUS_OK)
+  call expect_true("cuda decode should reflect pack-owned materialized identity", &
     token_value_without_pack_cache /= token_value_with_pack_cache)
   call extract_cuda_context_state_snapshot(usage_decode_context_bytes, usage_decode_context_byte_count, producer_stage, &
     artifact_hash, token_digest, modal_digest, kv_token_count, decode_step_count, rolling_state_digest, &
     summary_primary_count, summary_secondary_count, summary_control_a, summary_control_b, snapshot_valid)
-  call expect_true("cuda decode with rewritten pack-owned buffer should expose readable lineage", snapshot_valid)
+  call expect_true("cuda decode with rewritten materialized pack identity should expose readable lineage", snapshot_valid)
   usage_decode_artifact_hash = artifact_hash
 
   open(unit=13, file=trim(cache_root) // "/" // trim(decode_usage_path), status="replace", action="write")
@@ -1182,9 +1192,10 @@ contains
     end if
   end subroutine expect_equal_i64
 
-  subroutine write_pack_tile_buffer_fixture(full_path, use_rewritten_bytes)
+  subroutine write_pack_tile_buffer_fixture(full_path, use_rewritten_bytes, use_rewritten_materialized_hashes)
     character(len=*), intent(in) :: full_path
     logical, intent(in)          :: use_rewritten_bytes
+    logical, intent(in), optional :: use_rewritten_materialized_hashes
     integer(i32), parameter      :: CUDA_PACK_BUFFER_MAGIC = int(z'42505A4D', kind=i32)
     integer(i32), parameter      :: CUDA_PACK_BUFFER_VERSION = 1_i32
     integer(i32), parameter      :: CUDA_PACK_BUFFER_HEADER_BYTES = 32_i32
@@ -1204,6 +1215,7 @@ contains
     integer(i32)                 :: data_offset
     integer(i32)                 :: record_offset
     integer                      :: unit_id
+    logical                      :: rewrite_materialized_hashes
 
     if (use_rewritten_bytes) then
       hex_records = [character(len=64) :: &
@@ -1233,7 +1245,15 @@ contains
     layout_codes = [1_i32, 2_i32, 3_i32, 1_i32]
     page_hashes = [9100000000000001_i64, 9100000000000002_i64, 9100000000000003_i64, 9100000000000004_i64]
     tile_hashes = [9200000000000001_i64, 9200000000000002_i64, 9200000000000003_i64, 9200000000000004_i64]
-    materialized_hashes = [9010000000000001_i64, 9010000000000002_i64, 9010000000000003_i64, 9010000000000004_i64]
+    rewrite_materialized_hashes = .false.
+    if (present(use_rewritten_materialized_hashes)) then
+      rewrite_materialized_hashes = use_rewritten_materialized_hashes
+    end if
+    if (rewrite_materialized_hashes) then
+      materialized_hashes = [9020000000000001_i64, 9020000000000002_i64, 9020000000000003_i64, 9020000000000004_i64]
+    else
+      materialized_hashes = [9010000000000001_i64, 9010000000000002_i64, 9010000000000003_i64, 9010000000000004_i64]
+    end if
 
     buffer_bytes = 0_i8
     data_offset = CUDA_PACK_BUFFER_HEADER_BYTES + (4_i32 * CUDA_PACK_BUFFER_ENTRY_BYTES)
@@ -1294,9 +1314,9 @@ contains
     character(len=*), intent(in) :: pack_tile_buffer_path
     logical, intent(in)          :: use_rewritten_bytes
     integer(i32), parameter      :: CUDA_EXEC_BUFFER_MAGIC = int(z'58455A4D', kind=i32)
-    integer(i32), parameter      :: CUDA_EXEC_BUFFER_VERSION = 2_i32
+    integer(i32), parameter      :: CUDA_EXEC_BUFFER_VERSION = 3_i32
     integer(i32), parameter      :: CUDA_EXEC_BUFFER_HEADER_BYTES = 72_i32
-    integer(i32), parameter      :: CUDA_EXEC_BUFFER_ENTRY_BYTES = 96_i32
+    integer(i32), parameter      :: CUDA_EXEC_BUFFER_ENTRY_BYTES = 104_i32
     character(len=64)            :: hex_records(8)
     character(len=128)           :: source_paths(4)
     integer(i8)                  :: buffer_bytes(2048)
@@ -1402,10 +1422,11 @@ contains
       call write_fixture_i32_le(buffer_bytes, record_offset + 44_i32, record_index)
       call write_fixture_i64_le(buffer_bytes, record_offset + 48_i32, pack_offsets(record_index))
       call write_fixture_i64_le(buffer_bytes, record_offset + 56_i32, pack_bytes(record_index))
-      call write_fixture_i64_le(buffer_bytes, record_offset + 64_i32, materialized_hashes(record_index))
-      call write_fixture_i64_le(buffer_bytes, record_offset + 72_i32, pack_bytes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 64_i32, span_hash)
+      call write_fixture_i64_le(buffer_bytes, record_offset + 72_i32, sample_bytes_i64)
       call write_fixture_i64_le(buffer_bytes, record_offset + 80_i32, page_hashes(record_index))
       call write_fixture_i64_le(buffer_bytes, record_offset + 88_i32, tile_hashes(record_index))
+      call write_fixture_i64_le(buffer_bytes, record_offset + 96_i32, materialized_hashes(record_index))
     end do
 
     call write_fixture_i32_le(buffer_bytes, 0_i32, CUDA_EXEC_BUFFER_MAGIC)

@@ -195,6 +195,7 @@ inline unsigned long long build_pack_execution_seed(unsigned long long base_seed
                                                     const int32_t *pack_layout_codes,
                                                     const int64_t *pack_entry_span_hashes,
                                                     const int64_t *pack_entry_span_bytes,
+                                                    const int64_t *pack_entry_materialized_hashes,
                                                     const int64_t *pack_entry_page_hashes,
                                                     const int32_t *pack_entry_page_word_counts,
                                                     const int32_t *pack_entry_page_words,
@@ -218,13 +219,22 @@ inline unsigned long long build_pack_execution_seed(unsigned long long base_seed
       pack_entry_page_word_counts[usage_index] > 0);
     const bool has_span_samples = (pack_entry_span_sample_sizes != nullptr &&
       pack_entry_span_sample_sizes[usage_index] > 0);
-    if (pack_entry_span_hashes != nullptr && pack_entry_span_bytes != nullptr) {
+    const unsigned long long materialized_bits =
+      (pack_entry_materialized_hashes != nullptr && pack_entry_materialized_hashes[usage_index] > 0) ?
+      static_cast<unsigned long long>(pack_entry_materialized_hashes[usage_index]) : 0ULL;
+    if (materialized_bits != 0ULL) {
+      entry_seed = mix_u64_host(entry_seed ^ materialized_bits ^
+        (static_cast<unsigned long long>(usage_index + 1) << 28));
+    } else if (pack_entry_span_hashes != nullptr && pack_entry_span_bytes != nullptr) {
       entry_seed = mix_u64_host(entry_seed ^
         static_cast<unsigned long long>(pack_entry_span_hashes[usage_index]) ^
         static_cast<unsigned long long>(pack_entry_span_bytes[usage_index]) ^
         (static_cast<unsigned long long>(usage_index + 1) << 16));
     }
-    if (has_tile_bytes) {
+    if (materialized_bits != 0ULL) {
+      entry_seed = mix_u64_host(entry_seed ^ (materialized_bits << 7) ^
+        (read_pack_index_bits(pack_entry_pack_indices, usage_index) << 36));
+    } else if (has_tile_bytes) {
       entry_seed = mix_pack_tile_bytes(entry_seed, pack_entry_tile_hashes,
         pack_entry_tile_byte_counts, pack_entry_tile_bytes, usage_index);
     } else if (has_page_words) {
@@ -1510,6 +1520,7 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
                                          const int32_t *pack_layout_codes,
                                          const int64_t *pack_entry_span_hashes,
                                          const int64_t *pack_entry_span_bytes,
+                                         const int64_t *pack_entry_materialized_hashes,
                                          const int64_t *pack_entry_page_hashes,
                                          const int32_t *pack_entry_page_word_counts,
                                          const int32_t *pack_entry_page_words,
@@ -1608,6 +1619,7 @@ extern "C" void mizu_cuda_bridge_prefill(int64_t payload_hash,
       pack_layout_codes,
       pack_entry_span_hashes,
       pack_entry_span_bytes,
+      pack_entry_materialized_hashes,
       pack_entry_page_hashes,
       pack_entry_page_word_counts,
       pack_entry_page_words,
@@ -1694,6 +1706,7 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
                                         const int32_t *pack_layout_codes,
                                         const int64_t *pack_entry_span_hashes,
                                         const int64_t *pack_entry_span_bytes,
+                                        const int64_t *pack_entry_materialized_hashes,
                                         const int64_t *pack_entry_page_hashes,
                                         const int32_t *pack_entry_page_word_counts,
                                         const int32_t *pack_entry_page_words,
@@ -1824,6 +1837,7 @@ extern "C" void mizu_cuda_bridge_decode(int64_t payload_hash,
     pack_layout_codes,
     pack_entry_span_hashes,
     pack_entry_span_bytes,
+    pack_entry_materialized_hashes,
     pack_entry_page_hashes,
     pack_entry_page_word_counts,
     pack_entry_page_words,
