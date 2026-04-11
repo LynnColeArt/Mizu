@@ -249,6 +249,10 @@ Owns:
 
 The optimization store should be persistent for rebuildable artifacts and
 lightweight enough to consult during normal execution.
+Stale candidates remain inspectable in memory while the process is alive, but
+winner selection, exploration counters, and persistence must ignore retired
+evidence so a previous planner/device/artifact shape cannot keep steering
+reuse after the current candidate set changes.
 
 ## Execution Model
 
@@ -328,6 +332,11 @@ reuse the winning plan directly unless:
 - the pack format changed
 - the planner version changed
 - the evidence is stale or insufficient
+
+Evidence is stale when the workload key is retired, the candidate key no
+longer appears in the current candidate set, the plan id is explicitly retired,
+or fresh cache/artifact identity shows the measured candidate no longer
+matches the reusable artifact being considered.
 
 Self-optimization is not an excuse for unbounded experimentation.
 Exploration should be:

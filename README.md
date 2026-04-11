@@ -26,6 +26,9 @@ Current implementation status:
 - the loader now recognizes an optional imported `mizu_import/` bundle with
   validated tensor, modality, and projector inventories
 - route-aware optimization and persisted cache metadata are implemented
+- the optimization store now invalidates stale evidence by workload, candidate
+  key, plan id, or current candidate set, and winner selection/persistence
+  ignores retired samples so old measurements cannot keep steering reuse
 - the plan cache now has strict-key in-memory, disk-backed, and warm-hydration
   paths for replaying cached plan metadata only when stage, backend, route,
   device, pack format, and shape identity match

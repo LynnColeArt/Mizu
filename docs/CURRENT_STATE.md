@@ -4,6 +4,10 @@ Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: Phase 6 now has stale-evidence invalidation in the
+  optimization store; candidates can be retired by workload, candidate key,
+  plan id, or current candidate-set mismatch, and invalid evidence is ignored
+  by winner selection, exploration statistics, and persistence
 - current milestone: Phase 6 now has a dedicated multimodal-cache policy
   module that records reusable preprocessing artifacts separately from
   projector-output artifacts, allows preprocessing reuse across device and

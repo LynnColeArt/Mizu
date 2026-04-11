@@ -349,7 +349,7 @@ These are the highest-leverage next tasks.
 - [x] Implement bounded exploration policy
 - [x] Implement winner selection policy
 - [x] Implement winner persistence
-- [ ] Implement stale-evidence invalidation
+- [x] Implement stale-evidence invalidation
 - [x] Implement cold-versus-warm tracking
 
 ### 6.6 Cache Safety

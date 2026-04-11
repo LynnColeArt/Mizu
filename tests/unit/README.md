@@ -73,6 +73,9 @@ bodies.
   - validates runtime-scoped winner selection based on recorded execution
     samples rather than key reuse alone
   - validates save/load roundtrips for persisted optimization evidence
+  - validates stale evidence can be invalidated by candidate, plan, workload,
+    and current candidate-set mismatch, and that invalidated samples are
+    ignored by winner selection, stats, and persistence
 - `test_backend_registry.f90`
   - validates deterministic backend-inventory aggregation independent of local
     hardware
