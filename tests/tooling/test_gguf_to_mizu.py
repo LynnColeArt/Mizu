@@ -96,19 +96,19 @@ def main() -> int:
         expect_file_contains(qwen_output / "mizu_import" / "layout.mizu", "projector_present = true")
         expect_file_contains(
             qwen_output / "mizu_import" / "tensors.tsv",
-            "token_embd.weight|embedding_table|f16|row_major|weights/qwen35.gguf|4096x248320",
+            "token_embd.weight|embedding_table|f16|row_major|weights/qwen35.gguf|4096x248320|q4_k",
         )
         expect_file_contains(
             qwen_output / "mizu_import" / "tensors.tsv",
-            "blk.0.attn_qkv.weight|decoder_stack|f16|packed|weights/qwen35.gguf|4096x8192",
+            "blk.0.attn_qkv.weight|decoder_stack|f16|packed|weights/qwen35.gguf|4096x8192|q5_k",
         )
         expect_file_contains(
             qwen_output / "mizu_import" / "tensors.tsv",
-            "output.weight|token_projection|f16|row_major|weights/qwen35.gguf|4096x248320",
+            "output.weight|token_projection|f16|row_major|weights/qwen35.gguf|4096x248320|q4_k",
         )
         expect_file_contains(
             qwen_output / "mizu_import" / "tensors.tsv",
-            "mm.0.weight|multimodal_projector|f16|packed|weights/mmproj-qwen35.gguf|1152x4096",
+            "mm.0.weight|multimodal_projector|f16|packed|weights/mmproj-qwen35.gguf|1152x4096|f16",
         )
         expect_file_contains(
             qwen_output / "mizu_import" / "gguf_tensors.tsv",
@@ -164,7 +164,7 @@ def main() -> int:
         expect_file_contains(gemma_output / "manifest.mizu", "projector_present = false")
         expect_file_contains(
             gemma_output / "mizu_import" / "tensors.tsv",
-            "token_embd.weight|embedding_table|f16|row_major|weights/gemma4.gguf|2816x262144",
+            "token_embd.weight|embedding_table|f16|row_major|weights/gemma4.gguf|2816x262144|q5_k",
         )
 
     print("test_gguf_to_mizu: PASS")

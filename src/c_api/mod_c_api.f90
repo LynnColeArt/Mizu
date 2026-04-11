@@ -1861,7 +1861,7 @@ contains
   subroutine copy_model_import_snapshot(manifest, model)
     type(model_manifest), intent(in)    :: manifest
     type(model_state), intent(inout)    :: model
-    character(len=MAX_PATH_LEN + 2 * MAX_NAME_LEN + 48) :: lineage_entry
+    character(len=MAX_PATH_LEN + 3 * MAX_NAME_LEN + 64) :: lineage_entry
     integer(i32)                        :: tensor_index
     integer(i32)                        :: preview_index
     integer(i64)                        :: entry_hash
@@ -1893,11 +1893,13 @@ contains
         model%import_tensors(tensor_index)%tensor_name = manifest%tensors(tensor_index)%tensor_name
         model%import_tensors(tensor_index)%tensor_role = manifest%tensors(tensor_index)%tensor_role
         model%import_tensors(tensor_index)%layout_name = manifest%tensors(tensor_index)%layout_name
+        model%import_tensors(tensor_index)%storage_type = manifest%tensors(tensor_index)%storage_type
         model%import_tensors(tensor_index)%source_path = manifest%tensors(tensor_index)%source_path
 
         lineage_entry = ""
-        write(lineage_entry, '(A,"|",A,"|",A)') trim(manifest%tensors(tensor_index)%tensor_name), &
-          trim(manifest%tensors(tensor_index)%tensor_role), trim(manifest%tensors(tensor_index)%source_path)
+        write(lineage_entry, '(A,"|",A,"|",A,"|storage=",A)') trim(manifest%tensors(tensor_index)%tensor_name), &
+          trim(manifest%tensors(tensor_index)%tensor_role), trim(manifest%tensors(tensor_index)%source_path), &
+          trim(manifest%tensors(tensor_index)%storage_type)
         entry_hash = hash_text64(trim(lineage_entry))
         model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
         model%import_tensor_bytes = model%import_tensor_bytes + estimate_manifest_tensor_bytes( &
@@ -1921,7 +1923,7 @@ contains
       model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
       if (allocated(model%import_tensors)) then
         do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
-          if (trim(model%import_tensors(tensor_index)%source_path) /= trim(manifest%projector%artifact_path)) cycle
+          if (.not. import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
           model%import_projector_bytes = model%import_projector_bytes + estimate_manifest_tensor_bytes( &
             model%import_tensors(tensor_index)%dtype, model%import_tensors(tensor_index)%rank, &
             model%import_tensors(tensor_index)%shape)
@@ -1938,7 +1940,7 @@ contains
 
   subroutine recompute_import_weight_pack_summary(model)
     type(model_state), intent(inout)    :: model
-    character(len=MAX_PATH_LEN + 2 * MAX_NAME_LEN + 96) :: pack_entry
+    character(len=MAX_PATH_LEN + 3 * MAX_NAME_LEN + 112) :: pack_entry
     integer(i32)                        :: tensor_index
     integer(i64)                        :: tensor_bytes
     integer(i64)                        :: pack_offset
@@ -1958,10 +1960,10 @@ contains
 
       model%import_weight_pack_count = model%import_weight_pack_count + 1_i32
       pack_entry = ""
-      write(pack_entry, '(A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+      write(pack_entry, '(A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,"|storage=",A)') &
         trim(model%import_tensors(tensor_index)%tensor_name), trim(model%import_tensors(tensor_index)%tensor_role), &
         trim(model%import_tensors(tensor_index)%source_path), pack_offset, tensor_bytes, &
-        trim(model%import_tensors(tensor_index)%layout_name)
+        trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type)
       model%import_weight_pack_hash = ieor(model%import_weight_pack_hash, hash_text64(trim(pack_entry)))
       pack_offset = align_import_bytes(pack_offset + tensor_bytes)
     end do
@@ -2049,7 +2051,7 @@ contains
   subroutine append_import_weight_pack_payload(payload_text, model)
     character(len=*), intent(inout) :: payload_text
     type(model_state), intent(in)   :: model
-    character(len=MAX_PATH_LEN + 160) :: field_text
+    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 176) :: field_text
     integer(i32)                      :: tensor_index
     integer(i32)                      :: pack_index
     integer(i64)                      :: tensor_bytes
@@ -2074,10 +2076,11 @@ contains
 
       pack_index = pack_index + 1_i32
       field_text = ""
-      write(field_text, '(";pack",I0,"=",A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+      write(field_text, '(";pack",I0,"=",A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,"|storage=",A)') &
         pack_index, trim(model%import_tensors(tensor_index)%tensor_name), &
         trim(model%import_tensors(tensor_index)%tensor_role), trim(model%import_tensors(tensor_index)%source_path), &
-        pack_offset, tensor_bytes, trim(model%import_tensors(tensor_index)%layout_name)
+        pack_offset, tensor_bytes, trim(model%import_tensors(tensor_index)%layout_name), &
+        trim(model%import_tensors(tensor_index)%storage_type)
       call append_payload_fragment(payload_text, trim(field_text))
 
       pack_offset = align_import_bytes(pack_offset + tensor_bytes)
@@ -2149,7 +2152,7 @@ contains
     integer(i64), intent(out)     :: usage_hash
     integer(i32), intent(out)     :: usage_count
     integer(i64), intent(out)     :: usage_bytes
-    character(len=MAX_PATH_LEN + 160) :: usage_entry
+    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 176) :: usage_entry
     integer(i32)                    :: tensor_index
     integer(i64)                    :: tensor_bytes
     integer(i64)                    :: pack_offset
@@ -2171,10 +2174,10 @@ contains
         usage_count = usage_count + 1_i32
         usage_bytes = usage_bytes + tensor_bytes
         usage_entry = ""
-        write(usage_entry, '(A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+        write(usage_entry, '(A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,"|storage=",A)') &
           trim(model%import_tensors(tensor_index)%tensor_name), &
           trim(model%import_tensors(tensor_index)%tensor_role), pack_offset, tensor_bytes, &
-          trim(model%import_tensors(tensor_index)%layout_name)
+          trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type)
         usage_hash = ieor(usage_hash, hash_text64(trim(usage_entry)))
       end if
 
@@ -2206,7 +2209,7 @@ contains
     integer(i32), intent(out)     :: dispatch_role_codes(:)
     integer(i32), intent(out)     :: dispatch_layout_codes(:)
     character(len=*), intent(out) :: dispatch_span_paths(:)
-    character(len=MAX_PATH_LEN + 160) :: field_text
+    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 176) :: field_text
     character(len=MAX_NAME_LEN)       :: usage_kind
     integer(i32)                      :: tensor_index
     integer(i32)                      :: usage_index
@@ -2258,10 +2261,10 @@ contains
         last_pack_bytes = tensor_bytes
 
         field_text = ""
-        write(field_text, '(";pack_use",I0,"=",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A)') &
+        write(field_text, '(";pack_use",I0,"=",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,"|storage=",A)') &
           usage_index, trim(model%import_tensors(tensor_index)%tensor_name), &
           trim(model%import_tensors(tensor_index)%tensor_role), pack_offset, tensor_bytes, &
-          trim(model%import_tensors(tensor_index)%layout_name)
+          trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type)
         usage_hash = ieor(usage_hash, hash_text64(trim(field_text)))
 
         if (dispatch_index < min(MAX_IMPORT_STAGE_PACK_DISPATCH, int(size(dispatch_pack_indices), kind=i32))) then
@@ -2381,9 +2384,15 @@ contains
   pure logical function import_tensor_belongs_to_projector(import_tensor, model) result(is_projector_tensor)
     type(import_tensor_state), intent(in) :: import_tensor
     type(model_state), intent(in)         :: model
+    character(len=MAX_NAME_LEN)           :: tensor_role
 
     is_projector_tensor = .false.
     if (len_trim(model%import_projector_artifact_path) == 0) return
+    tensor_role = trim(import_tensor%tensor_role)
+    if (trim(tensor_role) == "multimodal_projector" .or. trim(tensor_role) == "vision_encoder") then
+      is_projector_tensor = .true.
+      return
+    end if
     if (len_trim(import_tensor%source_path) == 0) return
     is_projector_tensor = (trim(import_tensor%source_path) == trim(model%import_projector_artifact_path))
   end function import_tensor_belongs_to_projector
@@ -3309,6 +3318,11 @@ contains
     metadata%payload_path = build_artifact_payload_path(stage_kind, backend_family, execution_route, &
       trim(fingerprint_token))
     payload_capacity = max(APPLE_ARTIFACT_PAYLOAD_LEN, CUDA_ARTIFACT_PAYLOAD_LEN) + 65536_i32
+    if (present(model)) then
+      if (allocated(model%import_tensors)) then
+        payload_capacity = payload_capacity + int(size(model%import_tensors), kind=i32) * 256_i32
+      end if
+    end if
     allocate(character(len=payload_capacity) :: payload_text)
 
     if (.not. present(request)) return

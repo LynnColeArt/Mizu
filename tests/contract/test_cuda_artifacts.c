@@ -537,8 +537,12 @@ int main(void) {
     if (!expect_true("cuda weight artifact should retain the expected packed tensor bytes", command_status == 0)) return 1;
     command_status = system("grep -R \"pack1=token_embeddings|embedding_table|weights/token_embeddings.bin|offset=0|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("cuda weight artifact should retain the first packed tensor entry", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack1=token_embeddings|embedding_table|weights/token_embeddings.bin|offset=0|bytes=1089994752|layout=row_major|storage=bf16\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should retain the first packed tensor storage type", command_status == 0)) return 1;
     command_status = system("grep -R \"pack4=lm_head|token_projection|weights/lm_head.bin|offset=1115699200|bytes=1089994752\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("cuda weight artifact should retain the final packed tensor entry", command_status == 0)) return 1;
+    command_status = system("grep -R \"pack4=lm_head|token_projection|weights/lm_head.bin|offset=1115699200|bytes=1089994752|layout=row_major|storage=bf16\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should retain the final packed tensor storage type", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packtiles' | grep -q .");
     if (!expect_true("generated cuda weight artifacts should no longer materialize pack tile-cache indexes", command_status != 0)) return 1;
     command_status = system("grep -R \"pack_payload=artifacts/cuda/cuda/weights/.*\\.packpayload\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");

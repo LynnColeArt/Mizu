@@ -55,6 +55,7 @@ module mod_model_manifest
     character(len=MAX_NAME_LEN) :: tensor_name = ""
     character(len=MAX_NAME_LEN) :: tensor_role = ""
     character(len=MAX_NAME_LEN) :: layout_name = ""
+    character(len=MAX_NAME_LEN) :: storage_type = ""
     character(len=MAX_PATH_LEN) :: source_path = ""
   end type tensor_manifest
 

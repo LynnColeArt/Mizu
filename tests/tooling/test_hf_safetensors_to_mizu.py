@@ -86,7 +86,10 @@ def main() -> int:
         )
         tensor_inventory = (source_root / "mizu_import" / "tensors.tsv").read_text(encoding="utf-8")
         expect_contains(tensor_inventory, "model.embed_tokens.weight|embedding_table|bf16|row_major")
-        expect_contains(tensor_inventory, "model.layers.0.self_attn.q_proj.weight|decoder_stack|bf16|packed")
+        expect_contains(
+            tensor_inventory,
+            "model.layers.0.self_attn.q_proj.weight|decoder_stack|bf16|packed|weights/model-00001-of-00002.safetensors|3584x3584|bf16",
+        )
         expect_contains(tensor_inventory, "lm_head.weight|token_projection|bf16|row_major")
         expect_contains(tensor_inventory, "visual.merger.mlp.0.weight|multimodal_projector|f16|packed")
         expect_path_exists(source_root / "mizu_import" / "weights" / "model-00001-of-00002.safetensors")

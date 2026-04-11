@@ -384,7 +384,7 @@ def render_layout(bundle: dict[str, Any]) -> str:
 
 
 def render_tensors(bundle: dict[str, Any]) -> str:
-    lines = ["# tensor_name|tensor_role|dtype|layout_name|relative_path|shape"]
+    lines = ["# tensor_name|tensor_role|dtype|layout_name|relative_path|shape|storage_type"]
     for tensor in sorted(bundle["tensors"], key=lambda item: item["name"]):
         shape_text = "x".join(str(dim) for dim in tensor["shape"])
         lines.append(
@@ -396,6 +396,7 @@ def render_tensors(bundle: dict[str, Any]) -> str:
                     tensor["layout"],
                     tensor["bundle_rel"].as_posix(),
                     shape_text,
+                    tensor["dtype"],
                 ]
             )
         )

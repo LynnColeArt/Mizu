@@ -235,8 +235,9 @@ contains
     integer(i32)                   :: field_count
     integer(i32)                   :: rank_value
     character(len=MAX_IMPORT_LINE_LEN) :: line
-    character(len=MAX_PATH_LEN)    :: fields(6)
+    character(len=MAX_PATH_LEN)    :: fields(7)
     character(len=MAX_PATH_LEN)    :: source_path
+    character(len=MAX_NAME_LEN)    :: storage_type
     logical                        :: is_valid
 
     line_count = count_data_lines(file_path)
@@ -263,12 +264,14 @@ contains
       if (is_ignored_inventory_line(line)) cycle
 
       call split_pipe_fields(line, fields, field_count)
-      if (field_count /= 6_i32) then
+      if (field_count < 6_i32 .or. field_count > 7_i32) then
         status_code = MIZU_STATUS_INVALID_ARGUMENT
         exit
       end if
 
       source_path = trim(fields(5))
+      storage_type = trim(fields(3))
+      if (field_count >= 7_i32) storage_type = trim(fields(7))
       if (.not. is_safe_relative_path(source_path)) then
         status_code = MIZU_STATUS_INVALID_ARGUMENT
         exit
@@ -284,12 +287,14 @@ contains
       manifest%tensors(tensor_index)%dtype = parse_dtype(fields(3))
       manifest%tensors(tensor_index)%layout_name = trim(fields(4))
       manifest%tensors(tensor_index)%source_path = trim(source_path)
+      manifest%tensors(tensor_index)%storage_type = trim(storage_type)
       call parse_shape_vector(fields(6), manifest%tensors(tensor_index)%shape, rank_value, is_valid)
       manifest%tensors(tensor_index)%rank = rank_value
       if (.not. is_valid .or. len_trim(manifest%tensors(tensor_index)%tensor_name) == 0 .or. &
           len_trim(manifest%tensors(tensor_index)%tensor_role) == 0 .or. &
           manifest%tensors(tensor_index)%dtype == MIZU_DTYPE_UNKNOWN .or. &
-          len_trim(manifest%tensors(tensor_index)%layout_name) == 0) then
+          len_trim(manifest%tensors(tensor_index)%layout_name) == 0 .or. &
+          len_trim(manifest%tensors(tensor_index)%storage_type) == 0) then
         status_code = MIZU_STATUS_INVALID_ARGUMENT
         exit
       end if
@@ -519,6 +524,10 @@ contains
         exit
       end if
       fields(field_index) = trim(adjustl(working_line(start_index:start_index + separator_index - 2_i32)))
+      if (field_index == int(size(fields), kind=i32)) then
+        field_count = field_count + 1_i32
+        exit
+      end if
       start_index = start_index + separator_index
     end do
   end subroutine split_pipe_fields
