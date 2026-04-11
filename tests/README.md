@@ -17,6 +17,9 @@ starts.
   - target-machine tests for Apple and CUDA routes
 - `performance/`
   - cold-versus-warm and optimizer convergence checks
+- `tooling/`
+  - importer and developer-tool smoke tests that can run without model
+    hardware or third-party Python packages
 - `fixtures/`
   - shared fake backend and tiny model fixtures
 

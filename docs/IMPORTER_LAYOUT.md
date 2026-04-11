@@ -131,3 +131,13 @@ That tooling should produce:
 - a root `manifest.mizu`
 - a validated `mizu_import/` bundle
 - stable relative asset paths suitable for later backend pack generation
+
+The first concrete tool is:
+
+- `tools/import/hf_safetensors_to_mizu.py`
+
+It reads local HuggingFace-style `.safetensors` headers directly with the
+Python standard library, classifies common Qwen/Gemma tensor-name patterns into
+Mizu tensor roles, writes the bundle files above, and symlinks or copies source
+shards under `mizu_import/weights/` so loader validation can continue to reject
+unsafe external paths.

@@ -4,6 +4,11 @@ Last updated: 2026-04-11
 
 ## Latest Checkpoint
 
+- current milestone: import tooling now includes a dependency-free
+  HuggingFace safetensors smoke importer that scans local model shards,
+  classifies common Qwen/Gemma tensor-name patterns into Mizu tensor roles,
+  writes `manifest.mizu` plus `mizu_import/`, and symlinks or copies source
+  shards under safe import-relative paths
 - current milestone: Phase 6 now has stale-evidence invalidation in the
   optimization store; candidates can be retired by workload, candidate key,
   plan id, or current candidate-set mismatch, and invalid evidence is ignored
@@ -250,7 +255,8 @@ Last updated: 2026-04-11
   pack-dispatch snapshot for the first selected packed tensors, including
   packed offsets, byte spans, role codes, and layout codes, so bridge-owned
   session state preserves a small structural view of pack consumption
-- immediate next target: map real Qwen and Gemma assets into this bundle shape
+- immediate next target: run the safetensors importer against real local Qwen
+  and Gemma assets, tighten any family-specific tensor-role gaps it reveals,
   and use that imported inventory in a less-synthetic CUDA execution path
 
 ## Roadmap Status
@@ -275,7 +281,9 @@ Last updated: 2026-04-11
   - Apple live contexts use the same park/resume checkpoint path as CUDA
   - model-open and stage routing now respect detected backend availability
   - hardware validation is still the biggest Apple gap
-- model import and target-asset mapping are still only partially done
+- model import and target-asset mapping are still only partially done, but
+  there is now a concrete safetensors smoke-import path for local Qwen/Gemma-
+  shaped asset directories
 - the importer/output-layout contract now has a real first shape, but target
   family tensor mapping is still mostly ahead of us
 

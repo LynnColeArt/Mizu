@@ -25,6 +25,10 @@ Current implementation status:
 - model manifests, cache keys, and session flow are implemented as scaffolds
 - the loader now recognizes an optional imported `mizu_import/` bundle with
   validated tensor, modality, and projector inventories
+- `tools/import/hf_safetensors_to_mizu.py` can now scan local
+  HuggingFace-style safetensors model directories and emit a Mizu
+  `manifest.mizu` plus `mizu_import/` asset bundle for Qwen/Gemma-shaped
+  real-asset smoke testing
 - route-aware optimization and persisted cache metadata are implemented
 - the optimization store now invalidates stale evidence by workload, candidate
   key, plan id, or current candidate set, and winner selection/persistence
