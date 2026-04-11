@@ -1,7 +1,8 @@
 module mod_plan_cache
-  use mod_kinds,       only: i32, i64, MAX_TENSOR_RANK
+  use mod_kinds,       only: i32, i64, MAX_NAME_LEN, MAX_PATH_LEN, MAX_TENSOR_RANK
   use mod_status,      only: MIZU_STATUS_INVALID_ARGUMENT, MIZU_STATUS_OK
-  use mod_types,       only: MIZU_BACKEND_FAMILY_NONE, MIZU_EXEC_ROUTE_NONE, MIZU_STAGE_NONE
+  use mod_types,       only: MIZU_BACKEND_FAMILY_NONE, MIZU_DTYPE_UNKNOWN, &
+                             MIZU_EXEC_ROUTE_NONE, MIZU_STAGE_NONE
   use mod_cache_keys,  only: MAX_CACHE_KEY_LEN, plan_cache_key
   use mod_cache_store, only: artifact_metadata_record
 
@@ -11,9 +12,12 @@ module mod_plan_cache
   public :: plan_cache_record, runtime_plan_cache
   public :: initialize_runtime_plan_cache, reset_runtime_plan_cache
   public :: record_plan_cache_entry, lookup_plan_cache_entry
+  public :: load_runtime_plan_cache, save_runtime_plan_cache, warm_runtime_plan_cache
   public :: plan_cache_key_is_strict
 
   integer(i32), parameter :: INITIAL_PLAN_CACHE_CAPACITY = 16_i32
+  integer(i32), parameter :: MAX_PLAN_CACHE_RECORD_LINE_LEN = &
+    (3_i32 * MAX_CACHE_KEY_LEN) + (3_i32 * MAX_NAME_LEN) + MAX_PATH_LEN + 512_i32
 
   type :: plan_cache_record
     type(plan_cache_key)             :: key
@@ -94,20 +98,74 @@ contains
     found = .true.
   end subroutine lookup_plan_cache_entry
 
+  subroutine load_runtime_plan_cache(cache, file_path, loaded_ok)
+    type(runtime_plan_cache), intent(inout) :: cache
+    character(len=*), intent(in)            :: file_path
+    logical, intent(out)                    :: loaded_ok
+    integer(i64)                            :: loaded_count
+
+    call read_runtime_plan_cache_file(cache, file_path, .true., loaded_count, loaded_ok)
+  end subroutine load_runtime_plan_cache
+
+  subroutine warm_runtime_plan_cache(cache, file_path, warmed_count, loaded_ok)
+    type(runtime_plan_cache), intent(inout) :: cache
+    character(len=*), intent(in)            :: file_path
+    integer(i64), intent(out)               :: warmed_count
+    logical, intent(out)                    :: loaded_ok
+
+    call read_runtime_plan_cache_file(cache, file_path, .false., warmed_count, loaded_ok)
+  end subroutine warm_runtime_plan_cache
+
+  subroutine save_runtime_plan_cache(cache, file_path, saved_ok)
+    type(runtime_plan_cache), intent(in) :: cache
+    character(len=*), intent(in)         :: file_path
+    logical, intent(out)                 :: saved_ok
+    integer(i32)                         :: unit_id
+    integer(i32)                         :: ios
+    integer(i32)                         :: index
+
+    saved_ok = .false.
+    if (len_trim(file_path) == 0) return
+
+    open(newunit=unit_id, file=trim(file_path), status="replace", action="write", iostat=ios)
+    if (ios /= 0_i32) return
+
+    do index = 1_i32, cache%entry_count
+      call write_plan_cache_record(unit_id, cache%entries(index), ios)
+      if (ios /= 0_i32) then
+        close(unit_id)
+        return
+      end if
+    end do
+
+    close(unit_id)
+    saved_ok = .true.
+  end subroutine save_runtime_plan_cache
+
   pure logical function plan_cache_key_is_strict(key) result(is_strict)
     type(plan_cache_key), intent(in) :: key
 
     is_strict = len_trim(key%key_text) > 0 .and. &
+      key%versions%schema_version > 0_i32 .and. &
+      key%versions%abi_version > 0_i32 .and. &
+      key%logical_model_hash /= 0_i64 .and. &
       key%stage_kind /= MIZU_STAGE_NONE .and. &
       key%backend_family /= MIZU_BACKEND_FAMILY_NONE .and. &
       key%execution_route /= MIZU_EXEC_ROUTE_NONE .and. &
+      key%dtype /= MIZU_DTYPE_UNKNOWN .and. &
       key%rank >= 0_i32 .and. key%rank <= MAX_TENSOR_RANK .and. &
       len_trim(key%device_key) > 0 .and. &
       len_trim(key%pack_format) > 0 .and. &
       index(key%key_text, "plan:v") == 1 .and. &
+      index(key%key_text, ":abi=" // trim(i32_to_text(key%versions%abi_version))) > 0 .and. &
+      index(key%key_text, ":planner=" // trim(i32_to_text(key%versions%planner_version))) > 0 .and. &
+      index(key%key_text, ":packv=" // trim(i32_to_text(key%versions%pack_version))) > 0 .and. &
+      index(key%key_text, ":backendv=" // trim(i32_to_text(key%versions%backend_version))) > 0 .and. &
+      index(key%key_text, ":model=" // trim(i64_to_text(key%logical_model_hash))) > 0 .and. &
       index(key%key_text, ":stage=" // trim(i32_to_text(key%stage_kind))) > 0 .and. &
       index(key%key_text, ":backend=" // trim(i32_to_text(key%backend_family))) > 0 .and. &
       index(key%key_text, ":route=" // trim(i32_to_text(key%execution_route))) > 0 .and. &
+      index(key%key_text, ":dtype=" // trim(i32_to_text(key%dtype))) > 0 .and. &
       index(key%key_text, ":device=" // trim(key%device_key)) > 0 .and. &
       index(key%key_text, ":pack=" // trim(key%pack_format)) > 0 .and. &
       index(key%key_text, ":shape=") > 0
@@ -124,6 +182,135 @@ contains
     if (metadata%execution_route /= MIZU_EXEC_ROUTE_NONE .and. &
         metadata%execution_route /= key%execution_route) matches = .false.
   end function metadata_matches_key
+
+  subroutine read_runtime_plan_cache_file(cache, file_path, replace_existing, loaded_count, loaded_ok)
+    type(runtime_plan_cache), intent(inout) :: cache
+    character(len=*), intent(in)            :: file_path
+    logical, intent(in)                     :: replace_existing
+    integer(i64), intent(out)               :: loaded_count
+    logical, intent(out)                    :: loaded_ok
+    character(len=MAX_PLAN_CACHE_RECORD_LINE_LEN) :: line
+    character(len=16)                       :: tag
+    type(plan_cache_key)                    :: key
+    type(artifact_metadata_record)          :: metadata
+    integer(i64)                            :: plan_id
+    integer(i64)                            :: hit_count
+    character(len=MAX_CACHE_KEY_LEN)        :: candidate_key_text
+    integer(i32)                            :: materialized_flag
+    integer(i32)                            :: unit_id
+    integer(i32)                            :: ios
+    integer(i32)                            :: shape_index
+    logical                                 :: exists
+
+    loaded_count = 0_i64
+    loaded_ok = .false.
+    if (len_trim(file_path) == 0) return
+
+    inquire(file=trim(file_path), exist=exists)
+    if (.not. exists) then
+      if (replace_existing) call reset_runtime_plan_cache(cache)
+      loaded_ok = .true.
+      return
+    end if
+
+    open(newunit=unit_id, file=trim(file_path), status="old", action="read", iostat=ios)
+    if (ios /= 0_i32) return
+
+    if (replace_existing) call reset_runtime_plan_cache(cache)
+    do
+      read(unit_id, "(A)", iostat=ios) line
+      if (ios /= 0_i32) exit
+      if (len_trim(line) == 0) cycle
+
+      tag = ""
+      key = plan_cache_key()
+      metadata = artifact_metadata_record()
+      plan_id = 0_i64
+      hit_count = 0_i64
+      candidate_key_text = ""
+      materialized_flag = 0_i32
+
+      read(line, *, iostat=ios) tag, key%key_text, plan_id, hit_count, candidate_key_text, &
+        key%versions%schema_version, key%versions%abi_version, key%versions%planner_version, &
+        key%versions%pack_version, key%versions%backend_version, key%logical_model_hash, &
+        key%projector_revision, key%model_family, key%stage_kind, key%backend_family, &
+        key%execution_route, key%dtype, key%rank, (key%shape(shape_index), shape_index = 1, MAX_TENSOR_RANK), &
+        key%device_key, key%pack_format, metadata%backend_family, metadata%execution_route, &
+        metadata%stage_kind, materialized_flag, metadata%payload_bytes, metadata%workspace_bytes, &
+        metadata%artifact_format, metadata%payload_fingerprint, metadata%payload_path
+      if (ios /= 0_i32) cycle
+      if (trim(tag) /= "entry") cycle
+
+      metadata%is_materialized = (materialized_flag /= 0_i32)
+      call normalize_persisted_text(candidate_key_text)
+      call normalize_persisted_text(metadata%artifact_format)
+      call normalize_persisted_text(metadata%payload_fingerprint)
+      call normalize_persisted_text(metadata%payload_path)
+      call remember_loaded_plan_record(cache, key, plan_id, max(0_i64, hit_count), &
+        candidate_key_text, metadata, loaded_count)
+    end do
+
+    close(unit_id)
+    loaded_ok = .true.
+  end subroutine read_runtime_plan_cache_file
+
+  subroutine remember_loaded_plan_record(cache, key, plan_id, hit_count, candidate_key_text, &
+                                         metadata, loaded_count)
+    type(runtime_plan_cache), intent(inout)      :: cache
+    type(plan_cache_key), intent(in)             :: key
+    integer(i64), intent(in)                     :: plan_id
+    integer(i64), intent(in)                     :: hit_count
+    character(len=*), intent(in)                 :: candidate_key_text
+    type(artifact_metadata_record), intent(in)   :: metadata
+    integer(i64), intent(inout)                  :: loaded_count
+    integer(i32)                                 :: entry_index
+    integer(i32)                                 :: status_code
+
+    call record_plan_cache_entry(cache, key, plan_id, metadata, status_code, candidate_key_text)
+    if (status_code /= MIZU_STATUS_OK) return
+
+    entry_index = find_entry_index(cache, trim(key%key_text))
+    if (entry_index <= 0_i32) return
+
+    cache%entries(entry_index)%hit_count = max(cache%entries(entry_index)%hit_count, max(0_i64, hit_count))
+    loaded_count = loaded_count + 1_i64
+  end subroutine remember_loaded_plan_record
+
+  subroutine write_plan_cache_record(unit_id, record, ios)
+    integer(i32), intent(in)          :: unit_id
+    type(plan_cache_record), intent(in) :: record
+    integer(i32), intent(inout)       :: ios
+    integer(i32)                      :: materialized_flag
+    character(len=MAX_CACHE_KEY_LEN)  :: candidate_key_text
+    character(len=MAX_NAME_LEN)       :: artifact_format
+    character(len=MAX_NAME_LEN)       :: payload_fingerprint
+    character(len=MAX_PATH_LEN)       :: payload_path
+    character(len=MAX_PATH_LEN + 2)   :: quoted_payload_path
+
+    if (.not. plan_cache_key_is_strict(record%key)) return
+    if (record%plan_id == 0_i64) return
+    if (.not. metadata_matches_key(record%artifact_metadata, record%key)) return
+
+    candidate_key_text = persisted_text_or_dash(record%candidate_key_text, MAX_CACHE_KEY_LEN)
+    materialized_flag = merge(1_i32, 0_i32, record%artifact_metadata%is_materialized)
+    artifact_format = persisted_text_or_dash(record%artifact_metadata%artifact_format, MAX_NAME_LEN)
+    payload_fingerprint = persisted_text_or_dash(record%artifact_metadata%payload_fingerprint, MAX_NAME_LEN)
+    payload_path = persisted_text_or_dash(record%artifact_metadata%payload_path, MAX_PATH_LEN)
+    quoted_payload_path = quote_persisted_path(payload_path)
+
+    write(unit_id, "(A,1X,A,1X,I0,1X,I0,1X,A,5(1X,I0),2(1X,I0),6(1X,I0),8(1X,I0),2(1X,A),4(1X,I0),2(1X,I0),3(1X,A))", &
+        iostat=ios) &
+      "entry", trim(record%key%key_text), record%plan_id, max(0_i64, record%hit_count), &
+      trim(candidate_key_text), record%key%versions%schema_version, record%key%versions%abi_version, &
+      record%key%versions%planner_version, record%key%versions%pack_version, &
+      record%key%versions%backend_version, record%key%logical_model_hash, record%key%projector_revision, &
+      record%key%model_family, record%key%stage_kind, record%key%backend_family, record%key%execution_route, &
+      record%key%dtype, record%key%rank, record%key%shape, trim(record%key%device_key), &
+      trim(record%key%pack_format), record%artifact_metadata%backend_family, &
+      record%artifact_metadata%execution_route, record%artifact_metadata%stage_kind, materialized_flag, &
+      max(0_i64, record%artifact_metadata%payload_bytes), max(0_i64, record%artifact_metadata%workspace_bytes), &
+      trim(artifact_format), trim(payload_fingerprint), trim(quoted_payload_path)
+  end subroutine write_plan_cache_record
 
   integer(i32) function ensure_entry_index(cache, key_text) result(entry_index)
     type(runtime_plan_cache), intent(inout) :: cache
@@ -184,5 +371,43 @@ contains
 
     write(text, "(I0)") value
   end function i32_to_text
+
+  pure function i64_to_text(value) result(text)
+    integer(i64), intent(in) :: value
+    character(len=32)        :: text
+
+    write(text, "(I0)") value
+  end function i64_to_text
+
+  function persisted_text_or_dash(text, buffer_len) result(persisted_text)
+    character(len=*), intent(in) :: text
+    integer(i32), intent(in)     :: buffer_len
+    character(len=buffer_len)    :: persisted_text
+
+    persisted_text = ""
+    if (len_trim(text) > 0) then
+      persisted_text = trim(text)
+    else
+      persisted_text = "-"
+    end if
+  end function persisted_text_or_dash
+
+  subroutine normalize_persisted_text(text)
+    character(len=*), intent(inout) :: text
+
+    if (trim(text) == "-") text = ""
+  end subroutine normalize_persisted_text
+
+  function quote_persisted_path(path_text) result(quoted_text)
+    character(len=*), intent(in)    :: path_text
+    character(len=MAX_PATH_LEN + 2) :: quoted_text
+
+    quoted_text = ""
+    if (trim(path_text) == "-") then
+      quoted_text = "-"
+    else
+      quoted_text = '"' // trim(path_text) // '"'
+    end if
+  end function quote_persisted_path
 
 end module mod_plan_cache

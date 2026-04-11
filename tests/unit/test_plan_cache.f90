@@ -11,6 +11,8 @@ program test_plan_cache
   use mod_plan_cache,     only: runtime_plan_cache, plan_cache_record, &
                                 initialize_runtime_plan_cache, reset_runtime_plan_cache, &
                                 record_plan_cache_entry, lookup_plan_cache_entry, &
+                                load_runtime_plan_cache, save_runtime_plan_cache, &
+                                warm_runtime_plan_cache, &
                                 plan_cache_key_is_strict
 
   implicit none
@@ -18,6 +20,8 @@ program test_plan_cache
   type(model_manifest)             :: manifest
   type(invalidation_version_fields) :: versions
   type(runtime_plan_cache)         :: cache
+  type(runtime_plan_cache)         :: reloaded_cache
+  type(runtime_plan_cache)         :: warmed_cache
   type(plan_cache_key)             :: cuda_key
   type(plan_cache_key)             :: route_changed_key
   type(plan_cache_key)             :: planner_changed_key
@@ -25,8 +29,12 @@ program test_plan_cache
   type(plan_cache_record)          :: record
   type(artifact_metadata_record)   :: metadata
   integer(i64)                     :: shape(3)
+  integer(i64)                     :: warmed_count
   integer(i32)                     :: status_code
   logical                          :: found
+  logical                          :: saved_ok
+  logical                          :: loaded_ok
+  character(len=*), parameter      :: cache_path = "/tmp/mizu_test_plan_cache.txt"
 
   status_code = load_model_manifest_from_root("tests/fixtures/models/fixture_mm_tiny", manifest)
   call expect_equal_i32("load multimodal fixture", status_code, MIZU_STATUS_OK)
@@ -98,6 +106,36 @@ program test_plan_cache
   call expect_true("updated strict key should still hit", found)
   call expect_equal_i64("updated strict key should replace plan id", record%plan_id, 303_i64)
   call expect_equal_i64("updated strict key should preserve hit history", record%hit_count, 2_i64)
+
+  call execute_command_line("rm -f " // cache_path)
+  call save_runtime_plan_cache(cache, cache_path, saved_ok)
+  call expect_true("plan cache save should succeed", saved_ok)
+
+  call initialize_runtime_plan_cache(reloaded_cache)
+  call load_runtime_plan_cache(reloaded_cache, cache_path, loaded_ok)
+  call expect_true("plan cache load should succeed", loaded_ok)
+  call expect_equal_i32("plan cache load should restore one entry", reloaded_cache%entry_count, 1_i32)
+  call lookup_plan_cache_entry(reloaded_cache, cuda_key, record, found)
+  call expect_true("reloaded plan cache should hit strict key", found)
+  call expect_equal_i64("reloaded plan cache should restore plan id", record%plan_id, 303_i64)
+  call expect_equal_i64("reloaded lookup should advance persisted hit count", record%hit_count, 3_i64)
+
+  metadata%backend_family = MIZU_BACKEND_FAMILY_APPLE
+  metadata%execution_route = MIZU_EXEC_ROUTE_ANE
+  call initialize_runtime_plan_cache(warmed_cache)
+  call record_plan_cache_entry(warmed_cache, route_changed_key, 404_i64, metadata, status_code)
+  call expect_equal_i32("warm target seed entry should record", status_code, MIZU_STATUS_OK)
+  call warm_runtime_plan_cache(warmed_cache, cache_path, warmed_count, loaded_ok)
+  call expect_true("plan cache warm should load persisted entries", loaded_ok)
+  call expect_equal_i64("plan cache warm should report loaded entries", warmed_count, 1_i64)
+  call expect_equal_i32("plan cache warm should merge instead of replacing", warmed_cache%entry_count, 2_i32)
+  call lookup_plan_cache_entry(warmed_cache, cuda_key, record, found)
+  call expect_true("warmed plan cache should hit loaded strict key", found)
+  call expect_equal_i64("warmed plan cache should restore plan id", record%plan_id, 303_i64)
+  call lookup_plan_cache_entry(warmed_cache, route_changed_key, record, found)
+  call expect_true("warmed plan cache should keep existing entries", found)
+  call expect_equal_i64("warmed plan cache should keep existing plan id", record%plan_id, 404_i64)
+  call execute_command_line("rm -f " // cache_path)
 
   call reset_runtime_plan_cache(cache)
   call lookup_plan_cache_entry(cache, cuda_key, record, found)
