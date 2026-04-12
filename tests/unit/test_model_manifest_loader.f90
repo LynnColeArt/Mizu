@@ -1,5 +1,5 @@
 program test_model_manifest_loader
-  use mod_kinds,          only: i32
+  use mod_kinds,          only: i32, i64
   use mod_status,         only: MIZU_STATUS_OK, MIZU_STATUS_INVALID_ARGUMENT, MIZU_STATUS_IO_ERROR
   use mod_types,          only: MIZU_MODEL_FAMILY_QWEN3_5, MIZU_MODEL_FAMILY_GEMMA4, &
                                 MIZU_MODEL_FEATURE_NONE, MIZU_MODEL_FEATURE_MULTIMODAL, &
@@ -46,6 +46,12 @@ program test_model_manifest_loader
     trim(manifest%tensors(1)%source_path), "weights/token_embeddings.bin")
   call expect_equal_text("import bundle should carry tensor storage type", &
     trim(manifest%tensors(1)%storage_type), "q4_k")
+  call expect_equal_i64("import bundle should carry first tensor source offset", &
+    manifest%tensors(1)%source_offset, 0_i64)
+  call expect_equal_i64("import bundle should carry second tensor source offset", &
+    manifest%tensors(2)%source_offset, 128_i64)
+  call expect_equal_i64("import bundle should carry projector tensor source offset", &
+    manifest%tensors(5)%source_offset, 512_i64)
   call expect_equal_text("import bundle should carry projector artifact path", &
     trim(manifest%projector%artifact_path), "projector/vision_projector.bin")
   call expect_equal_text("import bundle should carry imported source model id", &

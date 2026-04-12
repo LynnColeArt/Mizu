@@ -1,0 +1,6 @@
+# tensor_name|source_kind|ggml_type|normalized_dtype|layout_name|relative_path|data_offset|source_offset|shape
+token_embeddings|model|q4_k|bf16|row_major|weights/token_embeddings.bin|0|0|152064x3584
+decoder_blocks|model|q5_k|bf16|packed|weights/decoder_blocks.bin|0|128|3584x3584
+final_norm|model|f32|f32|vector|weights/final_norm.bin|0|256|3584
+lm_head|model|q4_k|bf16|row_major|weights/lm_head.bin|0|384|3584x152064
+vision_projector|projector|f16|f16|packed|projector/vision_projector.bin|0|512|1280x3584

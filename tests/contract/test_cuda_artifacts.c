@@ -539,6 +539,8 @@ int main(void) {
     if (!expect_true("cuda weight artifact should retain the first packed tensor entry", command_status == 0)) return 1;
     command_status = system("grep -R \"pack1=token_embeddings|embedding_table|weights/token_embeddings.bin|offset=0|bytes=306561024|layout=row_major|storage=q4_k\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("cuda weight artifact should retain the first packed tensor storage type", command_status == 0)) return 1;
+    command_status = system("grep -R \"source_offset=128\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("cuda weight artifact should retain per-tensor source offsets", command_status == 0)) return 1;
     command_status = system("grep -R \"pack4=lm_head|token_projection|weights/lm_head.bin|offset=315406336|bytes=306561024\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("cuda weight artifact should retain the final packed tensor entry", command_status == 0)) return 1;
     command_status = system("grep -R \"pack4=lm_head|token_projection|weights/lm_head.bin|offset=315406336|bytes=306561024|layout=row_major|storage=q4_k\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights >/dev/null");

@@ -191,6 +191,9 @@ int main(void) {
              gemma_model_path, persist_root);
     if (!run_command("qwench gemma import", command)) return 1;
 
+    command_status = system("awk -F'|' 'NF==9 && $8 ~ /^[0-9][0-9]*$/ && $8 > 0 { found=1 } END { exit found ? 0 : 1 }' /tmp/mizu_qwench_gguf_cuda_smoke/qwen35-9b/mizu_import/gguf_tensors.tsv");
+    if (!expect_true("qwench import should record absolute GGUF source offsets", command_status == 0)) return 1;
+
     if (setenv("MIZU_FORCE_CUDA_AVAILABLE", "1", 1) != 0) {
         fprintf(stderr, "failed to set MIZU_FORCE_CUDA_AVAILABLE\n");
         return 1;
@@ -227,6 +230,8 @@ int main(void) {
     if (!expect_true("qwench CUDA weight artifacts should retain q4_k storage", command_status == 0)) return 1;
     command_status = system("grep -R \"storage=iq2_xxs\" /tmp/mizu_qwench_gguf_cuda_smoke/cache/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("qwench CUDA weight artifacts should retain Gemma quantized storage", command_status == 0)) return 1;
+    command_status = system("grep -R -E \"source_offset=[1-9][0-9]*\" /tmp/mizu_qwench_gguf_cuda_smoke/cache/artifacts/cuda/cuda/weights >/dev/null");
+    if (!expect_true("qwench CUDA weight artifacts should retain per-tensor source offsets", command_status == 0)) return 1;
     command_status = system("grep -R \"mm.0.weight\" /tmp/mizu_qwench_gguf_cuda_smoke/cache/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("qwench CUDA decoder weight pack should exclude mmproj tensors", command_status != 0)) return 1;
     command_status = system("grep -R -E \"projector_bytes=[1-9]\" /tmp/mizu_qwench_gguf_cuda_smoke/cache/artifacts/cuda/cuda/projector >/dev/null");

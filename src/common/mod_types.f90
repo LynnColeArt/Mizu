@@ -228,6 +228,7 @@ module mod_types
     integer(i32)                     :: dtype       = MIZU_DTYPE_UNKNOWN
     integer(i32)                     :: rank        = 0_i32
     integer(i64)                     :: shape(MAX_TENSOR_RANK) = 0_i64
+    integer(i64)                     :: source_offset = -1_i64
     character(len=MAX_NAME_LEN)      :: tensor_name = ""
     character(len=MAX_NAME_LEN)      :: tensor_role = ""
     character(len=MAX_NAME_LEN)      :: layout_name = ""

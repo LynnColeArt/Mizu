@@ -110,10 +110,20 @@ def main() -> int:
             qwen_output / "mizu_import" / "tensors.tsv",
             "mm.0.weight|multimodal_projector|f16|packed|weights/mmproj-qwen35.gguf|1152x4096|f16",
         )
-        expect_file_contains(
-            qwen_output / "mizu_import" / "gguf_tensors.tsv",
-            "token_embd.weight|model|q4_k|f16|row_major|weights/qwen35.gguf|0|4096x248320",
+        gguf_inventory = qwen_output / "mizu_import" / "gguf_tensors.tsv"
+        expect_file_contains(gguf_inventory, "data_offset|source_offset|shape")
+        token_row = find_tsv_row(gguf_inventory, "token_embd.weight")
+        if len(token_row) != 9:
+            raise AssertionError(f"expected 9 GGUF inventory fields, got {len(token_row)}: {token_row}")
+        expect_equal_list(
+            "token_embd GGUF inventory identity",
+            token_row[:7],
+            ["token_embd.weight", "model", "q4_k", "f16", "row_major", "weights/qwen35.gguf", "0"],
         )
+        if int(token_row[7]) <= int(token_row[6]):
+            raise AssertionError(f"expected absolute source_offset to exceed data_offset: {token_row}")
+        if token_row[8] != "4096x248320":
+            raise AssertionError(f"unexpected token_embd shape in GGUF inventory: {token_row[8]}")
         expect_file_contains(
             qwen_output / "mizu_import" / "projector" / "projector_assets.mizu",
             "mm.0.weight|weights/mmproj-qwen35.gguf|offset=128|ggml_type=f16",
@@ -218,6 +228,22 @@ def expect_file_contains(path: Path, needle: str) -> None:
 def expect_contains(haystack: str, needle: str) -> None:
     if needle not in haystack:
         raise AssertionError(f"missing expected text: {needle}")
+
+
+def find_tsv_row(path: Path, first_field: str) -> list[str]:
+    expect_path_exists(path)
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("|")
+        if fields and fields[0] == first_field:
+            return fields
+    raise AssertionError(f"missing TSV row for {first_field} in {path}")
+
+
+def expect_equal_list(label: str, actual: list[str], expected: list[str]) -> None:
+    if actual != expected:
+        raise AssertionError(f"{label}: {actual} != {expected}")
 
 
 def expect_path_exists(path: Path) -> None:

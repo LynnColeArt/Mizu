@@ -97,6 +97,7 @@ class GgufTensor:
     shape: list[int]
     ggml_type: str
     data_offset: int
+    source_offset: int
     source_kind: str
     source_path: Path
     bundle_rel: Path
@@ -209,6 +210,7 @@ def build_bundle(model_gguf: Path, projector_gguf: Path | None, output_root: Pat
                     "bundle_rel": tensor.bundle_rel,
                     "shape": tensor.shape,
                     "data_offset": tensor.data_offset,
+                    "source_offset": tensor.source_offset,
                 }
             )
 
@@ -271,7 +273,7 @@ def parse_gguf_file(path: Path, source_kind: str) -> GgufFile:
             metadata[key] = read_metadata_value(handle)
 
         bundle_rel = Path("weights") / path.name
-        tensors: list[GgufTensor] = []
+        tensor_records: list[tuple[str, list[int], str, int]] = []
         for _ in range(tensor_count):
             name = read_gguf_string(handle)
             rank = read_u32(handle)
@@ -285,12 +287,26 @@ def parse_gguf_file(path: Path, source_kind: str) -> GgufFile:
             if ggml_type is None:
                 raise GgufImportError(f"tensor {name} in {path} has unsupported GGML type id {ggml_type_id}")
             data_offset = read_u64(handle)
+            if data_offset > MAX_SAFE_I64:
+                raise GgufImportError(f"tensor {name} in {path} has unreasonable data offset {data_offset}")
+            tensor_records.append((name, shape, ggml_type, data_offset))
+
+        alignment = metadata_int(metadata, "general.alignment", 32)
+        if alignment <= 0:
+            alignment = 32
+        tensor_data_start = align_offset(handle.tell(), alignment)
+        tensors: list[GgufTensor] = []
+        for name, shape, ggml_type, data_offset in tensor_records:
+            source_offset = tensor_data_start + data_offset
+            if source_offset > MAX_SAFE_I64:
+                raise GgufImportError(f"tensor {name} in {path} has unreasonable source offset {source_offset}")
             tensors.append(
                 GgufTensor(
                     name=name,
                     shape=shape,
                     ggml_type=ggml_type,
                     data_offset=data_offset,
+                    source_offset=source_offset,
                     source_kind=source_kind,
                     source_path=path,
                     bundle_rel=bundle_rel,
@@ -388,6 +404,25 @@ def metadata_text(metadata: dict[str, MetadataValue], key: str) -> str:
     if isinstance(value.value, str):
         return value.value
     return str(value.value)
+
+
+def metadata_int(metadata: dict[str, MetadataValue], key: str, default: int) -> int:
+    value = metadata.get(key)
+    if value is None:
+        return default
+    try:
+        return int(value.value)
+    except (TypeError, ValueError):
+        return default
+
+
+def align_offset(offset: int, alignment: int) -> int:
+    if alignment <= 1:
+        return offset
+    remainder = offset % alignment
+    if remainder == 0:
+        return offset
+    return offset + (alignment - remainder)
 
 
 def classify_tensor_role(name: str, source_kind: str, general_type: str) -> str:
@@ -515,6 +550,8 @@ def build_source_hash_text(
         digest.update("x".join(str(dim) for dim in tensor["shape"]).encode("utf-8"))
         digest.update(b"|")
         digest.update(str(tensor["data_offset"]).encode("utf-8"))
+        digest.update(b"|")
+        digest.update(str(tensor["source_offset"]).encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -625,7 +662,9 @@ def render_tensors(bundle: dict[str, Any]) -> str:
 
 
 def render_gguf_tensors(bundle: dict[str, Any]) -> str:
-    lines = ["# tensor_name|source_kind|ggml_type|normalized_dtype|layout_name|relative_path|data_offset|shape"]
+    lines = [
+        "# tensor_name|source_kind|ggml_type|normalized_dtype|layout_name|relative_path|data_offset|source_offset|shape"
+    ]
     for tensor in sorted(bundle["tensors"], key=lambda item: (item["source_kind"], item["name"])):
         lines.append(
             "|".join(
@@ -637,6 +676,7 @@ def render_gguf_tensors(bundle: dict[str, Any]) -> str:
                     tensor["layout"],
                     tensor["bundle_rel"].as_posix(),
                     str(tensor["data_offset"]),
+                    str(tensor["source_offset"]),
                     shape_text(tensor["shape"]),
                 ]
             )
@@ -673,7 +713,8 @@ def render_projector_assets(bundle: dict[str, Any]) -> str:
     lines = ["# projector tensor inventory"]
     for tensor in sorted(bundle["projector_tensors"], key=lambda item: item["name"]):
         lines.append(
-            f"{tensor['name']}|{tensor['bundle_rel'].as_posix()}|offset={tensor['data_offset']}|ggml_type={tensor['ggml_type']}"
+            f"{tensor['name']}|{tensor['bundle_rel'].as_posix()}|offset={tensor['data_offset']}|"
+            f"ggml_type={tensor['ggml_type']}|source_offset={tensor['source_offset']}"
         )
     if len(lines) == 1:
         lines.append("# no projector-like tensors were detected")

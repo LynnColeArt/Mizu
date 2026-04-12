@@ -32,9 +32,11 @@ contains
     character(len=MAX_PATH_LEN)    :: import_root
     character(len=MAX_PATH_LEN)    :: layout_path
     character(len=MAX_PATH_LEN)    :: tensor_inventory_rel
+    character(len=MAX_PATH_LEN)    :: gguf_inventory_rel
     character(len=MAX_PATH_LEN)    :: modality_inventory_rel
     character(len=MAX_PATH_LEN)    :: projector_inventory_rel
     character(len=MAX_PATH_LEN)    :: tensor_inventory_path
+    character(len=MAX_PATH_LEN)    :: gguf_inventory_path
     character(len=MAX_PATH_LEN)    :: modality_inventory_path
     character(len=MAX_PATH_LEN)    :: projector_inventory_path
     integer(i32)                   :: layout_version
@@ -48,12 +50,13 @@ contains
     if (.not. exists) return
 
     tensor_inventory_rel = "tensors.tsv"
+    gguf_inventory_rel = ""
     modality_inventory_rel = "modalities.tsv"
     projector_inventory_rel = "projector.mizu"
     layout_version = 0_i32
 
     status_code = parse_layout_file(layout_path, manifest, layout_version, tensor_inventory_rel, &
-      modality_inventory_rel, projector_inventory_rel)
+      gguf_inventory_rel, modality_inventory_rel, projector_inventory_rel)
     if (status_code /= MIZU_STATUS_OK) return
 
     if (layout_version /= IMPORT_LAYOUT_VERSION) then
@@ -74,6 +77,17 @@ contains
 
     status_code = load_tensor_inventory(tensor_inventory_path, import_root, manifest)
     if (status_code /= MIZU_STATUS_OK) return
+
+    gguf_inventory_path = join_import_path(import_root, gguf_inventory_rel)
+    if (len_trim(gguf_inventory_path) > 0) then
+      inquire(file=trim(gguf_inventory_path), exist=exists)
+      if (.not. exists) then
+        status_code = MIZU_STATUS_IO_ERROR
+        return
+      end if
+      status_code = load_gguf_tensor_inventory(gguf_inventory_path, import_root, manifest)
+      if (status_code /= MIZU_STATUS_OK) return
+    end if
 
     modality_inventory_path = join_import_path(import_root, modality_inventory_rel)
     if (len_trim(modality_inventory_path) > 0) then
@@ -112,11 +126,13 @@ contains
   end subroutine resolve_import_paths
 
   integer(i32) function parse_layout_file(layout_path, manifest, layout_version, tensor_inventory_rel, &
-                                          modality_inventory_rel, projector_inventory_rel) result(status_code)
+                                          gguf_inventory_rel, modality_inventory_rel, &
+                                          projector_inventory_rel) result(status_code)
     character(len=*), intent(in)   :: layout_path
     type(model_manifest), intent(inout) :: manifest
     integer(i32), intent(out)      :: layout_version
     character(len=*), intent(inout) :: tensor_inventory_rel
+    character(len=*), intent(inout) :: gguf_inventory_rel
     character(len=*), intent(inout) :: modality_inventory_rel
     character(len=*), intent(inout) :: projector_inventory_rel
     integer(i32)                   :: unit_id
@@ -159,6 +175,8 @@ contains
         if (.not. is_valid) status_code = MIZU_STATUS_INVALID_ARGUMENT
       case ("tensor_inventory")
         call normalize_inventory_path(value, tensor_inventory_rel)
+      case ("gguf_inventory")
+        call normalize_inventory_path(value, gguf_inventory_rel)
       case ("modality_inventory")
         call normalize_inventory_path(value, modality_inventory_rel)
       case ("projector_inventory")
@@ -307,6 +325,99 @@ contains
       return
     end if
   end function load_tensor_inventory
+
+  integer(i32) function load_gguf_tensor_inventory(file_path, import_root, manifest) result(status_code)
+    character(len=*), intent(in)   :: file_path
+    character(len=*), intent(in)   :: import_root
+    type(model_manifest), intent(inout) :: manifest
+    integer(i32)                   :: unit_id
+    integer(i32)                   :: ios
+    integer(i32)                   :: field_count
+    integer(i32)                   :: rank_value
+    integer(i64)                   :: source_offset
+    integer(i64)                   :: data_offset
+    integer(i64)                   :: shape_values(MAX_TENSOR_RANK)
+    character(len=MAX_IMPORT_LINE_LEN) :: line
+    character(len=MAX_PATH_LEN)    :: fields(9)
+    character(len=MAX_PATH_LEN)    :: source_path
+    character(len=MAX_PATH_LEN)    :: shape_text
+    logical                        :: is_valid
+
+    status_code = MIZU_STATUS_OK
+    if (.not. allocated(manifest%tensors)) return
+
+    open(newunit=unit_id, file=trim(file_path), status="old", action="read", iostat=ios)
+    if (ios /= 0_i32) then
+      status_code = MIZU_STATUS_IO_ERROR
+      return
+    end if
+
+    do
+      read(unit_id, "(A)", iostat=ios) line
+      if (ios /= 0_i32) exit
+      if (is_ignored_inventory_line(line)) cycle
+
+      call split_pipe_fields(line, fields, field_count)
+      if (field_count /= 8_i32 .and. field_count /= 9_i32) then
+        status_code = MIZU_STATUS_INVALID_ARGUMENT
+        exit
+      end if
+
+      source_path = trim(fields(6))
+      if (.not. is_safe_relative_path(source_path)) then
+        status_code = MIZU_STATUS_INVALID_ARGUMENT
+        exit
+      end if
+      if (.not. import_artifact_exists(import_root, source_path)) then
+        status_code = MIZU_STATUS_IO_ERROR
+        exit
+      end if
+
+      call parse_i64(fields(7), data_offset, is_valid)
+      if (.not. is_valid .or. data_offset < 0_i64) then
+        status_code = MIZU_STATUS_INVALID_ARGUMENT
+        exit
+      end if
+      source_offset = data_offset
+      shape_text = fields(8)
+      if (field_count == 9_i32) then
+        call parse_i64(fields(8), source_offset, is_valid)
+        if (.not. is_valid .or. source_offset < 0_i64) then
+          status_code = MIZU_STATUS_INVALID_ARGUMENT
+          exit
+        end if
+        shape_text = fields(9)
+      end if
+
+      call parse_shape_vector(shape_text, shape_values, rank_value, is_valid)
+      if (.not. is_valid) then
+        status_code = MIZU_STATUS_INVALID_ARGUMENT
+        exit
+      end if
+
+      call apply_gguf_tensor_source_offset(manifest, fields(1), source_path, source_offset)
+    end do
+
+    close(unit_id)
+    if (status_code /= MIZU_STATUS_OK) return
+    if (ios > 0_i32) status_code = MIZU_STATUS_IO_ERROR
+  end function load_gguf_tensor_inventory
+
+  subroutine apply_gguf_tensor_source_offset(manifest, tensor_name, source_path, source_offset)
+    type(model_manifest), intent(inout) :: manifest
+    character(len=*), intent(in)        :: tensor_name
+    character(len=*), intent(in)        :: source_path
+    integer(i64), intent(in)            :: source_offset
+    integer(i32)                        :: tensor_index
+
+    if (.not. allocated(manifest%tensors)) return
+    do tensor_index = 1_i32, int(size(manifest%tensors), kind=i32)
+      if (trim(manifest%tensors(tensor_index)%tensor_name) /= trim(tensor_name)) cycle
+      if (trim(manifest%tensors(tensor_index)%source_path) /= trim(source_path)) cycle
+      manifest%tensors(tensor_index)%source_offset = source_offset
+      return
+    end do
+  end subroutine apply_gguf_tensor_source_offset
 
   integer(i32) function load_modality_inventory(file_path, manifest) result(status_code)
     character(len=*), intent(in)   :: file_path

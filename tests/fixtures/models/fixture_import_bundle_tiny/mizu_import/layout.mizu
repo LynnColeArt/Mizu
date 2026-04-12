@@ -4,5 +4,6 @@ source_revision = fixture-v1
 source_hash_text = qwen-3.5-9b-imported:fixture
 tokenizer = qwen3_5
 tensor_inventory = tensors.tsv
+gguf_inventory = gguf_tensors.tsv
 modality_inventory = modalities.tsv
 projector_inventory = projector.mizu

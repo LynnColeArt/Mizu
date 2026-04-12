@@ -1861,7 +1861,7 @@ contains
   subroutine copy_model_import_snapshot(manifest, model)
     type(model_manifest), intent(in)    :: manifest
     type(model_state), intent(inout)    :: model
-    character(len=MAX_PATH_LEN + 3 * MAX_NAME_LEN + 64) :: lineage_entry
+    character(len=MAX_PATH_LEN + 3 * MAX_NAME_LEN + 96) :: lineage_entry
     integer(i32)                        :: tensor_index
     integer(i32)                        :: preview_index
     integer(i64)                        :: entry_hash
@@ -1890,6 +1890,7 @@ contains
         model%import_tensors(tensor_index)%dtype = manifest%tensors(tensor_index)%dtype
         model%import_tensors(tensor_index)%rank = manifest%tensors(tensor_index)%rank
         model%import_tensors(tensor_index)%shape = manifest%tensors(tensor_index)%shape
+        model%import_tensors(tensor_index)%source_offset = manifest%tensors(tensor_index)%source_offset
         model%import_tensors(tensor_index)%tensor_name = manifest%tensors(tensor_index)%tensor_name
         model%import_tensors(tensor_index)%tensor_role = manifest%tensors(tensor_index)%tensor_role
         model%import_tensors(tensor_index)%layout_name = manifest%tensors(tensor_index)%layout_name
@@ -1897,9 +1898,10 @@ contains
         model%import_tensors(tensor_index)%source_path = manifest%tensors(tensor_index)%source_path
 
         lineage_entry = ""
-        write(lineage_entry, '(A,"|",A,"|",A,"|storage=",A)') trim(manifest%tensors(tensor_index)%tensor_name), &
+        write(lineage_entry, '(A,"|",A,"|",A,"|storage=",A,"|source_offset=",I0)') &
+          trim(manifest%tensors(tensor_index)%tensor_name), &
           trim(manifest%tensors(tensor_index)%tensor_role), trim(manifest%tensors(tensor_index)%source_path), &
-          trim(manifest%tensors(tensor_index)%storage_type)
+          trim(manifest%tensors(tensor_index)%storage_type), manifest%tensors(tensor_index)%source_offset
         entry_hash = hash_text64(trim(lineage_entry))
         model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
         model%import_tensor_bytes = model%import_tensor_bytes + estimate_manifest_tensor_bytes( &
@@ -1939,7 +1941,7 @@ contains
 
   subroutine recompute_import_weight_pack_summary(model)
     type(model_state), intent(inout)    :: model
-    character(len=MAX_PATH_LEN + 3 * MAX_NAME_LEN + 112) :: pack_entry
+    character(len=MAX_PATH_LEN + 3 * MAX_NAME_LEN + 144) :: pack_entry
     integer(i32)                        :: tensor_index
     integer(i64)                        :: tensor_bytes
     integer(i64)                        :: pack_offset
@@ -1958,10 +1960,12 @@ contains
 
       model%import_weight_pack_count = model%import_weight_pack_count + 1_i32
       pack_entry = ""
-      write(pack_entry, '(A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,"|storage=",A)') &
+      write(pack_entry, '(A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,' // &
+        '"|storage=",A,"|source_offset=",I0)') &
         trim(model%import_tensors(tensor_index)%tensor_name), trim(model%import_tensors(tensor_index)%tensor_role), &
         trim(model%import_tensors(tensor_index)%source_path), pack_offset, tensor_bytes, &
-        trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type)
+        trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type), &
+        model%import_tensors(tensor_index)%source_offset
       model%import_weight_pack_hash = ieor(model%import_weight_pack_hash, hash_text64(trim(pack_entry)))
       pack_offset = align_import_bytes(pack_offset + tensor_bytes)
     end do
@@ -2049,7 +2053,7 @@ contains
   subroutine append_import_weight_pack_payload(payload_text, model)
     character(len=*), intent(inout) :: payload_text
     type(model_state), intent(in)   :: model
-    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 176) :: field_text
+    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 224) :: field_text
     integer(i32)                      :: tensor_index
     integer(i32)                      :: pack_index
     integer(i64)                      :: tensor_bytes
@@ -2073,11 +2077,12 @@ contains
 
       pack_index = pack_index + 1_i32
       field_text = ""
-      write(field_text, '(";pack",I0,"=",A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,"|storage=",A)') &
+      write(field_text, '(";pack",I0,"=",A,"|",A,"|",A,"|offset=",I0,"|bytes=",I0,' // &
+        '"|layout=",A,"|storage=",A,"|source_offset=",I0)') &
         pack_index, trim(model%import_tensors(tensor_index)%tensor_name), &
         trim(model%import_tensors(tensor_index)%tensor_role), trim(model%import_tensors(tensor_index)%source_path), &
         pack_offset, tensor_bytes, trim(model%import_tensors(tensor_index)%layout_name), &
-        trim(model%import_tensors(tensor_index)%storage_type)
+        trim(model%import_tensors(tensor_index)%storage_type), model%import_tensors(tensor_index)%source_offset
       call append_payload_fragment(payload_text, trim(field_text))
 
       pack_offset = align_import_bytes(pack_offset + tensor_bytes)
@@ -2149,7 +2154,7 @@ contains
     integer(i64), intent(out)     :: usage_hash
     integer(i32), intent(out)     :: usage_count
     integer(i64), intent(out)     :: usage_bytes
-    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 176) :: usage_entry
+    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 224) :: usage_entry
     integer(i32)                    :: tensor_index
     integer(i64)                    :: tensor_bytes
     integer(i64)                    :: pack_offset
@@ -2170,10 +2175,12 @@ contains
         usage_count = usage_count + 1_i32
         usage_bytes = usage_bytes + tensor_bytes
         usage_entry = ""
-        write(usage_entry, '(A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,"|storage=",A)') &
+        write(usage_entry, '(A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,' // &
+          '"|storage=",A,"|source_offset=",I0)') &
           trim(model%import_tensors(tensor_index)%tensor_name), &
           trim(model%import_tensors(tensor_index)%tensor_role), pack_offset, tensor_bytes, &
-          trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type)
+          trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type), &
+          model%import_tensors(tensor_index)%source_offset
         usage_hash = ieor(usage_hash, hash_text64(trim(usage_entry)))
       end if
 
@@ -2188,7 +2195,8 @@ contains
   subroutine summarize_import_stage_dispatch(stage_kind, model, span_root, usage_hash, usage_count, usage_bytes, &
                                              first_pack_offset, last_pack_offset, last_pack_bytes, dispatch_count, &
                                              dispatch_pack_indices, dispatch_offsets, dispatch_bytes, &
-                                             dispatch_role_codes, dispatch_layout_codes, dispatch_span_paths)
+                                             dispatch_source_offsets, dispatch_role_codes, dispatch_layout_codes, &
+                                             dispatch_span_paths)
     integer(i32), intent(in)      :: stage_kind
     type(model_state), intent(in) :: model
     character(len=*), intent(out) :: span_root
@@ -2202,10 +2210,11 @@ contains
     integer(i32), intent(out)     :: dispatch_pack_indices(:)
     integer(i64), intent(out)     :: dispatch_offsets(:)
     integer(i64), intent(out)     :: dispatch_bytes(:)
+    integer(i64), intent(out)     :: dispatch_source_offsets(:)
     integer(i32), intent(out)     :: dispatch_role_codes(:)
     integer(i32), intent(out)     :: dispatch_layout_codes(:)
     character(len=*), intent(out) :: dispatch_span_paths(:)
-    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 176) :: field_text
+    character(len=MAX_PATH_LEN + MAX_NAME_LEN + 224) :: field_text
     character(len=MAX_NAME_LEN)       :: usage_kind
     integer(i32)                      :: tensor_index
     integer(i32)                      :: usage_index
@@ -2227,6 +2236,7 @@ contains
     dispatch_pack_indices = 0_i32
     dispatch_offsets = 0_i64
     dispatch_bytes = 0_i64
+    dispatch_source_offsets = -1_i64
     dispatch_role_codes = 0_i32
     dispatch_layout_codes = 0_i32
     dispatch_span_paths = ""
@@ -2256,10 +2266,12 @@ contains
         last_pack_bytes = tensor_bytes
 
         field_text = ""
-        write(field_text, '(";pack_use",I0,"=",A,"|",A,"|offset=",I0,"|bytes=",I0,"|layout=",A,"|storage=",A)') &
+        write(field_text, '(";pack_use",I0,"=",A,"|",A,"|offset=",I0,"|bytes=",I0,' // &
+          '"|layout=",A,"|storage=",A,"|source_offset=",I0)') &
           usage_index, trim(model%import_tensors(tensor_index)%tensor_name), &
           trim(model%import_tensors(tensor_index)%tensor_role), pack_offset, tensor_bytes, &
-          trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type)
+          trim(model%import_tensors(tensor_index)%layout_name), trim(model%import_tensors(tensor_index)%storage_type), &
+          model%import_tensors(tensor_index)%source_offset
         usage_hash = ieor(usage_hash, hash_text64(trim(field_text)))
 
         if (dispatch_index < min(MAX_IMPORT_STAGE_PACK_DISPATCH, int(size(dispatch_pack_indices), kind=i32))) then
@@ -2269,6 +2281,7 @@ contains
           dispatch_pack_indices(dispatch_index) = pack_index
           dispatch_offsets(dispatch_index) = pack_offset
           dispatch_bytes(dispatch_index) = tensor_bytes
+          dispatch_source_offsets(dispatch_index) = model%import_tensors(tensor_index)%source_offset
           dispatch_role_codes(dispatch_index) = role_code
           dispatch_layout_codes(dispatch_index) = layout_code
           if (dispatch_index <= int(size(dispatch_span_paths), kind=i32)) then
@@ -3662,6 +3675,7 @@ contains
     integer(i64)                               :: actual_sample_bytes
     integer(i64)                               :: dispatch_offsets(MAX_IMPORT_STAGE_PACK_DISPATCH)
     integer(i64)                               :: dispatch_bytes(MAX_IMPORT_STAGE_PACK_DISPATCH)
+    integer(i64)                               :: dispatch_source_offsets(MAX_IMPORT_STAGE_PACK_DISPATCH)
     integer(i8)                                :: sample_bytes(64)
     integer(i8)                                :: page_bytes(MAX_CUDA_PACK_PAGE_WORDS * 4_i32)
     integer(i32)                               :: page_words(MAX_CUDA_PACK_PAGE_WORDS)
@@ -3674,8 +3688,8 @@ contains
 
     call summarize_import_stage_dispatch(metadata%stage_kind, model, span_root, usage_hash, usage_count, &
       usage_total_bytes, first_pack_offset, last_pack_offset, last_pack_bytes, dispatch_count, &
-      dispatch_pack_indices, dispatch_offsets, dispatch_bytes, dispatch_role_codes, dispatch_layout_codes, &
-      dispatch_span_paths)
+      dispatch_pack_indices, dispatch_offsets, dispatch_bytes, dispatch_source_offsets, dispatch_role_codes, &
+      dispatch_layout_codes, dispatch_span_paths)
     if (dispatch_count <= 0_i32) return
     if (len_trim(span_root) == 0) return
 
@@ -3706,7 +3720,8 @@ contains
       if (len_trim(dispatch_span_paths(entry_index)) == 0) cycle
 
       call resolve_import_span_record_cache(trim(span_root), trim(dispatch_span_paths(entry_index)), &
-        IMPORT_STAGE_SPAN_SAMPLE_BYTES, span_hash, actual_sample_bytes, sample_bytes)
+        IMPORT_STAGE_SPAN_SAMPLE_BYTES, span_hash, actual_sample_bytes, sample_bytes, &
+        dispatch_source_offsets(entry_index), dispatch_bytes(entry_index))
       if (span_hash <= 0_i64) cycle
 
       pack_index = dispatch_pack_indices(entry_index)
@@ -4663,7 +4678,7 @@ contains
       pack_index = pack_index + 1_i32
       call resolve_import_span_record_cache(trim(build_import_bundle_root_path(model)), &
         trim(model%import_tensors(tensor_index)%source_path), IMPORT_STAGE_SPAN_SAMPLE_BYTES, span_hash, &
-        actual_sample_bytes, sample_bytes)
+        actual_sample_bytes, sample_bytes, model%import_tensors(tensor_index)%source_offset, tensor_bytes)
 
       field_text = ""
       write(field_text, '(";pack",I0,"_offset=",I0)') pack_index, pack_offset
@@ -5470,18 +5485,22 @@ contains
   end subroutine ensure_directory_exists
 
   subroutine resolve_import_span_record_cache(span_root, span_path, requested_sample_bytes, span_hash, &
-                                              actual_sample_bytes, sample_bytes)
+                                              actual_sample_bytes, sample_bytes, source_offset, source_byte_count)
     character(len=*), intent(in) :: span_root
     character(len=*), intent(in) :: span_path
     integer(i64), intent(in)     :: requested_sample_bytes
     integer(i64), intent(out)    :: span_hash
     integer(i64), intent(out)    :: actual_sample_bytes
     integer(i8), intent(out)     :: sample_bytes(:)
+    integer(i64), intent(in), optional :: source_offset
+    integer(i64), intent(in), optional :: source_byte_count
     character(len=MAX_PATH_LEN)  :: full_path
     integer(i32)                 :: unit_id
     integer(i32)                 :: ios
     integer(i64)                 :: sample_count
     integer(i64)                 :: file_size
+    integer(i64)                 :: span_start
+    integer(i64)                 :: span_available
     logical                      :: exists
     integer(i64)                 :: stored_count
     integer(i8), allocatable     :: sample_buffer(:)
@@ -5493,10 +5512,25 @@ contains
 
     full_path = join_import_span_path_cache(span_root, span_path)
     span_hash = positive_hash64_cache(trim(full_path))
+    span_start = 0_i64
+    if (present(source_offset)) then
+      if (source_offset >= 0_i64) then
+        span_start = source_offset
+        span_hash = combine_positive_hash64_cache(max(1_i64, span_hash), source_offset + 4099_i64)
+        if (present(source_byte_count)) then
+          span_hash = combine_positive_hash64_cache(max(1_i64, span_hash), max(0_i64, source_byte_count) + 8191_i64)
+        end if
+      end if
+    end if
     inquire(file=trim(full_path), exist=exists, size=file_size)
     if (.not. exists) return
 
-    sample_count = max(0_i64, min(max(1_i64, requested_sample_bytes), max(0_i64, file_size)))
+    span_available = max(0_i64, file_size - span_start)
+    if (present(source_byte_count)) then
+      if (source_byte_count > 0_i64) span_available = min(span_available, source_byte_count)
+    end if
+
+    sample_count = max(0_i64, min(max(1_i64, requested_sample_bytes), span_available))
     if (sample_count <= 0_i64) return
 
     allocate(sample_buffer(sample_count))
@@ -5507,7 +5541,7 @@ contains
       deallocate(sample_buffer)
       return
     end if
-    read(unit_id, iostat=ios) sample_buffer
+    read(unit_id, pos=span_start + 1_i64, iostat=ios) sample_buffer
     close(unit_id)
     if (ios /= 0_i32) then
       deallocate(sample_buffer)
