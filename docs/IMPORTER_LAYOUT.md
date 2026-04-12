@@ -35,6 +35,7 @@ Supported keys:
 
 - `layout_version`
 - `tensor_inventory`
+- `gguf_inventory`
 - `modality_inventory`
 - `projector_inventory`
 - `family`
@@ -55,7 +56,8 @@ Current required behavior:
 
 - `layout_version` must be `1`
 - `tensor_inventory` must resolve to an existing file inside `mizu_import/`
-- `modality_inventory` and `projector_inventory` may be omitted with `-`
+- `gguf_inventory`, `modality_inventory`, and `projector_inventory` may be
+  omitted with `-`
 
 ## `tensors.tsv`
 
@@ -84,6 +86,33 @@ Rules:
 - parent traversal like `..` is rejected
 - the referenced file must exist
 - `shape` must contain 1 to `MAX_TENSOR_RANK` positive dimensions
+
+## `gguf_tensors.tsv`
+
+When `layout.mizu` declares `gguf_inventory`, each non-comment line must have
+8 or 9 `|`-separated fields:
+
+```text
+tensor_name|source_kind|ggml_type|normalized_dtype|layout_name|relative_path|data_offset|source_offset|shape
+```
+
+Example:
+
+```text
+token_embd.weight|model|q4_k|f16|row_major|weights/qwen35.gguf|0|842496|4096x248320
+```
+
+Rules:
+
+- `data_offset` is the offset recorded in the GGUF tensor-info table
+- `source_offset` is the absolute byte offset inside `relative_path` after the
+  GGUF tensor-data section alignment is applied
+- legacy 8-field rows are accepted and use `data_offset` as the best available
+  source offset
+- runtime span sampling and CUDA pack identity use `source_offset` plus the
+  estimated tensor byte span, so multiple tensors in one GGUF get distinct
+  source identities
+- `relative_path` follows the same safety and existence rules as `tensors.tsv`
 
 ## `modalities.tsv`
 
@@ -154,5 +183,5 @@ The GGUF importer reads GGUF metadata and tensor-info headers directly, can
 pair a model GGUF with an optional mmproj GGUF, writes the same loader-facing
 bundle, and records the GGUF tensor type in the core `storage_type` field.
 It also writes `gguf_tensors.tsv` as a source-format sidecar that preserves
-GGUF tensor type plus data-offset details for later exact source-span
-materialization.
+GGUF tensor type, GGUF-relative `data_offset`, and absolute `source_offset`
+details for exact source-span materialization.

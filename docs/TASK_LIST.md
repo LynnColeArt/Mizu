@@ -134,6 +134,7 @@ These are the highest-leverage next tasks.
 - [x] Add dependency-free GGUF smoke importer for Qwench-style local assets
 - [x] Promote source storage type into core import tensor lineage
 - [x] Use source storage type for imported byte budgets and CUDA pack spans
+- [x] Consume GGUF tensor source offsets for per-tensor CUDA span identity
 - [x] Add optional Qwench GGUF CUDA materialization smoke
 - [x] Define failure reporting for bad manifests
 - [x] Retain imported inventory lineage on runtime model state

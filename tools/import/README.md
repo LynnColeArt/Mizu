@@ -76,8 +76,10 @@ The tool writes the standard bundle files plus:
 Mizu staging dtypes such as `f16` in the `dtype` column and preserve the exact
 GGUF type, such as `q4_k` or `iq2_xxs`, in the core `storage_type` column.
 Runtime byte accounting uses recognized GGUF block sizes from `storage_type`.
-`gguf_tensors.tsv` additionally preserves the GGUF data offset for later exact
-source-slice materialization.
+`gguf_tensors.tsv` additionally preserves both the GGUF tensor-info
+`data_offset` and the absolute file `source_offset` used by runtime span
+sampling. That lets CUDA pack identity distinguish individual tensors that
+share one containing GGUF file.
 
 On this machine, the current `~/.qwench/models` smoke assets import as:
 

@@ -4,6 +4,11 @@ Last updated: 2026-04-12
 
 ## Latest Checkpoint
 
+- current milestone: GGUF imports now preserve per-tensor absolute
+  `source_offset` values beside the GGUF-relative `data_offset`, the loader
+  threads those offsets onto imported tensor state, and CUDA span sampling /
+  pack identity use source offsets plus tensor byte spans so tensors sharing a
+  single GGUF file no longer collapse to one file-level identity.
 - current milestone: imported tensor byte accounting is now storage-aware for
   GGUF-style source storage types. CUDA import weight packs, workspace hints,
   projector byte lineage, stage usage summaries, and generated pack buffers use
@@ -14,8 +19,8 @@ Last updated: 2026-04-12
   GGUF smoke importer that scans local GGUF metadata/tensor headers, can pair
   the Qwen3.5 model GGUF with its mmproj GGUF, writes the same
   `manifest.mizu` plus `mizu_import/` bundle shape, preserves original GGUF
-  tensor type in core `storage_type` lineage, and keeps GGUF data offsets in a
-  sidecar inventory
+  tensor type in core `storage_type` lineage, and keeps GGUF data/source
+  offsets in a sidecar inventory
 - current milestone: import tooling now includes a dependency-free
   HuggingFace safetensors smoke importer that scans local model shards,
   classifies common Qwen/Gemma tensor-name patterns into Mizu tensor roles,
