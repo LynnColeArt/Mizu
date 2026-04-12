@@ -75,8 +75,9 @@ The tool writes the standard bundle files plus:
 `tensors.tsv` keeps the loader-compatible Mizu view. Quantized GGUF tensors use
 Mizu staging dtypes such as `f16` in the `dtype` column and preserve the exact
 GGUF type, such as `q4_k` or `iq2_xxs`, in the core `storage_type` column.
+Runtime byte accounting uses recognized GGUF block sizes from `storage_type`.
 `gguf_tensors.tsv` additionally preserves the GGUF data offset for later exact
-storage accounting.
+source-slice materialization.
 
 On this machine, the current `~/.qwench/models` smoke assets import as:
 

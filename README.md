@@ -33,6 +33,8 @@ Current implementation status:
   optionally pair a model GGUF with an mmproj GGUF, and emit the same bundle
   shape plus core quantized storage metadata and a GGUF tensor sidecar for
   Qwench-style real-asset smoke testing
+- imported byte budgets and CUDA pack spans now use recognized source
+  `storage_type` block sizes instead of always sizing tensors by staging dtype
 - route-aware optimization and persisted cache metadata are implemented
 - the optimization store now invalidates stale evidence by workload, candidate
   key, plan id, or current candidate set, and winner selection/persistence

@@ -68,7 +68,7 @@ tensor_name|tensor_role|dtype|layout_name|relative_path|shape|storage_type
 Example:
 
 ```text
-token_embeddings|embedding_table|bf16|row_major|weights/token_embeddings.bin|152064x3584|bf16
+token_embeddings|embedding_table|bf16|row_major|weights/token_embeddings.bin|152064x3584|q4_k
 ```
 
 Rules:
@@ -77,6 +77,8 @@ Rules:
 - `storage_type` is the source storage type, such as `bf16`, `q4_k`, or
   `iq2_xxs`
 - legacy 6-field rows are accepted and default `storage_type` to `dtype`
+- runtime byte accounting uses known GGUF block sizes for recognized
+  `storage_type` values and falls back to `dtype` sizing for unknown values
 - `relative_path` must be relative to `mizu_import/`
 - absolute paths are rejected
 - parent traversal like `..` is rejected
@@ -152,4 +154,5 @@ The GGUF importer reads GGUF metadata and tensor-info headers directly, can
 pair a model GGUF with an optional mmproj GGUF, writes the same loader-facing
 bundle, and records the GGUF tensor type in the core `storage_type` field.
 It also writes `gguf_tensors.tsv` as a source-format sidecar that preserves
-GGUF tensor type plus data-offset details for later exact storage accounting.
+GGUF tensor type plus data-offset details for later exact source-span
+materialization.

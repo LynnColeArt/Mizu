@@ -1,9 +1,15 @@
 # Mizu Current State
 
-Last updated: 2026-04-11
+Last updated: 2026-04-12
 
 ## Latest Checkpoint
 
+- current milestone: imported tensor byte accounting is now storage-aware for
+  GGUF-style source storage types. CUDA import weight packs, workspace hints,
+  projector byte lineage, stage usage summaries, and generated pack buffers use
+  source `storage_type` block sizes such as `q4_k`, `q5_k`, `q6_k`, `q8_0`,
+  `iq2_xxs`, and `iq4_nl`, while unknown storage strings still fall back to
+  the loader-facing staging `dtype`.
 - current milestone: import tooling now includes a dependency-free
   GGUF smoke importer that scans local GGUF metadata/tensor headers, can pair
   the Qwen3.5 model GGUF with its mmproj GGUF, writes the same
@@ -270,10 +276,10 @@ Last updated: 2026-04-11
   drives Qwen projector/prefill/decode placeholder execution, and verifies
   quantized storage markers such as `q4_k` and `iq2_xxs` survive into CUDA
   weight artifacts while mmproj tensors stay out of the decoder weight pack
-- immediate next target: validate the real Qwench GGUF import bundles through
-  a first storage-aware byte-accounting pass, tighten any family-specific
-  tensor-role gaps the inventories reveal, and start using source storage type
-  when estimating backend pack spans
+- immediate next target: use the GGUF sidecar offsets to sample and identify
+  per-tensor source spans instead of sampling only from the containing GGUF
+  file, then tighten any family-specific tensor-role gaps the inventories
+  reveal
 
 ## Roadmap Status
 
