@@ -161,6 +161,8 @@ These suites cover the `API-C*` portion of
   - opens those generated bundles through the public CUDA route, drives Qwen
     projector/prefill/decode placeholder execution, and verifies quantized
     source storage markers survive into CUDA weight artifacts
+  - verifies generated `.packbuffer` records retain source offsets and produce
+    distinct span hashes for multiple tensors sharing one GGUF file
   - verifies mmproj tensors are treated as projector-side lineage rather than
     decoder weight-pack entries
 - `test_go_binding_smoke.go`

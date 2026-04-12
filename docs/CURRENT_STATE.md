@@ -4,6 +4,10 @@ Last updated: 2026-04-12
 
 ## Latest Checkpoint
 
+- current milestone: CUDA weight-pack `.packbuffer` records are now version 2
+  and carry per-pack `source_offset` lanes. Warm dependency hashing accepts
+  both v1 and v2 buffers, folds the new offset when present, and contract
+  tests now prove shared-GGUF tensors materialize distinct span hashes.
 - current milestone: GGUF imports now preserve per-tensor absolute
   `source_offset` values beside the GGUF-relative `data_offset`, the loader
   threads those offsets onto imported tensor state, and CUDA span sampling /
@@ -281,10 +285,9 @@ Last updated: 2026-04-12
   drives Qwen projector/prefill/decode placeholder execution, and verifies
   quantized storage markers such as `q4_k` and `iq2_xxs` survive into CUDA
   weight artifacts while mmproj tensors stay out of the decoder weight pack
-- immediate next target: use the GGUF sidecar offsets to sample and identify
-  per-tensor source spans instead of sampling only from the containing GGUF
-  file, then tighten any family-specific tensor-role gaps the inventories
-  reveal
+- immediate next target: use the source-offset-bearing `.packbuffer` records to
+  start carving real file-backed page/tile materialization, then tighten any
+  family-specific tensor-role gaps the inventories reveal
 
 ## Roadmap Status
 
