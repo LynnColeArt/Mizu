@@ -4598,9 +4598,9 @@ contains
     type(artifact_metadata_record), intent(in)   :: metadata
     type(model_state), intent(in)                :: model
     integer(i32), parameter                      :: CUDA_PACK_BUFFER_MAGIC = int(z'42505A4D', kind=i32)
-    integer(i32), parameter                      :: CUDA_PACK_BUFFER_VERSION = 1_i32
+    integer(i32), parameter                      :: CUDA_PACK_BUFFER_VERSION = 2_i32
     integer(i32), parameter                      :: CUDA_PACK_BUFFER_HEADER_BYTES = 32_i32
-    integer(i32), parameter                      :: CUDA_PACK_BUFFER_ENTRY_BYTES = 96_i32
+    integer(i32), parameter                      :: CUDA_PACK_BUFFER_ENTRY_BYTES = 104_i32
     character(len=MAX_PATH_LEN)                  :: pack_buffer_path
     character(len=MAX_PATH_LEN)                  :: pack_buffer_full_path
     character(len=MAX_PATH_LEN)                  :: parent_dir
@@ -4751,6 +4751,8 @@ contains
       call store_pack_buffer_i64_cache(pack_buffer, pack_record_offset + 72_i32, page_hash)
       call store_pack_buffer_i64_cache(pack_buffer, pack_record_offset + 80_i32, tile_hash)
       call store_pack_buffer_i64_cache(pack_buffer, pack_record_offset + 88_i32, pack_materialized_hash)
+      call store_pack_buffer_i64_cache(pack_buffer, pack_record_offset + 96_i32, &
+        model%import_tensors(tensor_index)%source_offset)
 
       pack_offset = align_import_bytes(pack_offset + tensor_bytes)
     end do

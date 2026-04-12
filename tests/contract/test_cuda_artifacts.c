@@ -93,6 +93,70 @@ static int write_text_file(const char *path, const char *text) {
     return bytes_written == text_length;
 }
 
+static int read_binary_file_alloc(const char *path, unsigned char **out_buffer, size_t *out_size) {
+    FILE *file = NULL;
+    long file_size;
+    unsigned char *buffer = NULL;
+    size_t bytes_read;
+
+    if (path == NULL || out_buffer == NULL || out_size == NULL) return 0;
+    *out_buffer = NULL;
+    *out_size = 0U;
+
+    file = fopen(path, "rb");
+    if (file == NULL) return 0;
+    if (fseek(file, 0L, SEEK_END) != 0) {
+        fclose(file);
+        return 0;
+    }
+    file_size = ftell(file);
+    if (file_size <= 0L) {
+        fclose(file);
+        return 0;
+    }
+    if (fseek(file, 0L, SEEK_SET) != 0) {
+        fclose(file);
+        return 0;
+    }
+
+    buffer = (unsigned char *)malloc((size_t)file_size);
+    if (buffer == NULL) {
+        fclose(file);
+        return 0;
+    }
+    bytes_read = fread(buffer, 1U, (size_t)file_size, file);
+    fclose(file);
+    if (bytes_read != (size_t)file_size) {
+        free(buffer);
+        return 0;
+    }
+
+    *out_buffer = buffer;
+    *out_size = (size_t)file_size;
+    return 1;
+}
+
+static int read_le_u32_field(const unsigned char *buffer, size_t buffer_size, size_t offset, uint32_t *out_value) {
+    if (buffer == NULL || out_value == NULL || offset + 4U > buffer_size) return 0;
+    *out_value = ((uint32_t)buffer[offset]) |
+                 ((uint32_t)buffer[offset + 1U] << 8U) |
+                 ((uint32_t)buffer[offset + 2U] << 16U) |
+                 ((uint32_t)buffer[offset + 3U] << 24U);
+    return 1;
+}
+
+static int read_le_i64_field(const unsigned char *buffer, size_t buffer_size, size_t offset, int64_t *out_value) {
+    uint64_t raw_value = 0U;
+    size_t byte_index;
+
+    if (buffer == NULL || out_value == NULL || offset + 8U > buffer_size) return 0;
+    for (byte_index = 0U; byte_index < 8U; ++byte_index) {
+        raw_value |= ((uint64_t)buffer[offset + byte_index]) << (8U * byte_index);
+    }
+    *out_value = (int64_t)raw_value;
+    return 1;
+}
+
 static int capture_first_line(const char *command, char *buffer, size_t buffer_size) {
     FILE *pipe = NULL;
 
@@ -275,6 +339,16 @@ int main(void) {
     char decode_plan_text[16384];
     char decode_binary_only_text[8192];
     char mutated_weight_path[768];
+    char pack_buffer_path[1024];
+    unsigned char *pack_buffer_bytes = NULL;
+    size_t pack_buffer_size = 0U;
+    uint32_t pack_buffer_version = 0U;
+    uint32_t pack_buffer_entry_bytes = 0U;
+    uint32_t pack_buffer_count = 0U;
+    int64_t pack1_span_hash = 0;
+    int64_t pack2_span_hash = 0;
+    int64_t pack1_source_offset = -1;
+    int64_t pack2_source_offset = -1;
     memset(prefill_reports, 0, sizeof(prefill_reports));
     memset(prefill_reports_warm, 0, sizeof(prefill_reports_warm));
     memset(prefill_reports_fallback, 0, sizeof(prefill_reports_fallback));
@@ -559,6 +633,42 @@ int main(void) {
     if (!expect_true("cuda weight pack buffer should store staged binary page and tile bytes", command_status == 0)) return 1;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packbuffer' -exec sh -c 'od -An -t x1 -N 4 \"$1\" | tr -d \" \\n\" | grep -q \"4d5a5042\"' _ {} \\;");
     if (!expect_true("cuda weight pack buffer should begin with the typed buffer magic", command_status == 0)) return 1;
+    if (!expect_true("cuda weight pack buffer path should be discoverable",
+                     capture_first_line("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/weights -name '*.packbuffer' | head -n 1",
+                                        pack_buffer_path, sizeof(pack_buffer_path)))) return 1;
+    if (!expect_true("cuda weight pack buffer should be readable",
+                     read_binary_file_alloc(pack_buffer_path, &pack_buffer_bytes, &pack_buffer_size))) return 1;
+    if (!expect_true("cuda weight pack buffer should expose version",
+                     read_le_u32_field(pack_buffer_bytes, pack_buffer_size, 4U, &pack_buffer_version))) return 1;
+    if (!expect_u64("cuda weight pack buffer should use source-offset v2 records",
+                    (uint64_t)pack_buffer_version, 2U)) return 1;
+    if (!expect_true("cuda weight pack buffer should expose entry bytes",
+                     read_le_u32_field(pack_buffer_bytes, pack_buffer_size, 12U, &pack_buffer_entry_bytes))) return 1;
+    if (!expect_u64("cuda weight pack buffer entries should include source offsets",
+                    (uint64_t)pack_buffer_entry_bytes, 104U)) return 1;
+    if (!expect_true("cuda weight pack buffer should expose pack count",
+                     read_le_u32_field(pack_buffer_bytes, pack_buffer_size, 16U, &pack_buffer_count))) return 1;
+    if (!expect_u64("cuda weight pack buffer should retain four fixture packs",
+                    (uint64_t)pack_buffer_count, 4U)) return 1;
+    if (!expect_true("cuda weight pack buffer should expose first span hash",
+                     read_le_i64_field(pack_buffer_bytes, pack_buffer_size, 32U + 56U, &pack1_span_hash))) return 1;
+    if (!expect_true("cuda weight pack buffer should expose second span hash",
+                     read_le_i64_field(pack_buffer_bytes, pack_buffer_size,
+                                       32U + (size_t)pack_buffer_entry_bytes + 56U, &pack2_span_hash))) return 1;
+    if (!expect_true("cuda source offsets should produce distinct span hashes",
+                     pack1_span_hash > 0 && pack2_span_hash > 0 && pack1_span_hash != pack2_span_hash)) return 1;
+    if (!expect_true("cuda weight pack buffer should expose first source offset",
+                     read_le_i64_field(pack_buffer_bytes, pack_buffer_size, 32U + 96U, &pack1_source_offset))) return 1;
+    if (!expect_true("cuda weight pack buffer should expose second source offset",
+                     read_le_i64_field(pack_buffer_bytes, pack_buffer_size,
+                                       32U + (size_t)pack_buffer_entry_bytes + 96U, &pack2_source_offset))) return 1;
+    if (!expect_i64("cuda weight pack buffer should retain first fixture source offset",
+                    pack1_source_offset, 0)) return 1;
+    if (!expect_i64("cuda weight pack buffer should retain second fixture source offset",
+                    pack2_source_offset, 128)) return 1;
+    free(pack_buffer_bytes);
+    pack_buffer_bytes = NULL;
+    pack_buffer_size = 0U;
     command_status = system("find /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector -type f | grep -q .");
     if (!expect_true("cuda projector artifact file should exist", command_status == 0)) return 1;
     command_status = system("grep -R \"stage=2;.*shape0=8\" /tmp/mizu_cuda_artifacts/artifacts/cuda/cuda/projector >/dev/null");

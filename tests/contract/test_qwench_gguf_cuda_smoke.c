@@ -232,6 +232,34 @@ int main(void) {
     if (!expect_true("qwench CUDA weight artifacts should retain Gemma quantized storage", command_status == 0)) return 1;
     command_status = system("grep -R -E \"source_offset=[1-9][0-9]*\" /tmp/mizu_qwench_gguf_cuda_smoke/cache/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("qwench CUDA weight artifacts should retain per-tensor source offsets", command_status == 0)) return 1;
+    command_status = system(
+        "python3 - <<'PY'\n"
+        "from pathlib import Path\n"
+        "import glob, struct, sys\n"
+        "ok = False\n"
+        "for path in glob.glob('/tmp/mizu_qwench_gguf_cuda_smoke/cache/artifacts/cuda/cuda/weights/**/*.packbuffer', recursive=True):\n"
+        "    data = Path(path).read_bytes()\n"
+        "    if len(data) < 32:\n"
+        "        continue\n"
+        "    version = struct.unpack_from('<I', data, 4)[0]\n"
+        "    entry_bytes = struct.unpack_from('<I', data, 12)[0]\n"
+        "    count = struct.unpack_from('<I', data, 16)[0]\n"
+        "    if version < 2 or entry_bytes < 104 or count < 2:\n"
+        "        continue\n"
+        "    spans = []\n"
+        "    offsets = []\n"
+        "    for index in range(count):\n"
+        "        base = 32 + (index * entry_bytes)\n"
+        "        if base + 104 > len(data):\n"
+        "            break\n"
+        "        spans.append(struct.unpack_from('<q', data, base + 56)[0])\n"
+        "        offsets.append(struct.unpack_from('<q', data, base + 96)[0])\n"
+        "    if len({value for value in spans if value > 0}) >= 2 and len({value for value in offsets if value >= 0}) >= 2:\n"
+        "        ok = True\n"
+        "        break\n"
+        "sys.exit(0 if ok else 1)\n"
+        "PY");
+    if (!expect_true("qwench CUDA pack buffers should distinguish shared-GGUF tensor spans", command_status == 0)) return 1;
     command_status = system("grep -R \"mm.0.weight\" /tmp/mizu_qwench_gguf_cuda_smoke/cache/artifacts/cuda/cuda/weights >/dev/null");
     if (!expect_true("qwench CUDA decoder weight pack should exclude mmproj tensors", command_status != 0)) return 1;
     command_status = system("grep -R -E \"projector_bytes=[1-9]\" /tmp/mizu_qwench_gguf_cuda_smoke/cache/artifacts/cuda/cuda/projector >/dev/null");
