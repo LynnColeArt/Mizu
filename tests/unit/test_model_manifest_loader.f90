@@ -45,7 +45,7 @@ program test_model_manifest_loader
   call expect_equal_text("import bundle should carry tensor source path", &
     trim(manifest%tensors(1)%source_path), "weights/token_embeddings.bin")
   call expect_equal_text("import bundle should carry tensor storage type", &
-    trim(manifest%tensors(1)%storage_type), "bf16")
+    trim(manifest%tensors(1)%storage_type), "q4_k")
   call expect_equal_text("import bundle should carry projector artifact path", &
     trim(manifest%projector%artifact_path), "projector/vision_projector.bin")
   call expect_equal_text("import bundle should carry imported source model id", &

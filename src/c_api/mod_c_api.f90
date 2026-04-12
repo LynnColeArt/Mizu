@@ -1904,7 +1904,7 @@ contains
         model%import_inventory_hash = ieor(model%import_inventory_hash, entry_hash)
         model%import_tensor_bytes = model%import_tensor_bytes + estimate_manifest_tensor_bytes( &
           manifest%tensors(tensor_index)%dtype, manifest%tensors(tensor_index)%rank, &
-          manifest%tensors(tensor_index)%shape)
+          manifest%tensors(tensor_index)%shape, manifest%tensors(tensor_index)%storage_type)
 
         if (preview_index >= int(size(model%import_tensor_paths), kind=i32)) cycle
         if (len_trim(manifest%tensors(tensor_index)%source_path) == 0) cycle
@@ -1924,9 +1924,8 @@ contains
       if (allocated(model%import_tensors)) then
         do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
           if (.not. import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
-          model%import_projector_bytes = model%import_projector_bytes + estimate_manifest_tensor_bytes( &
-            model%import_tensors(tensor_index)%dtype, model%import_tensors(tensor_index)%rank, &
-            model%import_tensors(tensor_index)%shape)
+          model%import_projector_bytes = model%import_projector_bytes + &
+            estimate_import_tensor_bytes(model%import_tensors(tensor_index))
         end do
       end if
     end if
@@ -1954,8 +1953,7 @@ contains
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
 
-      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
-        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      tensor_bytes = estimate_import_tensor_bytes(model%import_tensors(tensor_index))
       if (tensor_bytes <= 0_i64) cycle
 
       model%import_weight_pack_count = model%import_weight_pack_count + 1_i32
@@ -2070,8 +2068,7 @@ contains
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
 
-      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
-        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      tensor_bytes = estimate_import_tensor_bytes(model%import_tensors(tensor_index))
       if (tensor_bytes <= 0_i64) cycle
 
       pack_index = pack_index + 1_i32
@@ -2166,8 +2163,7 @@ contains
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
 
-      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
-        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      tensor_bytes = estimate_import_tensor_bytes(model%import_tensors(tensor_index))
       if (tensor_bytes <= 0_i64) cycle
 
       if (import_stage_uses_tensor(stage_kind, model%import_tensors(tensor_index))) then
@@ -2248,8 +2244,7 @@ contains
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
 
-      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
-        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      tensor_bytes = estimate_import_tensor_bytes(model%import_tensors(tensor_index))
       if (tensor_bytes <= 0_i64) cycle
       pack_index = pack_index + 1_i32
 
@@ -2413,11 +2408,21 @@ contains
     payload_text(start_index:start_index + write_count - 1_i32) = fragment(1:write_count)
   end subroutine append_payload_fragment
 
-  pure integer(i64) function estimate_manifest_tensor_bytes(dtype, rank, shape) result(byte_count)
+  pure integer(i64) function estimate_import_tensor_bytes(import_tensor) result(byte_count)
+    type(import_tensor_state), intent(in) :: import_tensor
+
+    byte_count = estimate_manifest_tensor_bytes(import_tensor%dtype, import_tensor%rank, import_tensor%shape, &
+      import_tensor%storage_type)
+  end function estimate_import_tensor_bytes
+
+  pure integer(i64) function estimate_manifest_tensor_bytes(dtype, rank, shape, storage_type) result(byte_count)
     integer(i32), intent(in) :: dtype
     integer(i32), intent(in) :: rank
     integer(i64), intent(in) :: shape(:)
+    character(len=*), intent(in), optional :: storage_type
     integer(i32)             :: axis_index
+    integer(i64)             :: storage_block_elements
+    integer(i64)             :: storage_block_bytes
     integer(i64)             :: element_count
 
     byte_count = 0_i64
@@ -2429,8 +2434,123 @@ contains
       element_count = element_count * shape(axis_index)
     end do
 
+    if (present(storage_type)) then
+      call resolve_import_storage_block(storage_type, storage_block_elements, storage_block_bytes)
+      if (storage_block_elements > 0_i64 .and. storage_block_bytes > 0_i64) then
+        byte_count = ((element_count + storage_block_elements - 1_i64) / storage_block_elements) * storage_block_bytes
+        return
+      end if
+    end if
+
     byte_count = element_count * dtype_storage_bytes(dtype)
   end function estimate_manifest_tensor_bytes
+
+  pure subroutine resolve_import_storage_block(storage_type, block_elements, block_bytes)
+    character(len=*), intent(in) :: storage_type
+    integer(i64), intent(out)    :: block_elements
+    integer(i64), intent(out)    :: block_bytes
+    character(len=len(storage_type)) :: normalized_storage
+
+    normalized_storage = lowercase_import_ascii(trim(storage_type))
+    block_elements = 0_i64
+    block_bytes = 0_i64
+
+    select case (trim(normalized_storage))
+    case ("u8", "i8")
+      block_elements = 1_i64
+      block_bytes = 1_i64
+    case ("f16", "bf16", "i16")
+      block_elements = 1_i64
+      block_bytes = 2_i64
+    case ("f32", "i32")
+      block_elements = 1_i64
+      block_bytes = 4_i64
+    case ("f64", "i64")
+      block_elements = 1_i64
+      block_bytes = 8_i64
+    case ("q4_0", "iq4_nl")
+      block_elements = 32_i64
+      block_bytes = 18_i64
+    case ("q4_1")
+      block_elements = 32_i64
+      block_bytes = 20_i64
+    case ("q5_0")
+      block_elements = 32_i64
+      block_bytes = 22_i64
+    case ("q5_1")
+      block_elements = 32_i64
+      block_bytes = 24_i64
+    case ("q8_0")
+      block_elements = 32_i64
+      block_bytes = 34_i64
+    case ("q8_1")
+      block_elements = 32_i64
+      block_bytes = 36_i64
+    case ("q2_k")
+      block_elements = 256_i64
+      block_bytes = 84_i64
+    case ("q3_k")
+      block_elements = 256_i64
+      block_bytes = 110_i64
+    case ("q4_k")
+      block_elements = 256_i64
+      block_bytes = 144_i64
+    case ("q5_k")
+      block_elements = 256_i64
+      block_bytes = 176_i64
+    case ("q6_k")
+      block_elements = 256_i64
+      block_bytes = 210_i64
+    case ("q8_k")
+      block_elements = 256_i64
+      block_bytes = 292_i64
+    case ("iq2_xxs", "tq2_0")
+      block_elements = 256_i64
+      block_bytes = 66_i64
+    case ("iq2_xs")
+      block_elements = 256_i64
+      block_bytes = 74_i64
+    case ("iq2_s")
+      block_elements = 256_i64
+      block_bytes = 82_i64
+    case ("iq3_xxs")
+      block_elements = 256_i64
+      block_bytes = 98_i64
+    case ("iq3_s")
+      block_elements = 256_i64
+      block_bytes = 110_i64
+    case ("iq1_s")
+      block_elements = 256_i64
+      block_bytes = 50_i64
+    case ("iq1_m")
+      block_elements = 256_i64
+      block_bytes = 56_i64
+    case ("iq4_xs")
+      block_elements = 256_i64
+      block_bytes = 136_i64
+    case ("tq1_0")
+      block_elements = 256_i64
+      block_bytes = 54_i64
+    case default
+      block_elements = 0_i64
+      block_bytes = 0_i64
+    end select
+  end subroutine resolve_import_storage_block
+
+  pure function lowercase_import_ascii(text) result(lowered)
+    character(len=*), intent(in) :: text
+    character(len=len(text))     :: lowered
+    integer(i32)                 :: index_value
+    integer(i32)                 :: code_point
+
+    lowered = text
+    do index_value = 1_i32, len(text)
+      code_point = iachar(lowered(index_value:index_value), kind=i32)
+      if (code_point >= iachar("A", kind=i32) .and. code_point <= iachar("Z", kind=i32)) then
+        lowered(index_value:index_value) = achar(code_point + 32_i32)
+      end if
+    end do
+  end function lowercase_import_ascii
 
   pure integer(i64) function dtype_storage_bytes(dtype) result(byte_count)
     integer(i32), intent(in) :: dtype
@@ -4522,8 +4642,7 @@ contains
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
 
-      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
-        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      tensor_bytes = estimate_import_tensor_bytes(model%import_tensors(tensor_index))
       if (tensor_bytes <= 0_i64) cycle
       non_projector_count = non_projector_count + 1_i32
       pack_total_bytes = align_import_bytes(pack_total_bytes + tensor_bytes)
@@ -4538,8 +4657,7 @@ contains
     do tensor_index = 1_i32, int(size(model%import_tensors), kind=i32)
       if (import_tensor_belongs_to_projector(model%import_tensors(tensor_index), model)) cycle
 
-      tensor_bytes = estimate_manifest_tensor_bytes(model%import_tensors(tensor_index)%dtype, &
-        model%import_tensors(tensor_index)%rank, model%import_tensors(tensor_index)%shape)
+      tensor_bytes = estimate_import_tensor_bytes(model%import_tensors(tensor_index))
       if (tensor_bytes <= 0_i64) cycle
 
       pack_index = pack_index + 1_i32

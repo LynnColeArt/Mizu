@@ -1,5 +1,5 @@
-token_embeddings|embedding_table|bf16|row_major|weights/token_embeddings.bin|152064x3584|bf16
-decoder_blocks|decoder_stack|bf16|packed|weights/decoder_blocks.bin|3584x3584|bf16
+token_embeddings|embedding_table|bf16|row_major|weights/token_embeddings.bin|152064x3584|q4_k
+decoder_blocks|decoder_stack|bf16|packed|weights/decoder_blocks.bin|3584x3584|q5_k
 final_norm|normalization|f32|vector|weights/final_norm.bin|3584|f32
-lm_head|token_projection|bf16|row_major|weights/lm_head.bin|3584x152064|bf16
+lm_head|token_projection|bf16|row_major|weights/lm_head.bin|3584x152064|q4_k
 vision_projector|multimodal_projector|f16|packed|projector/vision_projector.bin|1280x3584|f16
